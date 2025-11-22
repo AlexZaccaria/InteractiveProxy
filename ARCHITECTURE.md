@@ -22,7 +22,7 @@
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  2. Check if URL is Blocked                              │  │
 │  │     - Check blocked-urls.json                            │  │
-│  │     - If blocked → return 403                            │  │
+│  │     - If blocked → return 204 (no content, no edits)     │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                             │                                   │
 │                             ▼                                   │
@@ -109,15 +109,28 @@
 #### Data Structures:
 ```javascript
 // In-memory storage
-let requestLogs = [];              // Max 5000 entries
-let localResources = new Map();    // URL → Resource mapping
-let interactiveModeEnabled = true; // Interactive mode flag
+let requestLogs = []              // Max 5000 entries, used for UI log view
+let dashboardStats = {            // Incrementally updated dashboard metrics
+  total: 0,
+  served: 0,
+  proxied: 0,
+  blocked: 0,
+  processed: 0,
+  errors: 0,
+  editedRequests: 0
+}
+let localResources = new Map()    // URL → Resource mapping
+let bypassMode = 'ignore'         // 'ignore' or 'focus'
+let blockedRules = []             // Blocked URL rules
+let bypassRules = []              // Filter rules for current mode
+let editRules = []                // Live edit rules
 
-// Persistent storage (files)
-- storage/resources.json           // Local resources
-- storage/config.json              // Configuration (interactive mode)
-- blocked-urls.json                // Blocked URLs list
-- logs/proxy-YYYY-MM-DD.log        // Daily log files
+// Persistent storage (files under server/storage/)
+- config.json         // Global modes (interactive, filters, edit, blocked, local) and filterMode
+- resources.json      // Local resources metadata
+- blocked-urls.json   // Blocked URL rules
+- filter-urls.json    // Filter rules definitions
+- edit-rules.json     // Live edit rules
 ```
 
 ### Frontend (client/)
@@ -133,7 +146,8 @@ let interactiveModeEnabled = true; // Interactive mode flag
 - **RequestLogs.js**: Log viewer with filters and search
 - **LocalResources.js**: View and manage uploaded resources
 - **BlockedResources.js**: View and manage blocked URLs
-- **AddResource.js**: Upload new local resources
+- **FilterRules.js**: Manage filter rules and Ignore/Focus modes
+- **EditRules.js**: Manage live edit rules
 
 #### Key Features:
 - **Interactive Mode Toggle**: Control logging without stopping proxy
@@ -151,7 +165,7 @@ let interactiveModeEnabled = true; // Interactive mode flag
 ```javascript
 Client → Proxy Server
          ↓
-    Check if blocked → Yes → Return 403
+    Check if blocked → Yes → Return 204 (blocked - no content, no edits)
          ↓ No
     Check local resource → Found → Serve local file
          ↓ Not found
@@ -159,6 +173,20 @@ Client → Proxy Server
          ↓ Not present
     Return 404
 ```
+
+### 1.1 Filter Rules (Bypass Engine)
+
+After the basic routing (local resource / proxy / 404), the proxy applies the
+filter rules engine when the **Filter Rules** feature is enabled:
+
+- In **Ignore** mode, matching URLs are considered "noise" and are counted as
+  **Redirected** without going through the full decoding/metadata/editing
+  pipeline.
+- In **Focus** mode, only matching URLs go through the full pipeline; all other
+  requests are bypassed.
+
+This engine controls which requests populate `requestLogs` and appear in the
+UI, and it feeds the metrics shown in the dashboard.
 
 ### 2. HTTPS Request (MITM)
 
@@ -196,6 +224,29 @@ Client → Proxy Server (Upgrade: websocket)
       - Detect and display JSON content
 ```
 
+### 4. Edit Rules Pipeline
+
+When edit rules are enabled, the proxy rewrites traffic bodies at different
+layers:
+
+- HTTP request and response bodies
+- Connect/gRPC envelopes (frames and Protobuf messages)
+- WebSocket messages
+
+There are two kinds of edit rules:
+
+- **Text rules**: plain text or regex replacements applied to string payloads
+  (including Protobuf fields that look like UTF-8 text).
+- **JSONPath rules**: URL-scoped rules that operate on a JSON view of the
+  payload (including decoded Protobuf messages) and then update the underlying
+  buffer for safe string fields (for Connect/gRPC).
+
+For Connect/gRPC messages, the proxy keeps both `originalFrames` (decoded from
+the original payload) and `frames` (after applying any text/JSONPath rewrites)
+so the UI can display both views without losing the original data.
+
+Edited requests are tracked and exposed in the dashboard.
+
 ## 📊 Data Flow
 
 ### Resource Upload
@@ -204,11 +255,11 @@ UI Form → POST /api/resources
          ↓
     Multer file upload
          ↓
-    Save to storage/resources/
+    Save file to server/storage/
          ↓
     Update localResources Map
          ↓
-    Save resources.json
+    Save resources.json metadata file
          ↓
     Return success
 ```
@@ -272,7 +323,6 @@ UI Toggle → POST /api/interactive-mode
 
 ### Unit Tests
 Currently no automated tests. Manual testing via:
-- `examples/test-proxy.js` - Basic proxy functionality
 - Web UI - Manual testing of all features
 
 ### Test Scenarios
@@ -288,10 +338,8 @@ Currently no automated tests. Manual testing via:
 ## 📈 Future Improvements
 
 Potential enhancements:
-- Request/response modification rules
 - Custom response delays
 - Request replay functionality
-- Export logs to file
 - Automated tests
 - Performance metrics
 - Request throttling
@@ -302,11 +350,11 @@ Potential enhancements:
 ### Backend
 - **Node.js** - JavaScript runtime
 - **Express** - Web framework
-- **http-proxy** - HTTP proxy functionality
+- **undici** - HTTP client for upstream proxying
 - **node-forge** - Certificate generation for MITM
 - **ws** - WebSocket support
 - **multer** - File upload handling
-- **axios** - HTTP client
+- **fzstd** - Zstandard decompression (via WebAssembly bindings)
 
 ### Frontend
 - **React** - UI library
@@ -320,7 +368,12 @@ Potential enhancements:
 ### server/storage/config.json
 ```json
 {
-  "interactiveModeEnabled": true
+  "interactiveModeEnabled": true,
+  "editRulesEnabled": true,
+  "localResourcesEnabled": true,
+  "filterRulesEnabled": true,
+  "blockedRulesEnabled": true,
+  "filterMode": "focus"
 }
 ```
 
@@ -329,17 +382,67 @@ Potential enhancements:
 {
   "/api/users": {
     "contentType": "application/json",
-    "filePath": "storage/resources/1234567890.json",
+    "filePath": "server/storage/1234567890.json",
     "uploadDate": "2025-01-11T19:00:00.000Z"
   }
 }
 ```
 
-### server/blocked-urls.json
+### server/storage/blocked-urls.json
 ```json
 [
-  "https://ads.example.com",
-  "https://tracking.example.com"
+  {
+    "id": "block-1",
+    "enabled": true,
+    "name": "Ads",
+    "url": "https://ads.example.com"
+  },
+  {
+    "id": "block-2",
+    "enabled": true,
+    "name": "Tracking",
+    "url": "https://tracking.example.com"
+  }
+]
+```
+
+### server/storage/filter-urls.json
+```json
+[
+  {
+    "id": "filter-1",
+    "enabled": true,
+    "name": "Focus example API",
+    "url": "https://api.example.com/",
+    "mode": "focus"
+  }
+]
+```
+
+### server/storage/edit-rules.json
+```json
+[
+  {
+    "id": "edit-1",
+    "enabled": true,
+    "kind": "text",
+    "name": "Mask API keys",
+    "start": "api_key=",
+    "end": "",
+    "replacement": "api_key=***",
+    "useRegex": false,
+    "caseSensitive": false
+  },
+  {
+    "id": "edit-2",
+    "enabled": true,
+    "kind": "jsonPath",
+    "name": "GetChatMessage: root.f2",
+    "url": "YourApiService/YourMethod",
+    "path": "root.f2",
+    "value": "Custom prompt text",
+    "valueType": "string"
+  }
 ]
 ```
 

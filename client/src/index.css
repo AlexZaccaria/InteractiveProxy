@@ -41,3 +41,85 @@ code {
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* Custom styles for react-json-tree to enhance readability and visual hierarchy */
+
+/* Target all labels (keys) in JSON tree */
+ul[style*="list-style: none"] label {
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  /* prevent the wrapper <label> from adding its own underline */
+  text-decoration: none !important;
+  border-bottom: none !important;
+}
+
+/* Make root level keys bolder (no extra underline, inner span handles it) */
+ul[style*="list-style: none"]>li>label {
+  font-weight: 700 !important;
+  padding-bottom: 0 !important;
+  border-bottom: none !important;
+  /* depth 1 (root) key color */
+  color: #facc15 !important;
+  /* amber-300 */
+}
+
+/* Depth-based key colors for nested levels */
+/* depth 2 */
+ul[style*="list-style: none"]>li>ul>li>label {
+  color: #eab308 !important;
+  /* amber-500 */
+}
+
+/* depth 3 */
+ul[style*="list-style: none"]>li>ul>li>ul>li>label {
+  color: #d97706 !important;
+  /* amber-600 */
+}
+
+/* depth 4+ */
+ul[style*="list-style: none"]>li>ul>li>ul>li>ul li>label {
+  color: #b45309 !important;
+  /* amber-700 */
+}
+
+/* Style the type indicators (e.g., "13 keys", "{}", "[]") in italic */
+ul[style*="list-style: none"] span[style*="cursor: default"] {
+  font-style: italic !important;
+  opacity: 0.7 !important;
+  font-size: 0.9em !important;
+}
+
+/* Add indentation guides for nested levels */
+ul[style*="list-style: none"] ul {
+  border-left-width: 1px !important;
+  border-left-style: solid !important;
+  border-left-color: transparent !important;
+  margin-left: 0.5em !important;
+  padding-left: 0.75em !important;
+}
+
+/* Depth-based line colors matching key colors */
+/* depth 2 (children of root) */
+ul[style*="list-style: none"]>li>ul {
+  border-left-color: rgba(234, 179, 8, 0.35) !important;
+  /* amber-500 */
+}
+
+/* depth 3 */
+ul[style*="list-style: none"]>li>ul>li>ul {
+  border-left-color: rgba(217, 119, 6, 0.45) !important;
+  /* amber-600 */
+}
+
+/* depth 4+ */
+ul[style*="list-style: none"]>li>ul>li>ul>li>ul {
+  border-left-color: rgba(180, 83, 9, 0.55) !important;
+  /* amber-700 */
+}
+
+/* Enhance the arrow indicators */
+ul[style*="list-style: none"] div[style*="transform: rotateZ"] {
+  opacity: 0.8 !important;
+  filter: drop-shadow(0 0 2px rgba(226, 232, 240, 0.3)) !important;
+}

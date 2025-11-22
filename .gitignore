@@ -9,6 +9,7 @@ dist/
 # Storage and logs
 server/logs/
 server/certs/
+server/storage/
 
 # Environment variables
 .env

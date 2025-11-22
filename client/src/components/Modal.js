@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, HelpCircle, Info } from 'lucide-react';
 
+/**
+ * Generic modal dialog used for alerts, confirmations and optional text input.
+ *
+ * @param {Object} props
+ * @param {boolean} props.isOpen Whether the modal is visible.
+ * @param {() => void} props.onClose Callback to close the modal.
+ * @param {string} props.title Modal title.
+ * @param {string} props.message Main message body (supports newlines).
+ * @param {'info'|'confirm'|'warning'|'error'} [props.type] Visual style and icon type.
+ * @param {(value: boolean|string) => void} [props.onConfirm] Called when the user confirms or cancels.
+ * @param {boolean} [props.showInput] When true, shows a single-line text input.
+ * @param {string} [props.inputValue] Initial value for the input field.
+ * @param {string} [props.inputPlaceholder] Placeholder text for the input field.
+ * @param {string[]} [props.examples] Optional list of example strings rendered below the message.
+ */
 function Modal({ isOpen, onClose, title, message, type = 'info', onConfirm, showInput = false, inputValue = '', inputPlaceholder = '', examples = [] }) {
   const [inputText, setInputText] = useState(inputValue);
 
@@ -77,7 +92,7 @@ function Modal({ isOpen, onClose, title, message, type = 'info', onConfirm, show
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder={inputPlaceholder}
-              className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleConfirm();
@@ -91,13 +106,13 @@ function Modal({ isOpen, onClose, title, message, type = 'info', onConfirm, show
         <div className="flex items-center justify-end gap-2 p-4 border-t border-[#2a2a2a]">
           <button
             onClick={handleCancel}
-            className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white hover:bg-[#2a2a2a] rounded-lg transition-colors"
+            className="inline-flex items-center justify-center px-4 h-8 text-xs font-medium text-slate-400 hover:text-white hover:bg-[#2a2a2a] rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleConfirm}
-            className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors ${
+            className={`inline-flex items-center justify-center px-4 h-8 text-xs font-medium text-white rounded-lg transition-colors ${
               type === 'warning' || type === 'error'
                 ? 'bg-red-600 hover:bg-red-700'
                 : 'bg-blue-600 hover:bg-blue-700'

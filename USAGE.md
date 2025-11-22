@@ -8,8 +8,11 @@
 4. [Using the Proxy](#using-the-proxy)
 5. [Managing Local Resources](#managing-local-resources)
 6. [Request Analysis](#request-analysis)
-7. [Practical Examples](#practical-examples)
-8. [Interactive Mode](#interactive-mode)
+7. [Filter Rules](#filter-rules)
+8. [Blocked URLs](#blocked-urls)
+9. [Edit Rules](#edit-rules)
+10. [Practical Examples](#practical-examples)
+11. [Interactive Mode](#interactive-mode)
 
 ---
 
@@ -202,11 +205,90 @@ Click on a request to see:
 ### Real-time Statistics
 
 The dashboard shows:
-- **Total Requests**: Total number of intercepted requests
-- **Local Resources**: Requests served from local resources
+- **Total**: All traffic seen by the proxy (logged + bypassed)
+- **Served**: Requests served from local resources
 - **Proxied**: Requests forwarded to remote servers
-- **Blocked**: Number of blocked requests
+- **Blocked**: Requests blocked by blocked URL rules
+- **Redirected**: Requests bypassed by filter rules in `Ignore` mode
+- **Processed**: Requests fully processed by the proxy internals
+- **Edited**: Requests/responses modified by edit rules
 - **Errors**: Number of failed requests
+
+## 🎛️ Filter Rules
+
+Filter rules control which requests are fully processed by the proxy internals
+and shown in the UI. You can switch between two modes:
+
+- **Ignore**: matching URLs are bypassed from the detailed pipeline and
+  counted as **Redirected**
+- **Focus**: only matching URLs are fully processed; everything else is
+  bypassed
+
+In the **"Filters"** tab you can:
+
+- Add rules by URL (full or partial)
+- Enable/disable individual rules
+- Switch the global mode between Ignore and Focus
+- Use automatic suggestions based on recent traffic
+
+The dashboard counters show how many requests were redirected vs processed.
+
+## 🛡️ Blocked URLs
+
+Blocked URL rules are applied early in the pipeline. When a request matches an
+enabled blocked rule, the proxy returns an error response instead of
+forwarding the request.
+
+In the **"Blocked"** tab you can:
+
+- Add or remove blocked URL rules
+- Enable/disable blocking globally
+- Quickly block URLs directly from the logs view
+
+## ✏️ Edit Rules
+
+Edit rules let you rewrite traffic in-flight without touching the real backend
+services.
+
+In the **"Edit Rules"** tab you can:
+
+- Create **text rules** with a `start` pattern and a `replacement`
+- Choose between plain text or regular expressions
+- Toggle case sensitivity
+- Enable/disable the entire edit engine and individual rules
+
+Edit rules are applied to:
+
+- HTTP request and response bodies
+- Connect/gRPC envelopes (frames and messages)
+- WebSocket messages
+
+Edited requests are counted in the **Edited** counter on the dashboard.
+
+### JSONPath rules for JSON / Protobuf / Connect
+
+In addition to text rules, the proxy supports **JSONPath-based rules** for
+structured payloads (JSON and decoded Protobuf messages):
+
+- Each JSONPath rule is scoped by **URL pattern** so you can target specific
+  endpoints (e.g. `GetChatMessage`).
+- Rules define a **JSON path** (e.g. `root.f2`) and a **value** with a
+  `valueType` (string, number, boolean, null).
+- For plain JSON/HTTP bodies the rule updates the JSON object directly.
+- For Connect/gRPC payloads the proxy:
+  - decodes the Protobuf message into a JSON-like structure,
+  - applies JSONPath rules,
+  - re-encodes the Protobuf message, updating only fields that were
+    originally strings to keep the wire format valid.
+
+From the **Request Logs** view, when inspecting Connect/gRPC frames, JSON
+keys in the tree are clickable: clicking a key opens the Edit Rules panel
+pre-filled with:
+
+- the URL pattern of the current request,
+- the JSON path for the clicked key (e.g. `root.f2`),
+- the current value at that path as the initial replacement value,
+- a suggested rule name (`EndpointName: path`, e.g. `GetChatMessage: root.f2`).
 
 ## 💡 Practical Examples
 

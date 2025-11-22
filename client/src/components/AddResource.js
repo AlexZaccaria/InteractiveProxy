@@ -9,6 +9,15 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
+/**
+ * Form for creating a new local resource override.
+ *
+ * Users can bind either a file or raw text content to a given URL pattern so that
+ * matching requests are served locally instead of hitting the upstream server.
+ *
+ * @param {Object} props
+ * @param {() => void} props.onSuccess Callback invoked after a resource is successfully created.
+ */
 function AddResource({ onSuccess }) {
   const [mode, setMode] = useState('file'); // 'file' or 'text'
   const [url, setUrl] = useState('');
@@ -105,7 +114,7 @@ function AddResource({ onSuccess }) {
           <button
             type="button"
             onClick={() => setMode('file')}
-            className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors border ${
+            className={`flex-1 h-8 px-4 rounded-lg text-xs font-medium transition-colors border ${
               mode === 'file'
                 ? 'bg-blue-600 text-white border-blue-600'
                 : 'bg-[#0a0a0a] text-slate-400 border-[#2a2a2a] hover:border-blue-500 hover:text-blue-400'
@@ -120,7 +129,7 @@ function AddResource({ onSuccess }) {
           <button
             type="button"
             onClick={() => setMode('text')}
-            className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors border ${
+            className={`flex-1 h-8 px-4 rounded-lg text-xs font-medium transition-colors border ${
               mode === 'text'
                 ? 'bg-blue-600 text-white border-blue-600'
                 : 'bg-[#0a0a0a] text-slate-400 border-[#2a2a2a] hover:border-blue-500 hover:text-blue-400'
@@ -147,7 +156,7 @@ function AddResource({ onSuccess }) {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="es: /api/data.json o https://example.com/api/data.json"
-              className="w-full px-4 py-3 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
               required
             />
             <p className="mt-2 text-xs text-slate-400">
@@ -163,7 +172,7 @@ function AddResource({ onSuccess }) {
             <select
               value={contentType}
               onChange={(e) => setContentType(e.target.value)}
-              className="w-full px-4 py-3 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="text/plain">text/plain</option>
               <option value="text/html">text/html</option>
@@ -225,7 +234,7 @@ function AddResource({ onSuccess }) {
                 onChange={(e) => setTextContent(e.target.value)}
                 placeholder="Inserisci il contenuto testuale, JSON, HTML, ecc..."
                 rows={12}
-                className="w-full px-4 py-3 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono resize-none"
                 required
               />
               <p className="mt-2 text-xs text-slate-400">
@@ -254,7 +263,7 @@ function AddResource({ onSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-6 bg-[#0a0a0a] border-2 border-blue-600 hover:bg-blue-600 disabled:bg-[#0a0a0a] disabled:border-[#2a2a2a] disabled:text-slate-600 text-blue-400 hover:text-white font-medium rounded-lg transition-colors flex items-center justify-center space-x-2"
+            className="w-full h-8 px-4 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-white disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50 transition-colors flex items-center justify-center gap-2 text-xs font-medium"
           >
             {loading ? (
               <>

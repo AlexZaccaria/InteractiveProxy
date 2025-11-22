@@ -52,33 +52,32 @@ Go back to the web interface and navigate to **"Request Logs"** to see all inter
 
 ## 📚 Complete Documentation
 
-Read [USAGE.md](USAGE.md) for the complete guide.
+- [USAGE.md](USAGE.md) – Complete usage guide
+- [ARCHITECTURE.md](ARCHITECTURE.md) – Internal architecture and request flow
+- [INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md) – HTTPS MITM certificate installation
 
 ## ✨ Main Features
 
-- ✅ **Automatic interception** of all requests
+- ✅ **Automatic interception** of HTTP/HTTPS/WebSocket traffic
 - ✅ **Custom local resources** (JSON, HTML, images, etc.)
 - ✅ **Transparent proxy** to remote servers
-- ✅ **Real-time analysis** of all traffic
-- ✅ **Advanced filters** by method, source, text search
+- ✅ **Real-time analysis** of all processed traffic
+- ✅ **Advanced filters & rules** (methods, sources, text search, blocked URLs, filter modes Ignore/Focus)
+- ✅ **Live edit rules** to rewrite requests/responses in-flight
 - ✅ **Modern UI** with React and TailwindCSS
-- ✅ **Live statistics** of traffic
+- ✅ **Live statistics** of traffic with dashboard counters
 - ✅ **Interactive Mode** toggle to save resources when not monitoring
 
 ## 🛠️ Project Structure
 
 ```
 proxy/
-├── server/              # Node.js backend
-│   ├── index.js        # Main proxy server
-│   ├── storage/        # Uploaded local resources
-│   └── logs/           # Request logs
-├── client/             # React frontend
-│   ├── src/
-│   │   ├── App.js     # Main component
-│   │   └── components/ # UI components
-│   └── public/
-└── package.json
+├── server/              # Node.js backend (HTTP/HTTPS, WebSocket, rules)
+│   ├── index.js         # Main proxy server
+│   └── storage/         # Persistent config, resources and rules
+├── client/              # React frontend
+│   └── src/             # App.js and UI components
+└── package.json         # Root scripts and dependencies
 ```
 
 ## 🔧 Useful Commands
