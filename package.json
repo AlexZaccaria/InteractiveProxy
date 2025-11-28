@@ -1,0 +1,57 @@
+{
+  "name": "interactive-proxy",
+  "version": "1.0.0",
+  "description": "Interactive Proxy - Development proxy server with modern UI for HTTP/HTTPS/WebSocket interception, local resource management, and request analysis",
+  "main": "server/index.js",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "node dev-client.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "lint:server": "eslint \"server/**/*.js\"",
+    "lint:client": "eslint \"client/src/**/*.{js,jsx}\" --max-warnings=0",
+    "build": "node build-client.js",
+    "install-client": "npm --prefix client install",
+    "install-all": "npm install && npm run install-client"
+  },
+  "keywords": [
+    "proxy",
+    "http",
+    "https",
+    "websocket",
+    "mitm",
+    "interceptor",
+    "debugging",
+    "development",
+    "mock",
+    "testing",
+    "request-analysis",
+    "local-resources"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/interactive-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/interactive-proxy/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/interactive-proxy#readme",
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "fzstd": "^0.1.1",
+    "multer": "^2.0.2",
+    "node-forge": "^1.3.1",
+    "undici": "^7.16.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}

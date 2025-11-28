@@ -1,0 +1,6 @@
+{
+    "uiPort": 3050,
+    "backendPort": 8050,
+    "backendHost": "localhost",
+    "backendProtocol": "http"
+}

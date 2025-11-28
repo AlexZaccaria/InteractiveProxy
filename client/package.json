@@ -1,0 +1,41 @@
+{
+  "name": "interactive-proxy-client",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "autoprefixer": "^10.4.19",
+    "axios": "^1.13.2",
+    "lucide-react": "^0.553.0",
+    "postcss": "^8.4.35",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-json-tree": "^0.20.0",
+    "react-scripts": "^5.0.1",
+    "tailwindcss": "^3.4.17"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "proxyNote": "Proxy configuration moved to client/src/config/appConfig.json"
+}
