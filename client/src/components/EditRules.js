@@ -34,6 +34,53 @@ function getRulePreviewText(rule) {
 }
 
 /**
+ * Parse a raw multiline string into an array of non-empty trimmed variants.
+ * Used to map the UI representation of start/end markers (one per line)
+ * into the array format expected by the backend edit-rule normaliser.
+ *
+ * @param {string} value
+ * @returns {string[]}
+ */
+const parseVariantLines = (value) => {
+  if (!value) return [];
+  return String(value)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+};
+
+/**
+ * Build a normalised list of unique, trimmed markers from an optional array
+ * of variant markers. This helper is used both when editing a rule and when
+ * rendering the rule summary.
+ *
+ * @param {string[] | undefined | null} variants
+ * @returns {string[]}
+ */
+const buildMarkerList = (variants) => {
+  /** @type {string[]} */
+  const markers = [];
+  const seen = new Set();
+
+  const addMarker = (raw) => {
+    if (raw === null || raw === undefined) return;
+    const value = String(raw).trim();
+    if (!value) return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    markers.push(value);
+  };
+
+  if (Array.isArray(variants)) {
+    for (const variant of variants) {
+      addMarker(variant);
+    }
+  }
+
+  return markers;
+};
+
+/**
  * Live edit rules configuration panel.
  *
  * This component lets the user view, create and edit both text-based and JSONPath-based
@@ -69,8 +116,8 @@ function EditRules({
   const [formData, setFormData] = useState({
     kind: 'text',
     name: '',
-    start: '',
-    end: '',
+    startVariantsText: '',
+    endVariantsText: '',
     replacement: '',
     enabled: true,
     useRegex: false,
@@ -119,8 +166,8 @@ function EditRules({
           ? initialJsonPathSeed.target
           : 'request',
       enabled: true,
-      start: '',
-      end: '',
+      startVariantsText: '',
+      endVariantsText: '',
       replacement: '',
       useRegex: false,
       caseSensitive: false
@@ -195,6 +242,12 @@ function EditRules({
     }
   };
 
+  /**
+   * Enter edit mode for a given rule, initialising the form state
+   * according to the rule kind and existing markers.
+   *
+   * @param {{ id: string, kind?: string, name?: string }} rule
+   */
   const handleEdit = (rule) => {
     setEditingRule(rule.id);
     if (rule.kind === 'jsonPath') {
@@ -202,8 +255,8 @@ function EditRules({
       setFormData({
         kind: 'jsonPath',
         name: rule.name || '',
-        start: '',
-        end: '',
+        startVariantsText: '',
+        endVariantsText: '',
         replacement: '',
         enabled: rule.enabled !== false,
         useRegex: false,
@@ -219,11 +272,13 @@ function EditRules({
       });
     } else {
       setIsCreating(false);
+      const startMarkers = buildMarkerList(rule.startVariants);
+      const endMarkers = buildMarkerList(rule.endVariants);
       setFormData({
         kind: 'text',
         name: rule.name || '',
-        start: rule.start || '',
-        end: rule.end || '',
+        startVariantsText: startMarkers.join('\n'),
+        endVariantsText: endMarkers.join('\n'),
         replacement: rule.replacement || '',
         enabled: rule.enabled !== false,
         useRegex: rule.useRegex === true,
@@ -242,13 +297,16 @@ function EditRules({
     }
   };
 
+  /**
+   * Start creating a new text rule with default values.
+   */
   const handleCreate = () => {
     setIsCreating(true);
     setFormData({
       kind: 'text',
       name: '',
-      start: '',
-      end: '',
+      startVariantsText: '',
+      endVariantsText: '',
       replacement: '',
       enabled: true,
       useRegex: false,
@@ -263,14 +321,18 @@ function EditRules({
     });
   };
 
+  /**
+   * Exit create/edit mode and reset the form to its initial text-rule
+   * state.
+   */
   const handleCancel = () => {
     setEditingRule(null);
     setIsCreating(false);
     setFormData({
       kind: 'text',
       name: '',
-      start: '',
-      end: '',
+      startVariantsText: '',
+      endVariantsText: '',
       replacement: '',
       enabled: true,
       useRegex: false,
@@ -283,7 +345,26 @@ function EditRules({
     });
   };
 
+  /**
+   * Persist the current rule form, creating or updating a backend edit rule.
+   *
+   * For text rules, the UI always works with marker lists. All non-empty
+   * lines from the start/end marker textareas are sent as
+   * `startVariants` / `endVariants`, which the backend expands into concrete
+   * start/end combinations. The legacy `start`/`end` fields are no longer
+   * sent by the client.
+   *
+   * @returns {Promise<void>}
+   */
   const handleSave = async () => {
+    let startMarkers = [];
+    let endMarkers = [];
+
+    if (formData.kind === 'text') {
+      startMarkers = parseVariantLines(formData.startVariantsText);
+      endMarkers = parseVariantLines(formData.endVariantsText);
+    }
+
     if (formData.kind === 'jsonPath') {
       if (!formData.url.trim() || !formData.path.trim()) {
         const msg = 'For a JSONPath rule you must specify both the URL and the JSON path.';
@@ -295,15 +376,18 @@ function EditRules({
         return;
       }
     } else {
-      if (!formData.start && !formData.end) {
+      const hasStartMarkers = startMarkers.length > 0;
+      const hasEndMarkers = endMarkers.length > 0;
+
+      if (!hasStartMarkers && !hasEndMarkers) {
         if (showAlert) {
           showAlert(
             'Missing match boundaries',
-            'Please provide at least a start or end string so the proxy knows which part of the content to replace.',
+            'Please provide at least one start or end marker (one per line) so the proxy knows which part of the content to replace.',
             'warning'
           );
         } else {
-          alert('Please provide at least a start or end string');
+          alert('Please provide at least one start or end marker before saving this rule.');
         }
         return;
       }
@@ -321,23 +405,28 @@ function EditRules({
             target: formData.target || 'request',
             enabled: formData.enabled !== false
           }
-        : {
-            kind: 'text',
-            name: formData.name,
-            start: formData.start,
-            end: formData.end,
-            replacement: formData.replacement,
-            enabled: formData.enabled !== false,
-            useRegex: formData.useRegex === true,
-            caseSensitive: formData.caseSensitive === true,
-            // Optional URL/target fields for text rules; when url is empty the
-            // rule is global, and when target is omitted it defaults to both.
-            url: formData.url || '',
-            target:
-              formData.target === 'request' || formData.target === 'response' || formData.target === 'both'
-                ? formData.target
-                : 'both'
-          };
+        : (() => {
+            const startVariants = startMarkers;
+            const endVariants = endMarkers;
+
+            return {
+              kind: 'text',
+              name: formData.name,
+              replacement: formData.replacement,
+              enabled: formData.enabled !== false,
+              useRegex: formData.useRegex === true,
+              caseSensitive: formData.caseSensitive === true,
+              // Optional URL/target fields for text rules; when url is empty the
+              // rule is global, and when target is omitted it defaults to both.
+              url: formData.url || '',
+              target:
+                formData.target === 'request' || formData.target === 'response' || formData.target === 'both'
+                  ? formData.target
+                  : 'both',
+              startVariants,
+              endVariants
+            };
+          })();
 
     try {
       setSaving(true);
@@ -432,13 +521,15 @@ function EditRules({
             <p className="font-medium text-cyan-400 mb-1">How it works</p>
             <p>
               Rules are applied universally across all contexts (headers, bodies, Connect frames, WebSocket messages).
-              Text rules use start/end strings to match text patterns: everything from the start marker through the end marker (inclusive) is replaced with your value.
+              Text rules use <span className="font-semibold">start/end markers</span> to match text patterns: everything from the start marker through the end marker (inclusive) is replaced with your value.
+              Markers are entered as lists (one per line) and all non-empty lines are treated as <span className="font-semibold">OR variants</span>, so a single rule can cover many similar cases.
               JSON Path rules let you target structured fields (for example in JSON or protobuf payloads) and overwrite them using a path and value type.
               Only traffic that passes through the proxy pipeline is affected.
             </p>
             <p className="mt-2 text-xs text-slate-400">
-              <strong>Note:</strong> If you provide only a start string without an end string, the replacement will continue to the end of the content.
-              This allows you to replace everything from a marker onwards without needing to specify where to stop.
+              <strong>Note:</strong> If you provide only start markers and leave end markers empty, the replacement will continue to the end of the content.
+              This allows you to replace everything from a marker onwards without needing to specify where to stop. When both start and end marker lists are provided,
+              the proxy applies the rule to every matching start/end combination.
             </p>
           </div>
         </div>
@@ -684,29 +775,35 @@ function EditRules({
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                      Start string
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">
+                      Start markers (one per line)
                     </label>
-                    <input
-                      type="text"
-                      value={formData.start}
-                      onChange={(e) => setFormData({ ...formData, start: e.target.value })}
-                      placeholder="Text before replacement"
-                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <textarea
+                      value={formData.startVariantsText}
+                      onChange={(e) => setFormData({ ...formData, startVariantsText: e.target.value })}
+                      placeholder="Each line is an alternative start marker that can trigger this rule."
+                      rows={3}
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
                     />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      All non-empty lines are treated as OR markers for the start boundary.
+                    </p>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                      End string
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">
+                      End markers (one per line)
                     </label>
-                    <input
-                      type="text"
-                      value={formData.end}
-                      onChange={(e) => setFormData({ ...formData, end: e.target.value })}
-                      placeholder="Text after replacement"
-                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <textarea
+                      value={formData.endVariantsText}
+                      onChange={(e) => setFormData({ ...formData, endVariantsText: e.target.value })}
+                      placeholder="Each line is an alternative end marker that can close the replacement block."
+                      rows={3}
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
                     />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Leave this empty to replace everything from the start marker to the end of the content.
+                    </p>
                   </div>
                 </div>
 
@@ -825,127 +922,140 @@ function EditRules({
         </div>
       ) : (
         <div className="space-y-3">
-          {rules.map((rule) => (
-            <div
-              key={rule.id}
-              className={`bg-[#0a0a0a] rounded-lg border p-4 transition-colors ${
-                editingRule === rule.id
-                  ? 'border-cyan-500/70'
-                  : 'border-[#2a2a2a] hover:border-cyan-500/60'
-              }`}
-            >
-              <div className="space-y-2">
-                {/* Header row: title + badges + actions */}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <h4 className="text-white font-medium truncate">
-                      {rule.name || 'Unnamed Rule'}
-                    </h4>
-                    {(rule.kind === 'jsonPath' || rule.kind === 'text') && (
-                      <div className="flex items-center gap-1">
-                        {(!rule.target || rule.target === 'request') && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-blue-500/20 border border-blue-500/40 text-blue-300">
-                            Request
-                          </span>
+          {rules.map((rule) => {
+            const startMarkers = buildMarkerList(rule.startVariants);
+            const endMarkers = buildMarkerList(rule.endVariants);
+
+            return (
+              <div
+                key={rule.id}
+                className={`bg-[#0a0a0a] rounded-lg border p-4 transition-colors ${
+                  editingRule === rule.id
+                    ? 'border-cyan-500/70'
+                    : 'border-[#2a2a2a] hover:border-cyan-500/60'
+                }`}
+              >
+                <div className="space-y-2">
+                  {/* Header row: title + badges + actions */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <h4 className="text-white font-medium truncate">
+                        {rule.name || 'Unnamed Rule'}
+                      </h4>
+                      {(rule.kind === 'jsonPath' || rule.kind === 'text') && (
+                        <div className="flex items-center gap-1">
+                          {(!rule.target || rule.target === 'request') && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-blue-500/20 border border-blue-500/40 text-blue-300">
+                              Request
+                            </span>
+                          )}
+                          {rule.target === 'response' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-green-500/20 border border-green-500/40 text-green-300">
+                              Response
+                            </span>
+                          )}
+                          {rule.target === 'both' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-yellow-500/20 border border-yellow-500/40 text-yellow-300">
+                              Both
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {!rule.enabled && (
+                        <span className="px-2 py-1 rounded text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30 whitespace-nowrap">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleToggleEnabled(rule)}
+                        disabled={togglingId === rule.id}
+                        className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors text-xs font-medium ${
+                          rule.enabled
+                            ? 'bg-cyan-600/20 border border-cyan-500/50 text-cyan-300 hover:bg-cyan-600/30'
+                            : 'bg-slate-700/20 border border-slate-600/50 text-slate-400 hover:bg-slate-700/30'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        title={rule.enabled ? 'Disable' : 'Enable'}
+                      >
+                        {togglingId === rule.id ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Power className="w-4 h-4" />
                         )}
-                        {rule.target === 'response' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-green-500/20 border border-green-500/40 text-green-300">
-                            Response
-                          </span>
+                      </button>
+                      <button
+                        onClick={() => handleEdit(rule)}
+                        disabled={isCreating || (editingRule && editingRule !== rule.id)}
+                        className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-blue-600/20 hover:bg-blue-600/30 disabled:bg-slate-700/20 disabled:text-slate-600 text-blue-400 border border-blue-600/30 disabled:border-slate-600/30 rounded-lg transition-colors disabled:cursor-not-allowed text-xs font-medium"
+                        title="Edit"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(rule.id)}
+                        disabled={isCreating || deletingId === rule.id}
+                        className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
+                        title="Remove"
+                      >
+                        {deletingId === rule.id ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
                         )}
-                        {rule.target === 'both' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-yellow-500/20 border border-yellow-500/40 text-yellow-300">
-                            Both
-                          </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Full-width description content */}
+                  <div className="space-y-1 text-sm text-slate-400">
+                    {startMarkers.length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <span className="text-slate-500 shrink-0">Start markers:</span>
+                        <div className="flex flex-col gap-0.5">
+                          {startMarkers.map((marker, idx) => (
+                            <code key={idx} className="text-slate-300 break-all">{marker}</code>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {endMarkers.length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <span className="text-slate-500 shrink-0">End markers:</span>
+                        <div className="flex flex-col gap-0.5">
+                          {endMarkers.map((marker, idx) => (
+                            <code key={idx} className="text-slate-300 break-all">{marker}</code>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {rule.kind === 'jsonPath' && rule.path && (
+                      <div className="flex items-start gap-2">
+                        <span className="text-slate-500 shrink-0">Path:</span>
+                        <code className="text-slate-300 break-all">{rule.path}</code>
+                      </div>
+                    )}
+                    <div className="flex items-start gap-2">
+                      <span className="text-slate-500 shrink-0">Replace:</span>
+                      <code className="text-cyan-300 break-all">{getRulePreviewText(rule)}</code>
+                    </div>
+                    {(rule.useRegex || rule.caseSensitive) && (
+                      <div className="flex items-center gap-3 mt-2">
+                        {rule.useRegex && (
+                          <span className="text-xs text-blue-400">Regex</span>
+                        )}
+                        {rule.caseSensitive && (
+                          <span className="text-xs text-purple-400">Case Sensitive</span>
                         )}
                       </div>
                     )}
-                    {!rule.enabled && (
-                      <span className="px-2 py-1 rounded text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30 whitespace-nowrap">
-                        Disabled
-                      </span>
-                    )}
                   </div>
-
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => handleToggleEnabled(rule)}
-                      disabled={togglingId === rule.id}
-                      className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors text-xs font-medium ${
-                        rule.enabled
-                          ? 'bg-cyan-600/20 border border-cyan-500/50 text-cyan-300 hover:bg-cyan-600/30'
-                          : 'bg-slate-700/20 border border-slate-600/50 text-slate-400 hover:bg-slate-700/30'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      title={rule.enabled ? 'Disable' : 'Enable'}
-                    >
-                      {togglingId === rule.id ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Power className="w-4 h-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleEdit(rule)}
-                      disabled={isCreating || (editingRule && editingRule !== rule.id)}
-                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-blue-600/20 hover:bg-blue-600/30 disabled:bg-slate-700/20 disabled:text-slate-600 text-blue-400 border border-blue-600/30 disabled:border-slate-600/30 rounded-lg transition-colors disabled:cursor-not-allowed text-xs font-medium"
-                      title="Edit"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(rule.id)}
-                      disabled={isCreating || deletingId === rule.id}
-                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
-                      title="Remove"
-                    >
-                      {deletingId === rule.id ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Full-width description content */}
-                <div className="space-y-1 text-sm text-slate-400">
-                  {rule.start && (
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0">Start:</span>
-                      <code className="text-slate-300 break-all">{rule.start}</code>
-                    </div>
-                  )}
-                  {rule.end && (
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0">End:</span>
-                      <code className="text-slate-300 break-all">{rule.end}</code>
-                    </div>
-                  )}
-                  {rule.kind === 'jsonPath' && rule.path && (
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0">Path:</span>
-                      <code className="text-slate-300 break-all">{rule.path}</code>
-                    </div>
-                  )}
-                  <div className="flex items-start gap-2">
-                    <span className="text-slate-500 shrink-0">Replace:</span>
-                    <code className="text-cyan-300 break-all">{getRulePreviewText(rule)}</code>
-                  </div>
-                  {(rule.useRegex || rule.caseSensitive) && (
-                    <div className="flex items-center gap-3 mt-2">
-                      {rule.useRegex && (
-                        <span className="text-xs text-blue-400">Regex</span>
-                      )}
-                      {rule.caseSensitive && (
-                        <span className="text-xs text-purple-400">Case Sensitive</span>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

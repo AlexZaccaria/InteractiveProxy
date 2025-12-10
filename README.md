@@ -223,6 +223,7 @@ npm run build            # Build frontend for production
 - Choose between plain text or regex, case sensitive or not
 - Scope text rules optionally by URL and by phase (`request`, `response`,
   or `both`)
+- Support multiple start/end marker variants (via `startVariants` / `endVariants`) for a single text rule so that one rule can cover many similar patterns (OR semantics)
 - Use JSONPath rules to target structured JSON/Protobuf fields based on
   URL and JSON path
 - URL patterns for edit rules support:

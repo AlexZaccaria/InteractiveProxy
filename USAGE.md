@@ -303,7 +303,8 @@ services.
 
 In the **"Edit Rules"** tab you can:
 
-- Create **text rules** with a `start` pattern and a `replacement`
+- Create **text rules** that search for a portion of the content and replace it with your value
+- Provide one or more boundary markers (one per line in the UI); all non-empty lines are treated as alternative patterns (OR semantics), so a single rule can match many similar cases
 - Choose between plain text or regular expressions
 - Toggle case sensitivity
 - Enable/disable the entire edit engine and individual rules

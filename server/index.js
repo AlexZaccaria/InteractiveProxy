@@ -712,7 +712,11 @@ function rebuildBypassUrlsForCurrentMode () {
 function deserializeEditRuleFromDisk (rule = {}) {
   const normalized = { ...rule }
 
-  const STRING_FIELDS = ['value', 'start', 'end', 'replacement', 'name', 'path', 'url']
+  // Convert any multi-segment on-disk representation back into flat strings so
+  // that the rest of the code can treat these fields uniformly. This applies
+  // to generic string fields shared by both jsonPath and text rules; marker
+  // lists for text rules are always represented via startVariants/endVariants.
+  const STRING_FIELDS = ['value', 'replacement', 'name', 'path', 'url']
 
   for (const key of STRING_FIELDS) {
     const current = normalized[key]
@@ -724,6 +728,20 @@ function deserializeEditRuleFromDisk (rule = {}) {
   return normalized
 }
 
+/**
+ * Normalise a raw edit rule (either jsonPath or text) into the canonical
+ * in-memory format used by the proxy.
+ *
+ * For `jsonPath` rules the structure is kept close to the on-disk
+ * representation, with light validation of valueType/target.
+ *
+ * For `text` rules the canonical model is entirely based on
+ * `startVariants` / `endVariants`, which are treated as OR-lists of markers
+ * for the start and end boundaries.
+ *
+ * @param {object} [rule]
+ * @returns {object}
+ */
 function normalizeEditRule (rule = {}) {
   const kind = rule.kind === 'jsonPath' ? 'jsonPath' : 'text'
 
@@ -756,7 +774,7 @@ function normalizeEditRule (rule = {}) {
     }
   }
 
-  // Default/legacy text rule. Text rules now support optional URL scoping and
+  // Default text rule. Text rules now support optional URL scoping and
   // request/response/both targeting, but for backwards compatibility existing
   // rules without an explicit target continue to apply to both directions.
   let normalizedTarget = 'both'
@@ -764,19 +782,40 @@ function normalizeEditRule (rule = {}) {
     normalizedTarget = rule.target
   }
 
+  /**
+   * Normalise an optional array of string variants, trimming each entry and
+   * rimuovendo le stringhe vuote. Restituisce sempre un nuovo array (anche
+   * quando non sono presenti varianti valide).
+   *
+   * @param {any} value
+   * @returns {string[]}
+   */
+  function normaliseVariantArray (value) {
+    if (!Array.isArray(value)) return []
+    return value
+      .map(entry => safeString(entry).trim())
+      .filter(entry => entry.length > 0)
+  }
+
+  const startVariants = normaliseVariantArray(rule.startVariants)
+  const endVariants = normaliseVariantArray(rule.endVariants)
+
   return {
     id: rule.id || crypto.randomUUID(),
     enabled: rule.enabled !== false,
     kind: 'text',
     name: rule.name || '',
-    start: rule.start || '',
-    end: rule.end || '',
     replacement: rule.replacement || '',
     useRegex: rule.useRegex === true,
     caseSensitive: rule.caseSensitive === true,
     // Optional URL pattern; when non-empty, the rule will only be applied
     // when the current URL context matches it (see textRuleMatchesUrl).
     url: safeString(rule.url),
+    // Optional arrays of additional start/end variants used for OR matching.
+    // Questi non influenzano il formato legacy su disco e vengono espansi in
+    // più regole compilate all'interno di rebuildEditRuleCache.
+    startVariants,
+    endVariants,
     // Optional phase target; defaults to 'both' for text rules so that legacy
     // rules keep affecting both requests and responses unless narrowed.
     target: normalizedTarget
@@ -850,9 +889,13 @@ function serializeEditRuleForDisk (rule = {}) {
   }
 
   if (out && out.kind === 'text') {
-    splitIfLong('start')
-    splitIfLong('end')
     splitIfLong('replacement')
+
+    // The canonical model for text rules uses only startVariants/endVariants
+    // as marker lists; drop any legacy positional markers from the on-disk
+    // representation to keep the JSON clean and avoid confusion.
+    delete out.start
+    delete out.end
   }
 
   return out
@@ -1133,6 +1176,19 @@ function compileEditRule (rule) {
   return compiled
 }
 
+/**
+ * Rebuild the in-memory caches for edit rules (text + JSONPath).
+ *
+ * Behaviour:
+ * - JSONPath rules are validated and parsed into segments, and only rules with
+ *   a non-empty URL pattern are included.
+ * - Text rules support optional OR-variants via `startVariants` and
+ *   `endVariants`. All possible marker combinations are expanded into
+ *   individual compiled rules which share the same logical rule id.
+ *
+ * This keeps the on-disk/editable representation compact while allowing the
+ * runtime matcher to operate on simple start/end pairs.
+ */
 function rebuildEditRuleCache () {
   compiledEditRules = []
   compiledJsonPathRules = []
@@ -1179,9 +1235,65 @@ function rebuildEditRuleCache () {
       continue
     }
 
-    const compiled = compileEditRule(rule)
-    if (compiled) {
-      compiledEditRules.push(compiled)
+    // Text rules: expand the OR-variant marker lists into a set of simple
+    // start/end combinations. All variant combinations share the same logical
+    // rule id so that logging and usage reporting remain grouped. The
+    // canonical configuration surface for text rules is
+    // startVariants/endVariants only.
+    const variantStarts = Array.isArray(rule.startVariants)
+      ? rule.startVariants.map(entry => safeString(entry)).filter(s => s.length > 0)
+      : []
+    const variantEnds = Array.isArray(rule.endVariants)
+      ? rule.endVariants.map(entry => safeString(entry)).filter(s => s.length > 0)
+      : []
+
+    const allStarts = []
+    const allEnds = []
+
+    for (const s of variantStarts) {
+      if (!allStarts.includes(s)) allStarts.push(s)
+    }
+
+    for (const e of variantEnds) {
+      if (!allEnds.includes(e)) allEnds.push(e)
+    }
+
+    // If there are no usable markers at all, skip this text rule.
+    if (!allStarts.length && !allEnds.length) {
+      continue
+    }
+
+    const combinations = []
+
+    if (allStarts.length && allEnds.length) {
+      // Full cartesian product of start/end markers.
+      for (const start of allStarts) {
+        for (const end of allEnds) {
+          combinations.push({ start, end })
+        }
+      }
+    } else if (allStarts.length) {
+      // Only prefix markers: each start becomes an independent prefix rule.
+      for (const start of allStarts) {
+        combinations.push({ start, end: '' })
+      }
+    } else {
+      // Only suffix markers: each end becomes an independent suffix rule.
+      for (const end of allEnds) {
+        combinations.push({ start: '', end })
+      }
+    }
+
+    for (const combo of combinations) {
+      const variantRule = {
+        ...rule,
+        start: combo.start,
+        end: combo.end
+      }
+      const compiled = compileEditRule(variantRule)
+      if (compiled) {
+        compiledEditRules.push(compiled)
+      }
     }
   }
 }
@@ -2150,6 +2262,19 @@ function applyJsonPathRulesToProtobufBuffer (buffer, initialJson, context = {}) 
   }
 }
 
+/**
+ * Apply a single compiled text edit rule to the provided string.
+ *
+ * Honours per-rule target (request/response/both) e l'eventuale URL scoping
+ * prima di tentare la sostituzione. In caso di match aggiunge l'id della
+ * regola a `appliedSet` e restituisce il testo aggiornato.
+ *
+ * @param {{ rule: object, mode: string|null, useRegex: boolean, caseSensitive: boolean, start: string, end: string, regex?: RegExp }} compiled
+ * @param {string} text
+ * @param {Set<string>} appliedSet
+ * @param {{ requestUrl?: string, fullUrl?: string, phase?: string }|null} [context]
+ * @returns {{ text: string, changed: boolean }}
+ */
 function applyCompiledRuleToText (compiled, text, appliedSet, context) {
   const { rule, mode, useRegex, caseSensitive } = compiled
 
