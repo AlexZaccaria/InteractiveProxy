@@ -59,7 +59,7 @@ const CERTS_DIR = process.env.PROXY_CERTS_DIR
 // Logging & limits
 const MAX_LOG_ENTRIES = Number.isFinite(Number(process.env.PROXY_MAX_LOG_ENTRIES))
   ? Math.max(1, Number(process.env.PROXY_MAX_LOG_ENTRIES))
-  : 1000
+  : 5000
 
 // Maximum size for text previews stored in log entries (0 = no limit, default behaviour).
 // This controls how much of rawRequestBodyPreview/rawResponseBodyPreview and similar

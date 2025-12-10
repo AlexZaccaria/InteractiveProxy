@@ -83,7 +83,7 @@ The proxy server can be configured using environment variables.
 | `PROXY_STORAGE_DIR` | `server/storage` | Directory for persistent configuration |
 | `PROXY_LOGS_DIR` | `server/logs` | Directory for logs |
 | `PROXY_CERTS_DIR` | `server/certs` | Directory for certificates |
-| `PROXY_MAX_LOG_ENTRIES` | `1000` | Max number of requests to keep in memory |
+| `PROXY_MAX_LOG_ENTRIES` | `5000` | Max number of requests to keep in memory |
 | `PROXY_LOG_PREVIEW_MAX_BYTES` | `0` (unlimited) | Max bytes for body previews in UI |
 | `PROXY_LOG_DECOMPRESS_MAX_BYTES` | `0` (unlimited) | Max compressed body size to decompress for UI |
 | `PROXY_PROTOBUF_MAX_FIELDS` | `0` (unlimited) | Max fields to decode in Protobuf |
@@ -315,6 +315,35 @@ Edit rules are applied to:
 - WebSocket messages
 
 Edited requests are counted in the **Edited** counter on the dashboard.
+
+### Edit Rule Usage Report (API)
+
+To identify obsolete or rarely-used edit rules, the proxy exposes a lightweight
+usage report endpoint:
+
+```bash
+curl http://localhost:8050/api/edit-rules/usage
+```
+
+Response shape:
+
+```json
+{
+  "usage": {
+    "rule-id-1": 42,
+    "rule-id-2": 0
+  },
+  "totalRulesWithUsage": 1
+}
+```
+
+- `usage[ruleId]` is the number of **log entries** in which that rule was
+  applied at least once within the current in-memory log window.
+- Counters are updated incrementally as new logs are added and decremented when
+  old logs are evicted or cleared (e.g. via `DELETE /api/logs`).
+
+This keeps aggregation and payload size minimal while still allowing the
+frontend to join usage data with `/api/edit-rules` metadata.
 
 ### JSONPath rules for JSON / Protobuf / Connect
 

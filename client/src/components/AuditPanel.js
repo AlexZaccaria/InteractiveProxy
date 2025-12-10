@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, BarChart3, Clock, AlertTriangle, X } from 'lucide-react';
+import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react';
 import { buildApiUrl } from '../config/apiConfig';
 
 /**
@@ -9,52 +9,122 @@ import { buildApiUrl } from '../config/apiConfig';
  * it is opened via a hidden triple-click gesture on the header icon.
  */
 function AuditPanel({ onClose, routes }) {
-  const [latencyStats, setLatencyStats] = useState(null);
   const [errorBuckets, setErrorBuckets] = useState({});
   const [totalErrors, setTotalErrors] = useState(0);
   const [hostStats, setHostStats] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [editRuleUsage, setEditRuleUsage] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    const POLL_INTERVAL_MS = 5000;
 
-    const fetchAudit = async () => {
-      setLoading(true);
+    /**
+     * Fetch latest audit metrics (latency, errors, host stats) and
+     * edit rule usage snapshot. Called on mount and then on a fixed
+     * interval while the panel is open.
+     *
+     * @param {boolean} [isInitial=false] When true, shows the loading state.
+     * @returns {Promise<void>}
+     */
+    const fetchAudit = async (isInitial = false) => {
+      if (inFlight || cancelled) return;
+
+      inFlight = true;
+      if (isInitial) {
+        setLoading(true);
+      }
       setError(null);
+
       try {
-        const response = await fetch(buildApiUrl('/api/audit'));
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        const auditPromise = fetch(buildApiUrl('/api/audit'));
+        const rulesPromise = fetch(buildApiUrl('/api/edit-rules')).catch(() => null);
+        const usagePromise = fetch(buildApiUrl('/api/edit-rules/usage')).catch(() => null);
+
+        const [auditResponse, rulesResponse, usageResponse] = await Promise.all([
+          auditPromise,
+          rulesPromise,
+          usagePromise
+        ]);
+
+        if (!auditResponse || !auditResponse.ok) {
+          throw new Error(`HTTP ${auditResponse ? auditResponse.status : 'AUDIT_FAILED'}`);
         }
-        const data = await response.json();
+
+        const auditData = await auditResponse.json();
+
         if (!cancelled) {
           const {
-            latencyStats: latency = null,
             errorBuckets: buckets = {},
             totalErrors: total = 0,
             hostStats: hosts = []
-          } = data || {};
-          setLatencyStats(latency);
+          } = auditData || {};
           setErrorBuckets(buckets || {});
           setTotalErrors(typeof total === 'number' ? total : 0);
           setHostStats(Array.isArray(hosts) ? hosts : []);
+        }
+
+        // Best-effort edit rule usage snapshot; failures here should not
+        // affect the core audit metrics UI.
+        if (!cancelled && rulesResponse && rulesResponse.ok && usageResponse && usageResponse.ok) {
+          try {
+            const rulesJson = await rulesResponse.json();
+            const usageJson = await usageResponse.json();
+
+            const rules = Array.isArray(rulesJson?.rules) ? rulesJson.rules : [];
+            const usageMap = usageJson && typeof usageJson === 'object' ? usageJson.usage || {} : {};
+
+            const snapshot = rules
+              .filter((rule) => rule && rule.id)
+              .map((rule) => {
+                const countRaw = usageMap[rule.id];
+                const count =
+                  typeof countRaw === 'number' && Number.isFinite(countRaw) && countRaw > 0
+                    ? countRaw
+                    : 0;
+                return {
+                  id: rule.id,
+                  name: rule.name || '(unnamed rule)',
+                  enabled: rule.enabled !== false,
+                  kind: rule.kind || 'text',
+                  url: rule.url || '',
+                  target: rule.target || 'both',
+                  count
+                };
+              })
+              // Sort with rarely-used rules first to highlight obsolete ones.
+              .sort((a, b) => {
+                if (a.count !== b.count) return a.count - b.count;
+                return a.name.localeCompare(b.name);
+              });
+
+            setEditRuleUsage(snapshot);
+          } catch {
+            setEditRuleUsage([]);
+          }
         }
       } catch (err) {
         if (!cancelled) {
           setError(err?.message || String(err));
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && isInitial) {
           setLoading(false);
         }
+        inFlight = false;
       }
     };
 
-    fetchAudit();
+    fetchAudit(true);
+    const intervalId = setInterval(() => {
+      fetchAudit(false);
+    }, POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
   }, []);
 
@@ -213,52 +283,6 @@ function AuditPanel({ onClose, routes }) {
             </div>
           )}
 
-          {/* Summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="border border-[#2a2a2a] rounded-xl bg-[#0b0b0b] p-3 flex items-center gap-3">
-              <div className="bg-blue-500/20 p-1.5 rounded-lg">
-                <Clock className="w-4 h-4 text-blue-400" />
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-400">Measured calls</div>
-                <div className="text-lg font-semibold text-slate-100">
-                  {latencyStats ? latencyStats.count : 0}
-                </div>
-                <div className="text-[11px] text-slate-500">with upstreamDurationMs</div>
-              </div>
-            </div>
-
-            <div className="border border-[#2a2a2a] rounded-xl bg-[#0b0b0b] p-3 flex items-center gap-3">
-              <div className="bg-emerald-500/15 p-1.5 rounded-lg">
-                <BarChart3 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-400">Latency (P50 / P90 / P99)</div>
-                <div className="text-[13px] font-semibold text-slate-100">
-                  {latencyStats
-                    ? `${formatMs(latencyStats.median)} · ${formatMs(latencyStats.p90)} · ${formatMs(latencyStats.p99)}`
-                    : 'n/a'}
-                </div>
-                {latencyStats && (
-                  <div className="text-[11px] text-slate-500">
-                    avg {formatMs(latencyStats.avg)}, range {formatMs(latencyStats.min)} – {formatMs(latencyStats.max)}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="border border-[#2a2a2a] rounded-xl bg-[#0b0b0b] p-3 flex items-center gap-3">
-              <div className="bg-red-500/15 p-1.5 rounded-lg">
-                <AlertTriangle className="w-4 h-4 text-red-400" />
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-400">Upstream errors</div>
-                <div className="text-lg font-semibold text-slate-100">{totalErrors}</div>
-                <div className="text-[11px] text-slate-500">categorised by error class</div>
-              </div>
-            </div>
-          </div>
-
           {/* Error buckets */}
           <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
             <div className="flex items-center justify-between mb-2">
@@ -296,6 +320,63 @@ function AuditPanel({ onClose, routes }) {
               </div>
             )}
           </div>
+
+          {/* Edit rules usage snapshot */}
+          {editRuleUsage && editRuleUsage.length > 0 && (
+            <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                  <BarChart3 className="w-3 h-3 text-cyan-400" />
+                  <span>Edit rules usage (current log window)</span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  source: /api/edit-rules & /api/edit-rules/usage
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
+                  <thead>
+                    <tr className="border-b border-[#2a2a2a] text-slate-400">
+                      <th className="py-1 pr-2">Rule</th>
+                      <th className="py-1 pr-2">Kind</th>
+                      <th className="py-1 pr-2">Target</th>
+                      <th className="py-1 pr-2">URL pattern</th>
+                      <th className="py-1 pr-2 text-right">Recent matches</th>
+                      <th className="py-1 pr-2 text-right">Enabled</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editRuleUsage.map((rule) => (
+                      <tr key={rule.id} className="border-b border-[#161616] last:border-0">
+                        <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
+                          {rule.name}
+                        </td>
+                        <td className="py-1 pr-2 text-slate-300">{rule.kind}</td>
+                        <td className="py-1 pr-2 text-slate-300">{rule.target}</td>
+                        <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
+                          {rule.url || '—'}
+                        </td>
+                        <td className="py-1 pr-2 text-right text-slate-200">
+                          {rule.count}
+                        </td>
+                        <td className="py-1 pr-2 text-right">
+                          <span
+                            className={
+                              rule.enabled
+                                ? 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-400/60'
+                                : 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-700/40 text-slate-400 border border-slate-600/60'
+                            }
+                          >
+                            {rule.enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Per-flow slowest routes from /api/dashboard */}
           {dashboardRoutesByHandling && (

@@ -637,6 +637,11 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     return saved ? JSON.parse(saved) : ['json', 'html', 'css', 'js', 'image', 'video', 'audio', 'font', 'other'];
   });
   
+  // In-memory selection of log IDs explicitly marked for export. This is
+  // purely a client-side convenience flag and does not persist across
+  // sessions.
+  const [exportSelection, setExportSelection] = useState(() => new Set());
+
   const [expandedLog, setExpandedLog] = useState(null);
   const [pinnedRewritesLogId, setPinnedRewritesLogId] = useState(null);
   const [showSourcesDropdown, setShowSourcesDropdown] = useState(false);
@@ -684,6 +689,27 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
         : [...prev, fileType]
     );
   };
+
+  /**
+   * Toggle inclusion of a log entry in the explicit export selection set.
+   * When at least one ID is selected, the export action will target only
+   * those entries instead of all filtered logs.
+   *
+   * @param {string|number} logId
+   */
+  const toggleExportSelection = useCallback((logId) => {
+    if (logId === null || logId === undefined) return;
+    const key = String(logId);
+    setExportSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
 
   const updateSearchHelpPosition = useCallback(() => {
     const el = searchHelpAnchorRef.current;
@@ -1011,6 +1037,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     // Treat clear-logs as a hard reset of the current result set
     setIsRefetchingFilters(true);
     setLogs([]);
+    setExportSelection(new Set());
     fetchLogs(0, false);
   }, [refreshToken, fetchLogs]);
 
@@ -1142,9 +1169,10 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
   /**
    * Export the current filtered log view as a JSON file.
    *
-   * This calls the backend `/api/logs/export` endpoint using the same
-   * filter parameters as the on-screen list, then triggers a download of
-   * the returned items as a `proxy-logs-<timestamp>.json` file.
+   * When one or more logs are explicitly marked for export in the UI,
+   * this will export only those IDs. When no IDs are selected, it
+   * preserves the legacy behaviour and exports all logs matching the
+   * current filters.
    */
   const exportLogs = useCallback(async () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1154,16 +1182,25 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
       const params = new URLSearchParams();
       params.set('offset', '0');
       params.set('limit', String(5000)); // export up to MAX_LOG_ENTRIES
+      
+      const selectedIds = Array.from(exportSelection).filter(Boolean);
 
-      if (searchTerm) params.set('search', searchTerm);
-      if (requestBodySearch) params.set('requestSearch', requestBodySearch);
-      if (responseSearchTerm) params.set('responseSearch', responseSearchTerm);
-      if (requestRewrittenOnly) params.set('requestRewrittenOnly', 'true');
-      if (responseRewrittenOnly) params.set('responseRewrittenOnly', 'true');
-      if (selectedSources.length) params.set('sources', selectedSources.join(','));
-      if (selectedMethods.length) params.set('methods', selectedMethods.join(','));
-      if (selectedFileTypes.length) params.set('fileTypes', selectedFileTypes.join(','));
-      params.set('showWsConnections', String(showWsConnections));
+      if (selectedIds.length > 0) {
+        // When explicit IDs are selected, export only those and ignore the
+        // current filter set to avoid surprising intersections.
+        params.set('ids', selectedIds.join(','));
+      } else {
+        // Legacy behaviour: export all logs matching the current filters.
+        if (searchTerm) params.set('search', searchTerm);
+        if (requestBodySearch) params.set('requestSearch', requestBodySearch);
+        if (responseSearchTerm) params.set('responseSearch', responseSearchTerm);
+        if (requestRewrittenOnly) params.set('requestRewrittenOnly', 'true');
+        if (responseRewrittenOnly) params.set('responseRewrittenOnly', 'true');
+        if (selectedSources.length) params.set('sources', selectedSources.join(','));
+        if (selectedMethods.length) params.set('methods', selectedMethods.join(','));
+        if (selectedFileTypes.length) params.set('fileTypes', selectedFileTypes.join(','));
+        params.set('showWsConnections', String(showWsConnections));
+      }
 
       const response = await fetch(buildApiUrl(`/api/logs/export?${params.toString()}`));
       if (!response.ok) {
@@ -1196,7 +1233,8 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     selectedFileTypes,
     showWsConnections,
     requestRewrittenOnly,
-    responseRewrittenOnly
+    responseRewrittenOnly,
+    exportSelection
   ]);
 
   // Notify parent of filtered count (use total from server)
@@ -2731,6 +2769,33 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
                         )}
                       </div>
                       <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleExportSelection(log.id);
+                          }}
+                          aria-pressed={exportSelection.has(String(log.id))}
+                          className={`relative group/export-flag inline-flex items-center justify-center w-8 h-8 rounded-md border text-xs transition-colors ${
+                            exportSelection.has(String(log.id))
+                              ? 'bg-indigo-600/25 border-indigo-400 text-indigo-100 hover:bg-indigo-600/35 hover:text-white'
+                              : 'bg-[#050508] border-indigo-500/60 text-indigo-300 hover:bg-indigo-600/15 hover:border-indigo-400 hover:text-indigo-200'
+                          }`}
+                        >
+                          <Check className="w-4 h-4" />
+                          <div
+                            className="invisible group-hover/export-flag:visible absolute right-0 top-full mt-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
+                            style={{ zIndex: 99999 }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="font-semibold mb-1 text-slate-200">Export selection</div>
+                            <p>
+                              {exportSelection.has(String(log.id))
+                                ? 'This request is marked for export. The Export button will include it even if filters change.'
+                                : 'Mark this request to be explicitly included when exporting logs. If no requests are marked, all filtered logs are exported.'}
+                            </p>
+                          </div>
+                        </button>
                         <label
                           className="relative group/replace-action inline-flex items-center justify-center w-8 h-8 rounded-md bg-blue-600/15 border border-blue-500/60 text-blue-200 hover:bg-blue-600/30 hover:text-white cursor-pointer transition-colors"
                           onClick={(e) => e.stopPropagation()}

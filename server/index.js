@@ -330,6 +330,23 @@ let logSuggestionMetadata = new WeakMap()
 let editRules = []
 
 /**
+ * In-memory usage counters for live edit rules.
+ *
+ * Key: rule id, value: number of distinct log entries where the rule
+ * was applied at least once within the current in-memory log set.
+ *
+ * Counters are updated incrementally by attachRewriteMetadata, decremented
+ * when log entries are evicted from requestLogs, and cleared together with
+ * requestLogs via DELETE /api/logs.
+ *
+ * This structure is intentionally kept as a Map to provide O(1) updates
+ * and compact iteration when building usage snapshots for the frontend.
+ *
+ * @type {Map<string, number>}
+ */
+const editRuleUsageCounters = new Map()
+
+/**
  * Safely trim a value that may not be a string.
  *
  * @param {any} value
@@ -680,6 +697,33 @@ function rebuildBypassUrlsForCurrentMode () {
   buildBypassMatchers()
 }
 
+/**
+ * Normalise a raw edit-rule entry loaded from disk into the in-memory format.
+ *
+ * In particolare consente di rappresentare su disco i campi stringa molto
+ * lunghi (per qualsiasi tipo di regola) come array di segmenti, mantenendo
+ * però sempre stringhe piatte in memoria durante l'applicazione delle regole.
+ * Qualsiasi proprietà che risulta essere un array di stringhe viene
+ * ricomposta in una singola stringa.
+ *
+ * @param {object} [rule]
+ * @returns {object}
+ */
+function deserializeEditRuleFromDisk (rule = {}) {
+  const normalized = { ...rule }
+
+  const STRING_FIELDS = ['value', 'start', 'end', 'replacement', 'name', 'path', 'url']
+
+  for (const key of STRING_FIELDS) {
+    const current = normalized[key]
+    if (Array.isArray(current) && current.every(segment => typeof segment === 'string')) {
+      normalized[key] = current.join(' ')
+    }
+  }
+
+  return normalized
+}
+
 function normalizeEditRule (rule = {}) {
   const kind = rule.kind === 'jsonPath' ? 'jsonPath' : 'text'
 
@@ -739,12 +783,96 @@ function normalizeEditRule (rule = {}) {
   }
 }
 
+/**
+ * Split a long string into whitespace-delimited segments, each with a maximum
+ * length. This is used purely for on-disk formatting of very long JSONPath
+ * rule values so that the JSON file remains readable/editable by humans.
+ *
+ * @param {string} text
+ * @param {number} maxLen
+ * @returns {string[]}
+ */
+function splitLongStringIntoSegments (text, maxLen) {
+  const segments = []
+  const words = String(text).split(/\s+/).filter(Boolean)
+
+  let current = ''
+  for (const word of words) {
+    if (!current) {
+      current = word
+    } else if ((current + ' ' + word).length <= maxLen) {
+      current += ' ' + word
+    } else {
+      segments.push(current)
+      current = word
+    }
+  }
+
+  if (current) {
+    segments.push(current)
+  }
+
+  return segments
+}
+
+/**
+ * Prepare an edit-rule entry for JSON serialization to disk.
+ *
+ * Very long string values in edit rules are emitted as arrays of shorter
+ * string segments so that the resulting edit-rules.json is easier to read and
+ * edit manually.
+ *
+ * @param {object} rule
+ * @returns {object}
+ */
+function serializeEditRuleForDisk (rule = {}) {
+  const out = { ...rule }
+
+  const MAX_SEGMENT_LENGTH = 160
+
+  const splitIfLong = key => {
+    const current = out[key]
+    if (typeof current !== 'string') return
+    const trimmed = current.trim()
+    if (!trimmed) {
+      out[key] = ''
+      return
+    }
+    if (trimmed.length > MAX_SEGMENT_LENGTH) {
+      out[key] = splitLongStringIntoSegments(trimmed, MAX_SEGMENT_LENGTH)
+    } else {
+      out[key] = trimmed
+    }
+  }
+
+  if (out && out.kind === 'jsonPath') {
+    splitIfLong('value')
+  }
+
+  if (out && out.kind === 'text') {
+    splitIfLong('start')
+    splitIfLong('end')
+    splitIfLong('replacement')
+  }
+
+  return out
+}
+
+/**
+ * Load edit rules from disk into memory, normalising their structure.
+ *
+ * This transparently converts any on-disk multi-segment representation of
+ * long string fields back into single strings before normalisation, so that
+ * the rest of the code always works with flat string values.
+ */
 function loadEditRules () {
   try {
     if (fs.existsSync(EDIT_RULES_FILE)) {
       const data = JSON.parse(fs.readFileSync(EDIT_RULES_FILE, 'utf8'))
       if (Array.isArray(data)) {
-        editRules = data.map(normalizeEditRule)
+        editRules = data
+          .map(deserializeEditRuleFromDisk)
+          .map(normalizeEditRule)
       }
     }
   } catch (error) {
@@ -753,9 +881,19 @@ function loadEditRules () {
   }
 }
 
+/**
+ * Persist the current in-memory edit rules to disk.
+ *
+ * Uses serializeEditRuleForDisk so that very long JSONPath rule values (like
+ * the Jarvis Persona prompt) are written in a multi-segment form that is
+ * easier to inspect and edit by hand.
+ *
+ * @returns {Promise<void>}
+ */
 async function saveEditRules () {
   try {
-    const payload = JSON.stringify(editRules, null, 2)
+    const diskRules = editRules.map(serializeEditRuleForDisk)
+    const payload = JSON.stringify(diskRules, null, 2)
     await fsPromises.writeFile(EDIT_RULES_FILE, payload)
   } catch (error) {
     console.error('[proxy] Error saving edit rules:', error)
@@ -806,12 +944,22 @@ function parseJsonPath (path) {
       const inside = s.slice(i + 1, end).trim()
       if (!inside) return []
 
-      // Only support numeric indices for now: root.items[3].name
-      if (!/^\d+$/.test(inside)) return []
-      const index = Number.parseInt(inside, 10)
-      if (!Number.isFinite(index) || index < 0) return []
-
-      segments.push({ type: 'index', index })
+      // Support numeric indices: root.items[3].name
+      if (/^\d+$/.test(inside)) {
+        const index = Number.parseInt(inside, 10)
+        if (!Number.isFinite(index) || index < 0) return []
+        segments.push({ type: 'index', index })
+      } else if (inside.startsWith('?')) {
+        // Support filter expressions: [?(@.field=='value')] or [?(@.field=="value")]
+        // Pattern: ?(@.key=='value') or ?(@.key=="value")
+        const filterMatch = inside.match(/^\?\s*\(\s*@\.(\w+)\s*==\s*['"]([^'"]+)['"]\s*\)$/)
+        if (!filterMatch) return []
+        const filterKey = filterMatch[1]
+        const filterValue = filterMatch[2]
+        segments.push({ type: 'filter', key: filterKey, value: filterValue })
+      } else {
+        return []
+      }
       i = end + 1
       continue
     }
@@ -1380,6 +1528,20 @@ function applyJsonPathRulesToObject (root, context = {}) {
           break
         }
         parent = parent[idx]
+      } else if (seg.type === 'filter') {
+        // Filter segment: find the first array element where element[key] === value
+        if (!Array.isArray(parent)) {
+          validPath = false
+          break
+        }
+        const found = parent.find(item =>
+          item && typeof item === 'object' && item[seg.key] === seg.value
+        )
+        if (!found) {
+          validPath = false
+          break
+        }
+        parent = found
       } else {
         validPath = false
         break
@@ -1405,6 +1567,15 @@ function applyJsonPathRulesToObject (root, context = {}) {
       if (idx < 0 || idx >= container.length) continue
       keyOrIndex = idx
       currentValue = container[idx]
+    } else if (lastSeg.type === 'filter') {
+      // Filter as last segment: find the matching element in the array and replace it
+      if (!Array.isArray(container)) continue
+      const foundIndex = container.findIndex(item =>
+        item && typeof item === 'object' && item[lastSeg.key] === lastSeg.value
+      )
+      if (foundIndex === -1) continue
+      keyOrIndex = foundIndex
+      currentValue = container[foundIndex]
     } else {
       continue
     }
@@ -2211,6 +2382,21 @@ function applyEditRulesToBuffer (buffer, context) {
   }
 }
 
+/**
+ * Attach per-rule rewrite metadata to a log entry and update global
+ * edit-rule usage counters.
+ *
+ * For each rule id in appliedRuleIds this function ensures that at most
+ * one metadata entry is stored on the log entry, and increments the
+ * in-memory usage counter the first time the rule is seen for that log
+ * entry. This keeps aggregation O(1) per rule id without rescanning
+ * requestLogs when building reports.
+ *
+ * @param {object|null} logEntry - Mutable log entry to enrich.
+ * @param {string[]} appliedRuleIds - Rule identifiers that matched for this operation.
+ * @param {string|undefined} phase - Phase hint ('request' | 'response' | 'both').
+ * @returns {void}
+ */
 function attachRewriteMetadata (logEntry, appliedRuleIds, phase) {
   if (!logEntry || !Array.isArray(appliedRuleIds) || appliedRuleIds.length === 0) return
   if (!logEntry.rewrites) {
@@ -2271,6 +2457,11 @@ function attachRewriteMetadata (logEntry, appliedRuleIds, phase) {
         // so the UI can still surface that a rewrite occurred.
         entry.kind = 'unknown'
       }
+    }
+
+    if (isNewEntry) {
+      const prev = editRuleUsageCounters.get(id) || 0
+      editRuleUsageCounters.set(id, prev + 1)
     }
 
     // Track where the rule actually applied for this specific log entry.
@@ -3357,31 +3548,6 @@ function getCompressionCodec (encoding = '') {
   }
 
   return null
-}
-
-/**
- * Attempt to decompress a buffer using the specified encoding.
- * Returns an object with the resulting buffer and a flag indicating success.
- * On failure, returns the original buffer with decompressed=false.
- *
- * @param {Buffer} buffer
- * @param {string} encoding
- * @param {string} [contentType]
- * @returns {{ buffer: Buffer, decompressed: boolean }}
- */
-function tryDecompressBuffer (buffer, encoding, contentType) {
-  if (!buffer || buffer.length === 0) return { buffer, decompressed: false }
-  if (!encoding || encoding === 'identity') return { buffer, decompressed: false }
-  if (contentType && !shouldDecompress(contentType)) return { buffer, decompressed: false }
-
-  const codec = getCompressionCodec(encoding)
-  if (!codec) return { buffer, decompressed: false }
-
-  try {
-    return { buffer: codec.decompress(buffer), decompressed: true }
-  } catch {
-    return { buffer, decompressed: false }
-  }
 }
 
 /**
@@ -4621,28 +4787,6 @@ function stripTrivialBinaryBlobs (value) {
 }
 
 /**
- * Logging-only variant of extractJsonFromProtobufBuffer that:
- * - disables the nesting depth limit to expose the full decoded shape
- *   (subject only to global byte/field limits); and
- * - prunes trivial empty binary blobs from the resulting JSON tree to keep
- *   Connect logging views compact.
- *
- * Rewrite paths must continue to use extractJsonFromProtobufBuffer directly
- * so that JSONPath rules can operate on the complete structure, including
- * empty binary fields when needed.
- *
- * @param {Buffer} buffer - Protobuf message buffer for a single Connect frame.
- * @returns {object|null} JSON view suitable for logging/search, or null.
- */
-function extractJsonFromProtobufBufferForLogging (buffer) {
-  const json = extractJsonFromProtobufBuffer(buffer)
-  if (!json || typeof json !== 'object') return json
-
-  const cleaned = stripTrivialBinaryBlobs(json)
-  return cleaned === undefined ? null : cleaned
-}
-
-/**
  * Apply Connect/gRPC/protobuf-aware body rewrites and optionally decode a
  * structured logging view of the payload for the UI.
  *
@@ -5806,6 +5950,25 @@ function addLog (logEntry) {
     if (removed) {
       updateSuggestionStatsOnRemove(removed)
       applyDashboardStatsDelta(removed, -1)
+      // Keep edit rule usage counters aligned with the current in-memory
+      // requestLogs window by decrementing counts for any rules that were
+      // recorded on the evicted log entry.
+      if (Array.isArray(removed.rewrites)) {
+        for (const rewrite of removed.rewrites) {
+          const id = rewrite && rewrite.id
+          if (!id) continue
+
+          const current = editRuleUsageCounters.get(id)
+          if (typeof current === 'number' && current > 0) {
+            const next = current - 1
+            if (next > 0) {
+              editRuleUsageCounters.set(id, next)
+            } else {
+              editRuleUsageCounters.delete(id)
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -6546,6 +6709,13 @@ function filterLogsCore (query = {}) {
   return { ordered, total }
 }
 
+/**
+ * Helper used by /api/logs to apply filtering, pagination and view selection
+ * in a single pass over the in-memory log window.
+ *
+ * @param {import('express').Request} req
+ * @returns {{ items: any[], total: number, hasMore: boolean, offset: number, limit: number }}
+ */
 function filterLogsForApiRequest (req) {
   const query = req.query || {}
 
@@ -6582,7 +6752,7 @@ function filterLogsForApiRequest (req) {
     .map(log => (useSummaryView ? buildClientLogSummaryView(log) : buildClientLogView(log)))
   const hasMore = end < total
 
-  return { items, total, hasMore }
+  return { items, total, hasMore, offset, limit }
 }
 
 function normalizeHostValue (value) {
@@ -7800,9 +7970,7 @@ const CA = getOrCreateCA()
 // API Routes for UI
 app.get('/api/logs', (req, res) => {
   try {
-    const { items, total, hasMore } = filterLogsForApiRequest(req)
-    const offset = parseInt(safeString(req.query.offset), 10) || 0
-    const limit = parseInt(safeString(req.query.limit), 10) || items.length
+    const { items, total, hasMore, offset, limit } = filterLogsForApiRequest(req)
 
     res.json({
       items,
@@ -7819,14 +7987,31 @@ app.get('/api/logs', (req, res) => {
 app.get('/api/logs/export', (req, res) => {
   try {
     const query = req.query || {}
-    const { ordered, total } = filterLogsCore(query)
+    const { ordered } = filterLogsCore(query)
 
-    const items = ordered.map(log => ({
+    // When an explicit list of IDs is provided, restrict the export to those
+    // entries only. This allows the UI to mark individual logs for export
+    // while preserving the legacy behaviour (export all filtered logs) when
+    // no IDs are specified.
+    const idsParam = safeString(query.ids)
+    let effective = ordered
+    if (idsParam) {
+      const ids = idsParam
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean)
+      if (ids.length > 0) {
+        const idSet = new Set(ids.map(id => String(id)))
+        effective = ordered.filter(log => log && idSet.has(String(log.id)))
+      }
+    }
+
+    const items = effective.map(log => ({
       ...log,
-      fileType: getFileTypeFromLogEntry(log)
+      fileType: log && log.fileType ? log.fileType : getFileTypeFromLogEntry(log)
     }))
 
-    res.json({ items, total })
+    res.json({ items, total: items.length })
   } catch (error) {
     res.status(500).json({ error: 'Failed to export logs' })
   }
@@ -8028,6 +8213,7 @@ app.delete('/api/logs', (req, res) => {
   dashboardStats = createEmptyDashboardStats()
   performanceStats = createEmptyPerformanceStats()
   routeStats = new Map()
+  editRuleUsageCounters.clear()
   res.json({ success: true, message: 'Logs cleared' })
 })
 
@@ -8229,6 +8415,26 @@ app.get('/api/edit-rules', (req, res) => {
   res.json({ rules: editRules })
 })
 
+/**
+ * Return a lightweight usage report for live edit rules.
+ *
+ * The payload is intentionally compact: a flat id->count map that the
+ * frontend can join with /api/edit-rules metadata without duplicating
+ * rule configuration on the wire.
+ */
+app.get('/api/edit-rules/usage', (req, res) => {
+  const usage = Object.create(null)
+
+  for (const [id, count] of editRuleUsageCounters.entries()) {
+    usage[id] = count
+  }
+
+  res.json({
+    usage,
+    totalRulesWithUsage: editRuleUsageCounters.size
+  })
+})
+
 app.post('/api/edit-rules', (req, res) => {
   // Allow both legacy text rules and new jsonPath rules. The normalizeEditRule
   // helper is responsible for interpreting the payload and ensuring a
@@ -8287,6 +8493,7 @@ app.delete('/api/edit-rules/:id', (req, res) => {
     return res.status(404).json({ error: 'Rule not found' })
   }
 
+  editRuleUsageCounters.delete(id)
   saveEditRules()
   rebuildEditRuleCache()
 
@@ -8420,16 +8627,19 @@ app.get('/api/dashboard', (req, res) => {
   })
 })
 
+/**
+ * Build a lightweight audit snapshot from the current in-memory log window.
+ *
+ * The snapshot focuses on upstream error distribution and per-host latency
+ * aggregates, optimised for use by the secret Proxy Audit Panel.
+ */
 app.get('/api/audit', (req, res) => {
   try {
-    const durations = []
     const errorBuckets = Object.create(null)
     const hostMap = new Map()
 
     for (const log of requestLogs) {
       if (typeof log.upstreamDurationMs === 'number' && log.upstreamDurationMs >= 0) {
-        durations.push(log.upstreamDurationMs)
-
         const hostInfo = extractHostInfoFromLog(log)
         const host = hostInfo && hostInfo.host ? hostInfo.host : null
         if (host) {
@@ -8450,33 +8660,6 @@ app.get('/api/audit', (req, res) => {
       }
     }
 
-    let latencyStats = null
-    if (durations.length) {
-      durations.sort((a, b) => a - b)
-
-      const count = durations.length
-      const min = durations[0]
-      const max = durations[durations.length - 1]
-      const sum = durations.reduce((acc, v) => acc + v, 0)
-      const avg = sum / count
-
-      const quantile = p => {
-        if (!durations.length) return 0
-        const idx = Math.min(durations.length - 1, Math.max(0, Math.round(p * (durations.length - 1))))
-        return durations[idx]
-      }
-
-      latencyStats = {
-        count,
-        min,
-        max,
-        avg,
-        median: quantile(0.5),
-        p90: quantile(0.9),
-        p99: quantile(0.99)
-      }
-    }
-
     const hostStats = Array.from(hostMap.values())
       .map(entry => ({
         host: entry.host,
@@ -8489,7 +8672,6 @@ app.get('/api/audit', (req, res) => {
     const totalErrors = Object.values(errorBuckets).reduce((acc, v) => acc + v, 0)
 
     res.json({
-      latencyStats,
       errorBuckets,
       totalErrors,
       hostStats
@@ -8621,7 +8803,6 @@ app.use('*', async (req, res) => {
         upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
 
         const contentType = getContentType(upstreamHeaders)
-        const contentEncoding = getContentEncoding(upstreamHeaders)
 
         const isBinary = isClearlyBinaryContentType(contentType)
 

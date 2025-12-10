@@ -417,7 +417,7 @@ function App() {
                 <button
                   onClick={() => exportLogsFunc && exportLogsFunc()}
                   disabled={!exportLogsFunc || filteredLogsCount === 0}
-                  className="p-2 bg-blue-600/20 hover:bg-blue-600/30 disabled:bg-slate-700/20 disabled:text-slate-600 text-blue-400 border border-blue-600/30 disabled:border-slate-600/30 rounded-lg transition-colors disabled:cursor-not-allowed"
+                  className="p-2 bg-indigo-600/20 hover:bg-indigo-600/30 disabled:bg-slate-700/20 disabled:text-slate-600 text-indigo-300 border border-indigo-500/60 disabled:border-slate-600/30 rounded-lg transition-colors disabled:cursor-not-allowed"
                 >
                   <Download className="w-4 h-4" />
                 </button>
@@ -425,10 +425,10 @@ function App() {
                   className="invisible group-hover/export-logs:visible absolute right-0 top-full mt-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
                   style={{ zIndex: 99999 }}
                 >
-                  <div className="font-semibold mb-1 text-slate-200">Export filtered logs</div>
+                  <div className="font-semibold mb-1 text-slate-200">Export logs</div>
                   <p>
                     {filteredLogsCount > 0
-                      ? `Export ${filteredLogsCount} filtered logs to a JSON file.`
+                      ? 'Export the current log view to a JSON file. If some requests are marked for export in the list, only those will be included; otherwise all filtered logs are exported.'
                       : 'There are no filtered logs to export yet.'}
                   </p>
                 </div>
