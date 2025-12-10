@@ -10,13 +10,26 @@ import {
   Code,
   Type,
   Copy,
-  Info
+  Info,
+  ChevronDown
 } from 'lucide-react';
 import axios from 'axios';
 import Spinner from './Spinner';
 import { buildApiUrl } from '../config/apiConfig';
 
-function getRulePreviewText(rule) {
+/**
+ * Build a human-readable preview string for a rule's replacement/value.
+ *
+ * For long values the text can optionally be truncated with an ellipsis so the
+ * rule list remains compact, while still allowing a full view when expanded.
+ *
+ * @param {object} rule
+ * @param {{ truncate?: boolean, maxLength?: number }} [options]
+ * @returns {string}
+ */
+function getRulePreviewText(rule, options = {}) {
+  const { truncate = true, maxLength = 300 } = options;
+
   if (!rule || typeof rule !== 'object') return '(empty)';
 
   let rawValue;
@@ -29,8 +42,10 @@ function getRulePreviewText(rule) {
   if (rawValue === null || rawValue === undefined) return '(empty)';
   const text = String(rawValue);
   if (!text) return '(empty)';
-  if (text.length <= 300) return text;
-  return text.slice(0, 300) + '…';
+
+  if (!truncate) return text;
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + '…';
 }
 
 /**
@@ -113,6 +128,7 @@ function EditRules({
   const [deletingId, setDeletingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
+  const [expandedRuleIds, setExpandedRuleIds] = useState([]);
   const [formData, setFormData] = useState({
     kind: 'text',
     name: '',
@@ -202,6 +218,18 @@ function EditRules({
     } finally {
       setTogglingId(null);
     }
+  };
+
+  /**
+   * Toggle whether the replacement/value preview for the given rule is
+   * expanded (full text) or collapsed (truncated with ellipsis).
+   *
+   * @param {string} ruleId
+   */
+  const toggleRuleExpanded = (ruleId) => {
+    setExpandedRuleIds((prev) =>
+      prev.includes(ruleId) ? prev.filter((id) => id !== ruleId) : [...prev, ruleId]
+    );
   };
 
   const handleCopyJsonValue = useCallback(() => {
@@ -926,6 +954,13 @@ function EditRules({
             const startMarkers = buildMarkerList(rule.startVariants);
             const endMarkers = buildMarkerList(rule.endVariants);
 
+            const isExpanded = expandedRuleIds.includes(rule.id);
+            const fullReplacementText = getRulePreviewText(rule, { truncate: false });
+            const isTruncatable = fullReplacementText.length > 300;
+            const replacementText = isExpanded || !isTruncatable
+              ? fullReplacementText
+              : getRulePreviewText(rule);
+
             return (
               <div
                 key={rule.id}
@@ -1038,8 +1073,31 @@ function EditRules({
                       </div>
                     )}
                     <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0">Replace:</span>
-                      <code className="text-cyan-300 break-all">{getRulePreviewText(rule)}</code>
+                      <span className="text-slate-500 shrink-0 mt-0.5">Replace:</span>
+                      <div className="flex-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => isTruncatable && toggleRuleExpanded(rule.id)}
+                          aria-expanded={isExpanded}
+                          className={`group inline-flex w-full items-start gap-2 rounded-md border border-transparent px-2 py-1 text-left transition-colors ${
+                            isTruncatable ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-cyan-500/5' : 'cursor-default'
+                          }`}
+                        >
+                          <code className="text-cyan-300 break-all whitespace-pre-wrap text-xs flex-1">
+                            {replacementText}
+                          </code>
+                          {isTruncatable && (
+                            <span className="flex items-center gap-1 text-[11px] text-slate-500 group-hover:text-slate-200 shrink-0 pl-1">
+                              <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+                              <ChevronDown
+                                className={`w-3 h-3 transition-transform ${
+                                  isExpanded ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </span>
+                          )}
+                        </button>
+                      </div>
                     </div>
                     {(rule.useRegex || rule.caseSensitive) && (
                       <div className="flex items-center gap-3 mt-2">
