@@ -2,6 +2,7 @@ const http = require('http')
 const https = require('https')
 const net = require('net')
 const tls = require('tls')
+const { spawn } = require('child_process')
 const express = require('express')
 const cors = require('cors')
 const bodyParser = require('body-parser')
@@ -90,6 +91,63 @@ const logInternal = (level, gated, scope, message, error) => {
 const logDebug = (scope, msg, err) => logInternal('debug', true, scope, msg, err)
 const logWarn = (scope, msg, err) => logInternal('warn', false, scope, msg, err)
 
+/**
+ * Escape a string for safe inclusion in a PowerShell double-quoted string.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+const escapePowerShellString = (value) => {
+  const raw = value == null ? '' : String(value)
+  if (!raw) return ''
+  return raw.replace(/`/g, '``').replace(/"/g, '`"')
+}
+
+/**
+ * Open a native Windows file picker and resolve the selected path.
+ *
+ * @param {{ title?: string, filter?: string }} options
+ * @returns {Promise<string | null>}
+ */
+function showNativeFilePicker (options = {}) {
+  return new Promise((resolve, reject) => {
+    const title = escapePowerShellString(options.title || 'Select a file')
+    const filter = escapePowerShellString(options.filter || 'All files (*.*)|*.*')
+
+    const script = [
+      'Add-Type -AssemblyName System.Windows.Forms;',
+      '$dialog = New-Object System.Windows.Forms.OpenFileDialog;',
+      `$dialog.Title = "${title}";`,
+      `$dialog.Filter = "${filter}";`,
+      '$dialog.Multiselect = $false;',
+      '$result = $dialog.ShowDialog();',
+      'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName }'
+    ].join(' ')
+
+    const ps = spawn('powershell', ['-STA', '-NoProfile', '-Command', script])
+    let output = ''
+    let errorOutput = ''
+
+    ps.stdout.on('data', chunk => {
+      output += chunk.toString()
+    })
+
+    ps.stderr.on('data', chunk => {
+      errorOutput += chunk.toString()
+    })
+
+    ps.on('error', reject)
+    ps.on('close', code => {
+      if (code !== 0 && errorOutput) {
+        reject(new Error(errorOutput.trim()))
+        return
+      }
+      const trimmed = output == null ? '' : String(output).trim()
+      resolve(trimmed || null)
+    })
+  })
+}
+
 // Optional upstream CA bundle for strict TLS mode
 let upstreamCaBundle = null
 if (STRICT_TLS_CA_FILE) {
@@ -130,6 +188,7 @@ const BLOCKED_URLS_FILE = path.join(STORAGE_DIR, 'blocked-urls.json')
 const FILTER_URLS_FILE = path.join(STORAGE_DIR, 'filter-urls.json')
 const LEGACY_BYPASS_URLS_FILE = path.join(STORAGE_DIR, 'bypass-urls.json')
 const EDIT_RULES_FILE = path.join(STORAGE_DIR, 'edit-rules.json')
+const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
 
 // Certificate paths (inlined from cert-manager.js)
 const CA_KEY_PATH = path.join(CERTS_DIR, 'ca-key.pem')
@@ -328,6 +387,7 @@ let blockedUrlSubstringsForFilter = []
 const bypassSuggestionStats = new Map()
 let logSuggestionMetadata = new WeakMap()
 let editRules = []
+let editRulePresets = []
 
 /**
  * In-memory usage counters for live edit rules.
@@ -345,6 +405,89 @@ let editRules = []
  * @type {Map<string, number>}
  */
 const editRuleUsageCounters = new Map()
+
+/**
+ * Normalize a user-supplied file reference for JSONPath rule values.
+ *
+ * @param {any} source
+ * @returns {{ type: 'file', filename?: string, path?: string, originalName?: string } | null}
+ */
+function normalizeJsonPathValueSource (source) {
+  if (!source || typeof source !== 'object') return null
+  if (source.type !== 'file') return null
+  const filename = safeString(source.filename)
+  const filePath = safeString(source.path)
+  if (!filename && !filePath) return null
+  const originalName = safeString(source.originalName)
+  return {
+    type: 'file',
+    ...(filename ? { filename } : {}),
+    ...(filePath ? { path: filePath } : {}),
+    ...(originalName ? { originalName } : {})
+  }
+}
+
+/**
+ * Resolve a JSONPath rule value from a referenced file on disk.
+ *
+ * @param {{ type: 'file', filename?: string, path?: string }} source
+ * @returns {string | null}
+ */
+function resolveJsonPathValueFromSource (source) {
+  if (!source || source.type !== 'file') return null
+  const explicitPath = safeString(source.path)
+  const filename = safeString(source.filename)
+  if (!explicitPath && !filename) return null
+  const filePath = explicitPath
+    ? (path.isAbsolute(explicitPath) ? explicitPath : path.join(STORAGE_DIR, explicitPath))
+    : path.join(STORAGE_DIR, filename)
+  try {
+    if (!fs.existsSync(filePath)) return null
+    return fs.readFileSync(filePath, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Coerce a JSONPath text value into boolean, number, JSON, or string.
+ *
+ * @param {string} rawText
+ * @returns {{ value: any, valueType: 'boolean' | 'number' | 'json' | 'string' }}
+ */
+function coerceJsonPathScalarFromText (rawText) {
+  const text = rawText == null ? '' : String(rawText)
+  const trimmed = text.trim()
+  const lower = trimmed.toLowerCase()
+
+  if (lower === 'true') {
+    return { value: true, valueType: 'boolean' }
+  }
+
+  if (lower === 'false') {
+    return { value: false, valueType: 'boolean' }
+  }
+
+  if (trimmed.length > 0) {
+    const parsed = Number(trimmed)
+    if (Number.isFinite(parsed)) {
+      return { value: parsed, valueType: 'number' }
+    }
+  }
+
+  if (trimmed.length > 0) {
+    try {
+      const parsedJson = JSON.parse(trimmed)
+      if (parsedJson !== null && typeof parsedJson === 'object') {
+        return { value: parsedJson, valueType: 'json' }
+      }
+    } catch {
+      // Ignore invalid JSON and fall back to string.
+    }
+  }
+
+  return { value: text, valueType: 'string' }
+}
 
 /**
  * Safely trim a value that may not be a string.
@@ -747,9 +890,16 @@ function normalizeEditRule (rule = {}) {
 
   if (kind === 'jsonPath') {
     let valueType = 'string'
-    if (rule.valueType === 'number' || rule.valueType === 'boolean' || rule.valueType === 'null') {
+    if (
+      rule.valueType === 'number' ||
+      rule.valueType === 'boolean' ||
+      rule.valueType === 'null' ||
+      rule.valueType === 'json'
+    ) {
       valueType = rule.valueType
     }
+
+    const valueSource = normalizeJsonPathValueSource(rule.valueSource)
 
     const normalizedTarget =
       rule.target === 'response' || rule.target === 'both'
@@ -762,8 +912,9 @@ function normalizeEditRule (rule = {}) {
       kind,
       name: rule.name || '',
       path: safeString(rule.path),
-      value: Object.hasOwn(rule, 'value') ? rule.value : '',
+      value: valueSource ? '' : (Object.hasOwn(rule, 'value') ? rule.value : ''),
       valueType,
+      valueSource,
       // URL pattern su cui applicare la regola jsonPath; se vuoto la regola
       // non verrà inclusa nella cache compilata.
       url: safeString(rule.url),
@@ -819,6 +970,71 @@ function normalizeEditRule (rule = {}) {
     // Optional phase target; defaults to 'both' for text rules so that legacy
     // rules keep affecting both requests and responses unless narrowed.
     target: normalizedTarget
+  }
+}
+
+/**
+ * Strip runtime-only fields from a normalized edit rule before storing it
+ * inside a preset.
+ *
+ * @param {object} rule
+ * @returns {object}
+ */
+function stripPresetRuntimeFields (rule = {}) {
+  const { id, enabled, ...rest } = rule
+  return rest
+}
+
+/**
+ * Normalize an edit-rule preset payload into a canonical stored shape.
+ *
+ * @param {object} [preset]
+ * @returns {{ id: string, name: string, kind: 'text' | 'jsonPath', rule: object, createdAt: string }}
+ */
+function normalizeEditRulePreset (preset = {}) {
+  const kind = preset.kind === 'jsonPath' ? 'jsonPath' : 'text'
+  const name = safeTrim(preset.name) || 'Untitled preset'
+  const id = safeString(preset.id) || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const rawRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
+  const normalizedRule = normalizeEditRule({ ...rawRule, kind })
+
+  return {
+    id,
+    name,
+    kind,
+    rule: stripPresetRuntimeFields(normalizedRule),
+    createdAt: typeof preset.createdAt === 'string' && preset.createdAt ? preset.createdAt : new Date().toISOString()
+  }
+}
+
+/**
+ * Load edit-rule presets from disk into memory.
+ */
+function loadEditRulePresets () {
+  try {
+    if (fs.existsSync(EDIT_RULE_PRESETS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(EDIT_RULE_PRESETS_FILE, 'utf8'))
+      if (Array.isArray(data)) {
+        editRulePresets = data.map(normalizeEditRulePreset)
+      }
+    }
+  } catch (error) {
+    console.error('[proxy] Error loading edit rule presets:', error)
+    editRulePresets = []
+  }
+}
+
+/**
+ * Persist edit-rule presets to disk.
+ *
+ * @returns {Promise<void>}
+ */
+async function saveEditRulePresets () {
+  try {
+    const payload = JSON.stringify(editRulePresets, null, 2)
+    await fsPromises.writeFile(EDIT_RULE_PRESETS_FILE, payload)
+  } catch (error) {
+    console.error('[proxy] Error saving edit rule presets:', error)
   }
 }
 
@@ -1229,6 +1445,7 @@ function rebuildEditRuleCache () {
         segments,
         value: rule.value,
         valueType,
+        valueSource: rule.valueSource || null,
         url: urlPattern,
         target: normalizedTarget
       })
@@ -1611,6 +1828,16 @@ function applyJsonPathRulesToObject (root, context = {}) {
     // pattern associato alla regola.
     if (!jsonPathRuleMatchesUrl(rule, matchContext)) continue
 
+    let effectiveValue = rule.value
+    let effectiveValueType = rule.valueType
+    if (rule.valueSource && rule.valueSource.type === 'file') {
+      const fileText = resolveJsonPathValueFromSource(rule.valueSource)
+      if (fileText === null) continue
+      const coerced = coerceJsonPathScalarFromText(fileText)
+      effectiveValue = coerced.value
+      effectiveValueType = coerced.valueType
+    }
+
     const segments = rule.segments
     let parent = root
     let validPath = true
@@ -1694,38 +1921,38 @@ function applyJsonPathRulesToObject (root, context = {}) {
 
     // Compute the new value based on valueType
     let newValue
-    if (rule.valueType === 'number') {
-      if (typeof rule.value === 'number') {
-        newValue = rule.value
-      } else if (typeof rule.value === 'string') {
-        const parsed = Number(rule.value.trim())
+    if (effectiveValueType === 'number') {
+      if (typeof effectiveValue === 'number') {
+        newValue = effectiveValue
+      } else if (typeof effectiveValue === 'string') {
+        const parsed = Number(effectiveValue.trim())
         if (!Number.isFinite(parsed)) continue
         newValue = parsed
       } else {
         continue
       }
-    } else if (rule.valueType === 'boolean') {
-      if (typeof rule.value === 'boolean') {
-        newValue = rule.value
-      } else if (typeof rule.value === 'string') {
-        const lower = rule.value.trim().toLowerCase()
+    } else if (effectiveValueType === 'boolean') {
+      if (typeof effectiveValue === 'boolean') {
+        newValue = effectiveValue
+      } else if (typeof effectiveValue === 'string') {
+        const lower = effectiveValue.trim().toLowerCase()
         if (lower === 'true') newValue = true
         else if (lower === 'false') newValue = false
         else continue
       } else {
         continue
       }
-    } else if (rule.valueType === 'null') {
+    } else if (effectiveValueType === 'null') {
       newValue = null
-    } else if (rule.valueType === 'json') {
+    } else if (effectiveValueType === 'json') {
       // Explicit JSON value type: treat the rule value as JSON and replace the
       // target with the parsed object/array. This is primarily for advanced
       // callers using the HTTP API directly.
-      if (rule.value && typeof rule.value === 'object') {
-        newValue = rule.value
-      } else if (typeof rule.value === 'string') {
+      if (effectiveValue && typeof effectiveValue === 'object') {
+        newValue = effectiveValue
+      } else if (typeof effectiveValue === 'string') {
         try {
-          newValue = JSON.parse(rule.value)
+          newValue = JSON.parse(effectiveValue)
         } catch {
           // Invalid JSON payload for this rule; skip instead of inserting a
           // malformed value into the object tree.
@@ -1743,21 +1970,21 @@ function applyJsonPathRulesToObject (root, context = {}) {
       if (
         currentValue &&
         typeof currentValue === 'object' &&
-        typeof rule.value === 'string'
+        typeof effectiveValue === 'string'
       ) {
-        const text = rule.value.trim()
+        const text = effectiveValue.trim()
         if (text) {
           try {
             newValue = JSON.parse(text)
           } catch {
             // If parsing fails, fall back to the raw string representation.
-            newValue = rule.value
+            newValue = effectiveValue
           }
         } else {
-          newValue = rule.value
+          newValue = effectiveValue
         }
       } else {
-        newValue = rule.value != null ? String(rule.value) : ''
+        newValue = effectiveValue != null ? String(effectiveValue) : ''
       }
     }
 
@@ -8087,6 +8314,7 @@ loadLocalResources()
 loadBlockedUrls()
 loadBypassUrls()
 loadEditRules()
+loadEditRulePresets()
 rebuildEditRuleCache()
 
 // Initialize CA certificate
@@ -8209,6 +8437,20 @@ app.post('/api/filter-mode', (req, res) => {
   res.json({ success: true, filterMode: getBypassMode() })
 })
 
+// Open a native file picker (Windows) for local path selection.
+app.post('/api/system/file-picker', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {}
+  const title = body.title == null ? undefined : String(body.title)
+  const filter = body.filter == null ? undefined : String(body.filter)
+
+  try {
+    const filePath = await showNativeFilePicker({ title, filter })
+    res.json({ path: filePath || null, canceled: !filePath })
+  } catch (error) {
+    res.status(500).json({ error: error?.message || 'Failed to open the file picker.' })
+  }
+})
+
 app.get('/api/resources', (req, res) => {
   res.json(getLocalResourcesList())
 })
@@ -8264,6 +8506,37 @@ app.post('/api/resources', upload.single('file'), async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
+})
+
+app.get('/api/edit-rule-presets', (req, res) => {
+  res.json({ presets: editRulePresets })
+})
+
+app.post('/api/edit-rule-presets', async (req, res) => {
+  const raw = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
+
+  if (!raw) {
+    return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
+  }
+
+  const preset = normalizeEditRulePreset(raw)
+  editRulePresets.push(preset)
+  await saveEditRulePresets()
+
+  res.status(201).json({ preset })
+})
+
+app.delete('/api/edit-rule-presets/:id', async (req, res) => {
+  const { id } = req.params
+  const before = editRulePresets.length
+  editRulePresets = editRulePresets.filter(preset => preset && preset.id !== id)
+
+  if (editRulePresets.length === before) {
+    return res.status(404).json({ error: 'Preset not found' })
+  }
+
+  await saveEditRulePresets()
+  res.status(204).end()
 })
 
 app.post('/api/resources/toggle', async (req, res) => {
@@ -8558,6 +8831,31 @@ app.get('/api/edit-rules/usage', (req, res) => {
     usage,
     totalRulesWithUsage: editRuleUsageCounters.size
   })
+})
+
+app.post('/api/edit-rules/value-file', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'File is required' })
+    }
+
+    let valueType = 'string'
+    try {
+      const filePath = path.join(STORAGE_DIR, req.file.filename)
+      const text = await fsPromises.readFile(filePath, 'utf8')
+      valueType = coerceJsonPathScalarFromText(text).valueType
+    } catch {
+      valueType = 'string'
+    }
+
+    res.json({
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      valueType
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
 })
 
 app.post('/api/edit-rules', (req, res) => {

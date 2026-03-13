@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Edit3,
   Trash2,
@@ -11,7 +11,8 @@ import {
   Type,
   Copy,
   Info,
-  ChevronDown
+  ChevronDown,
+  Check
 } from 'lucide-react';
 import axios from 'axios';
 import Spinner from './Spinner';
@@ -34,7 +35,14 @@ function getRulePreviewText(rule, options = {}) {
 
   let rawValue;
   if (rule.kind === 'jsonPath') {
-    rawValue = Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : '';
+    if (rule.valueSource && rule.valueSource.type === 'file') {
+      const fallbackName = rule.valueSource.path
+        ? rule.valueSource.path.split(/[\\/]/).pop()
+        : rule.valueSource.filename;
+      rawValue = `(File Content) ${rule.valueSource.originalName || fallbackName || 'file reference'}`;
+    } else {
+      rawValue = Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : '';
+    }
   } else {
     rawValue = Object.prototype.hasOwnProperty.call(rule, 'replacement') ? rule.replacement : '';
   }
@@ -63,6 +71,365 @@ const parseVariantLines = (value) => {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 };
+
+/**
+ * Truncate a preset label for compact display.
+ *
+ * @param {string} value
+ * @param {number} maxLength
+ * @returns {string}
+ */
+const truncatePresetLabel = (value, maxLength = 32) => {
+  const text = String(value || '').trim();
+  if (!text) return '—';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}…`;
+};
+
+/**
+ * Normalize a value to a string for comparison.
+ *
+ * @param {any} value
+ * @returns {string}
+ */
+const safePresetString = (value) => (value == null ? '' : String(value));
+
+/**
+ * Build a group label for an edit-rule preset.
+ *
+ * @param {object} preset
+ * @param {'mode' | 'path' | 'replaceKey'} groupBy
+ * @returns {string}
+ */
+const getPresetGroupLabel = (preset, groupBy) => {
+  const rule = preset && typeof preset === 'object' ? preset.rule || {} : {};
+
+  if (groupBy === 'mode') {
+    const target = rule.target === 'response' || rule.target === 'both' ? rule.target : 'request';
+    return target === 'both' ? 'Both' : target === 'response' ? 'Response' : 'Request';
+  }
+
+  if (groupBy === 'path') {
+    if (preset?.kind === 'jsonPath') {
+      return truncatePresetLabel(rule.path || 'No JSON path');
+    }
+    return truncatePresetLabel(rule.url || 'Any URL');
+  }
+
+  if (preset?.kind === 'jsonPath') {
+    if (rule.valueSource && rule.valueSource.type === 'file') {
+      const fallbackName = rule.valueSource.path
+        ? rule.valueSource.path.split(/[\\/]/).pop()
+        : rule.valueSource.filename;
+      return `File: ${truncatePresetLabel(rule.valueSource.originalName || fallbackName || 'file reference')}`;
+    }
+    return truncatePresetLabel(rule.value || 'Empty value');
+  }
+
+  return truncatePresetLabel(rule.replacement || 'Empty replacement');
+};
+
+/**
+ * Normalize a rule target for comparison.
+ *
+ * @param {string} target
+ * @param {'text' | 'jsonPath'} kind
+ * @returns {'request' | 'response' | 'both'}
+ */
+const normalizeRuleTarget = (target, kind) => {
+  if (kind === 'text') {
+    return target === 'request' || target === 'response' || target === 'both' ? target : 'both';
+  }
+
+  return target === 'response' || target === 'both' ? target : 'request';
+};
+
+/**
+ * Check whether a preset matches a rule by target, URL pattern, and JSON path.
+ *
+ * @param {object} preset
+ * @param {object} rule
+ * @returns {boolean}
+ */
+const doesPresetMatchRuleCriteria = (preset, rule) => {
+  if (!preset || !rule) return false;
+  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+  const ruleUrl = safePresetString(rule.url).trim();
+  const presetUrl = safePresetString(presetRule.url).trim();
+  if (ruleUrl !== presetUrl) return false;
+  const ruleTarget = normalizeRuleTarget(rule.target, rule.kind);
+  const presetTarget = normalizeRuleTarget(presetRule.target, preset.kind);
+  if (ruleTarget !== presetTarget) return false;
+  const rulePath = safePresetString(rule.path).trim();
+  const presetPath = safePresetString(presetRule.path).trim();
+  if (rulePath || presetPath) {
+    return rulePath === presetPath;
+  }
+  return true;
+};
+
+/**
+ * Build grouped presets for a dropdown list.
+ *
+ * @param {object[]} presetList
+ * @returns {Array<[string, object[]]>}
+ */
+const buildGroupedPresets = (presetList) => {
+  const groups = new Map();
+  presetList.forEach((preset) => {
+    if (!preset) return;
+    const groupLabel = getPresetGroupLabel(preset, 'mode');
+    if (!groups.has(groupLabel)) {
+      groups.set(groupLabel, []);
+    }
+    groups.get(groupLabel).push(preset);
+  });
+
+  return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+};
+
+/**
+ * Compare two string arrays for equality regardless of order.
+ *
+ * @param {string[] | undefined | null} left
+ * @param {string[] | undefined | null} right
+ * @returns {boolean}
+ */
+const areStringArraysEqual = (left, right) => {
+  const leftArr = Array.isArray(left) ? left.map((entry) => String(entry).trim()).filter(Boolean) : [];
+  const rightArr = Array.isArray(right) ? right.map((entry) => String(entry).trim()).filter(Boolean) : [];
+  if (leftArr.length !== rightArr.length) return false;
+  const leftSorted = leftArr.slice().sort();
+  const rightSorted = rightArr.slice().sort();
+  return leftSorted.every((value, index) => value === rightSorted[index]);
+};
+
+/**
+ * Determine whether a rule matches a preset definition.
+ *
+ * @param {object} rule
+ * @param {object} preset
+ * @returns {boolean}
+ */
+const doesRuleMatchPreset = (rule, preset) => {
+  if (!rule || !preset || rule.kind !== preset.kind) return false;
+  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+
+  if (rule.kind === 'jsonPath') {
+    const ruleSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
+    const presetSource = presetRule.valueSource && presetRule.valueSource.type === 'file' ? presetRule.valueSource : null;
+    const ruleFile = ruleSource ? (ruleSource.path || ruleSource.filename || ruleSource.originalName) : '';
+    const presetFile = presetSource ? (presetSource.path || presetSource.filename || presetSource.originalName) : '';
+
+    return (
+      safePresetString(rule.path) === safePresetString(presetRule.path) &&
+      safePresetString(rule.url) === safePresetString(presetRule.url) &&
+      safePresetString(rule.target) === safePresetString(presetRule.target) &&
+      safePresetString(rule.valueType) === safePresetString(presetRule.valueType) &&
+      String(ruleFile) === String(presetFile) &&
+      (ruleSource || presetSource
+        ? true
+        : JSON.stringify(rule.value ?? '') === JSON.stringify(presetRule.value ?? ''))
+    );
+  }
+
+  return (
+    safePresetString(rule.replacement) === safePresetString(presetRule.replacement) &&
+    rule.useRegex === presetRule.useRegex &&
+    rule.caseSensitive === presetRule.caseSensitive &&
+    safePresetString(rule.url || '') === safePresetString(presetRule.url || '') &&
+    safePresetString(rule.target || '') === safePresetString(presetRule.target || '') &&
+    areStringArraysEqual(rule.startVariants, presetRule.startVariants) &&
+    areStringArraysEqual(rule.endVariants, presetRule.endVariants)
+  );
+};
+
+/**
+ * Preset dropdown menu with inline delete actions.
+ *
+ * @param {object} props
+ * @param {string} props.value
+ * @param {string} props.placeholder
+ * @param {Array<[string, any[]]>} props.groups
+ * @param {boolean} props.loading
+ * @param {boolean} props.disabled
+ * @param {(presetId: string) => void} props.onSelect
+ * @param {(presetId: string) => void} props.onDelete
+ * @param {string} props.buttonClassName
+ * @param {string} props.menuClassName
+ * @returns {JSX.Element}
+ */
+function PresetDropdown({
+  value,
+  placeholder,
+  groups,
+  loading,
+  disabled,
+  onSelect,
+  onDelete,
+  buttonClassName = '',
+  menuClassName = ''
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef(null);
+
+  const selectedPreset = useMemo(() => {
+    if (!value) return null;
+    for (const [, items] of groups) {
+      const match = items.find((preset) => String(preset.id) === String(value));
+      if (match) return match;
+    }
+    return null;
+  }, [groups, value]);
+
+  const selectedLabel = selectedPreset?.name ?? '';
+  const buttonLabel = selectedLabel || placeholder;
+  const isPlaceholder = !selectedLabel;
+  const totalPresets = useMemo(
+    () => groups.reduce((sum, [, items]) => sum + items.length, 0),
+    [groups]
+  );
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleClickOutside = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const handleSelect = (presetId) => {
+    setOpen(false);
+    if (onSelect) onSelect(String(presetId));
+  };
+
+  const hasPresets = groups.some(([, items]) => items.length > 0);
+
+  const targetMeta = {
+    Request: {
+      label: 'Request',
+      badge: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+      dot: 'bg-blue-400'
+    },
+    Response: {
+      label: 'Response',
+      badge: 'border-purple-500/30 bg-purple-500/10 text-purple-300',
+      dot: 'bg-purple-400'
+    },
+    Both: {
+      label: 'Both',
+      badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+      dot: 'bg-emerald-400'
+    }
+  };
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`group inline-flex w-full min-w-[220px] items-center justify-between gap-2 rounded-lg border border-[#2a2a2a] bg-[#0b0b0b] px-3 h-8 text-left text-xs text-slate-100 transition-colors hover:border-blue-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
+          open ? 'border-blue-500/60 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]' : ''
+        } ${buttonClassName}`}
+      >
+        <span
+          className={`truncate ${
+            isPlaceholder ? 'text-slate-400' : 'text-slate-100'
+          }`}
+        >
+          {buttonLabel}
+        </span>
+        <ChevronDown
+          className={`w-3.5 h-3.5 transition-transform duration-150 ${
+            open ? 'rotate-180 text-slate-200' : 'text-slate-400'
+          }`}
+        />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className={`absolute right-0 mt-2 w-64 overflow-hidden rounded-lg border border-[#2a2a2a] bg-[#101010] shadow-2xl ${menuClassName}`}
+        >
+          <div className="flex items-center justify-between border-b border-[#1e1e1e] px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
+            <span>Presets</span>
+            <span>{totalPresets}</span>
+          </div>
+          <div className="max-h-[280px] overflow-y-auto py-1">
+            {loading ? (
+              <div className="px-3 py-2 text-[11px] text-slate-400">Loading presets...</div>
+            ) : !hasPresets ? (
+              <div className="px-3 py-2 text-[11px] text-slate-500">No presets saved yet</div>
+            ) : (
+              groups.map(([groupLabel, items]) => (
+                <div key={groupLabel} className="py-1">
+                  <div className="flex items-center justify-between px-3 py-1">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-600">
+                      Target
+                    </span>
+                    {(() => {
+                      const meta = targetMeta[groupLabel] || {
+                        label: groupLabel,
+                        badge: 'border-slate-600/40 bg-slate-700/20 text-slate-400',
+                        dot: 'bg-slate-400'
+                      };
+                      return (
+                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${meta.badge}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+                          {meta.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  {items.map((preset) => {
+                    const isSelected = String(preset.id) === String(value);
+                    return (
+                      <div
+                        key={preset.id}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md transition-colors ${
+                          isSelected ? 'bg-[#141414]' : 'hover:bg-[#141414]'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(preset.id)}
+                          className="flex-1 text-left text-[11px] text-slate-100 truncate"
+                          aria-selected={isSelected}
+                          role="option"
+                        >
+                          {preset.name}
+                        </button>
+                        {isSelected && (
+                          <Check className="w-3.5 h-3.5 text-blue-400" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (onDelete) onDelete(String(preset.id));
+                          }}
+                          className="p-1 rounded text-slate-500 transition-colors hover:bg-red-600/20 hover:text-red-300"
+                          title="Delete preset"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Build a normalised list of unique, trimmed markers from an optional array
@@ -96,6 +463,83 @@ const buildMarkerList = (variants) => {
 };
 
 /**
+ * Coerce a raw JSONPath input into a boolean, number, JSON, or string.
+ *
+ * The conversion applies cascading rules (boolean -> number -> JSON -> string) so
+ * users can paste or upload a value without specifying an explicit type.
+ *
+ * @param {string} rawValue
+ * @returns {{ value: boolean | number | string | object, valueType: 'boolean' | 'number' | 'json' | 'string' }}
+ */
+const coerceJsonPathScalar = (rawValue) => {
+  const text = rawValue == null ? '' : String(rawValue);
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower === 'true') {
+    return { value: true, valueType: 'boolean' };
+  }
+
+  if (lower === 'false') {
+    return { value: false, valueType: 'boolean' };
+  }
+
+  if (trimmed.length > 0) {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return { value: parsed, valueType: 'number' };
+    }
+  }
+
+  if (trimmed.length > 0) {
+    try {
+      const parsedJson = JSON.parse(trimmed);
+      if (parsedJson !== null && typeof parsedJson === 'object') {
+        return { value: parsedJson, valueType: 'json' };
+      }
+    } catch (error) {
+      // Ignore invalid JSON and fall back to string.
+    }
+  }
+
+  return { value: text, valueType: 'string' };
+};
+
+/**
+ * Normalize an existing JSONPath rule value for form editing.
+ *
+ * @param {any} rawValue
+ * @returns {{ valueText: string, valueType: 'boolean' | 'number' | 'json' | 'string' }}
+ */
+const normalizeJsonPathFormValue = (rawValue) => {
+  if (typeof rawValue === 'boolean') {
+    return { valueText: rawValue ? 'true' : 'false', valueType: 'boolean' };
+  }
+
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return { valueText: String(rawValue), valueType: 'number' };
+  }
+
+  if (typeof rawValue === 'string') {
+    const { valueType } = coerceJsonPathScalar(rawValue);
+    return { valueText: rawValue, valueType };
+  }
+
+  if (rawValue && typeof rawValue === 'object') {
+    try {
+      return { valueText: JSON.stringify(rawValue), valueType: 'json' };
+    } catch (error) {
+      return { valueText: String(rawValue), valueType: 'string' };
+    }
+  }
+
+  return {
+    valueText: rawValue == null ? '' : String(rawValue),
+    valueType: 'string'
+  };
+};
+
+/**
  * Live edit rules configuration panel.
  *
  * This component lets the user view, create and edit both text-based and JSONPath-based
@@ -107,6 +551,8 @@ const buildMarkerList = (variants) => {
  * @param {boolean} [props.editRulesEnabled] Global switch indicating whether live edit rules are applied.
  * @param {(enabled: boolean) => void} [props.onEditRulesModeChange] Called when the global live edit toggle is changed.
  * @param {(title: string, message: string, kind: string) => Promise<boolean>} [props.showConfirm] Optional async confirm dialog helper.
+ * @param {(title: string, message: string, defaultValue?: string, placeholder?: string, examples?: string[]) => Promise<string|boolean>} [props.showPrompt]
+ *        Optional prompt helper used to name edit-rule presets.
  * @param {(title: string, message: string, kind: string) => void} [props.showAlert] Optional alert helper for warning/error messages.
  * @param {{ name?: string, path?: string, value?: any, valueType?: string, url?: string, target?: 'request'|'response'|'both' }} [props.initialJsonPathSeed]
  *        Optional seed used to prefill a new JSONPath rule when invoked from the JSON tree view.
@@ -117,6 +563,7 @@ function EditRules({
   editRulesEnabled,
   onEditRulesModeChange,
   showConfirm,
+  showPrompt,
   showAlert,
   initialJsonPathSeed,
   onConsumeJsonPathSeed
@@ -129,6 +576,12 @@ function EditRules({
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
   const [expandedRuleIds, setExpandedRuleIds] = useState([]);
+  const [presets, setPresets] = useState([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [rulePresetSelections, setRulePresetSelections] = useState({});
+  const [updatingPresetRuleId, setUpdatingPresetRuleId] = useState(null);
+  const [isPickingJsonValueFile, setIsPickingJsonValueFile] = useState(false);
   const [formData, setFormData] = useState({
     kind: 'text',
     name: '',
@@ -141,6 +594,9 @@ function EditRules({
     path: '',
     value: '',
     valueType: 'string',
+    jsonValueMode: 'text',
+    jsonValueFileName: '',
+    jsonValueFileToken: '',
     url: '',
     target: 'request'
   });
@@ -159,23 +615,230 @@ function EditRules({
     }
   }, []);
 
+  const fetchPresets = useCallback(async () => {
+    try {
+      setPresetsLoading(true);
+      const response = await axios.get(buildApiUrl('/api/edit-rule-presets'));
+      setPresets(response.data.presets || []);
+    } catch (error) {
+      console.error('Error fetching edit rule presets:', error);
+    } finally {
+      setPresetsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchRules();
   }, [fetchRules]);
+
+  useEffect(() => {
+    fetchPresets();
+  }, [fetchPresets]);
+
+  /**
+   * Build a preset-ready edit-rule payload from the current form data.
+   *
+   * @returns {object}
+   */
+  const buildPresetRuleFromForm = useCallback(() => {
+    if (formData.kind === 'jsonPath') {
+      if (formData.jsonValueMode === 'file' && formData.jsonValueFileToken) {
+        return {
+          kind: 'jsonPath',
+          name: formData.name,
+          path: formData.path,
+          value: '',
+          valueType: formData.valueType,
+          valueSource: {
+            type: 'file',
+            path: formData.jsonValueFileToken,
+            originalName: formData.jsonValueFileName
+          },
+          url: formData.url,
+          target: formData.target || 'request'
+        };
+      }
+
+      const normalizedValue = coerceJsonPathScalar(formData.value);
+      const storedValue =
+        normalizedValue.valueType === 'json'
+          ? JSON.stringify(normalizedValue.value)
+          : normalizedValue.value;
+
+      return {
+        kind: 'jsonPath',
+        name: formData.name,
+        path: formData.path,
+        value: storedValue,
+        valueType: normalizedValue.valueType,
+        valueSource: null,
+        url: formData.url,
+        target: formData.target || 'request'
+      };
+    }
+
+    return {
+      kind: 'text',
+      name: formData.name,
+      replacement: formData.replacement,
+      useRegex: formData.useRegex === true,
+      caseSensitive: formData.caseSensitive === true,
+      url: formData.url || '',
+      target:
+        formData.target === 'request' || formData.target === 'response' || formData.target === 'both'
+          ? formData.target
+          : 'both',
+      startVariants: parseVariantLines(formData.startVariantsText),
+      endVariants: parseVariantLines(formData.endVariantsText)
+    };
+  }, [formData]);
+
+  /**
+   * Apply a saved preset to the edit form.
+   *
+   * @param {object} preset
+   */
+  const applyPresetToForm = useCallback((preset) => {
+    if (!preset || typeof preset !== 'object') return;
+    const rule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+
+    if (preset.kind === 'jsonPath') {
+      const fileSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
+      const normalizedValue = normalizeJsonPathFormValue(
+        Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : ''
+      );
+      const fileFallbackName = fileSource?.path
+        ? fileSource.path.split(/[\\/]/).pop()
+        : fileSource?.filename;
+
+      setFormData({
+        kind: 'jsonPath',
+        name: rule.name || '',
+        startVariantsText: '',
+        endVariantsText: '',
+        replacement: '',
+        enabled: true,
+        useRegex: false,
+        caseSensitive: false,
+        path: rule.path || '',
+        value: fileSource ? '' : normalizedValue.valueText,
+        valueType: fileSource ? (rule.valueType || 'string') : normalizedValue.valueType,
+        jsonValueMode: fileSource ? 'file' : 'text',
+        jsonValueFileName: fileSource?.originalName || fileFallbackName || '',
+        jsonValueFileToken: fileSource?.path || fileSource?.filename || '',
+        url: rule.url || '',
+        target:
+          rule.target === 'response' || rule.target === 'both'
+            ? rule.target
+            : 'request'
+      });
+      return;
+    }
+
+    const startMarkers = buildMarkerList(rule.startVariants);
+    const endMarkers = buildMarkerList(rule.endVariants);
+
+    setFormData({
+      kind: 'text',
+      name: rule.name || '',
+      startVariantsText: startMarkers.join('\n'),
+      endVariantsText: endMarkers.join('\n'),
+      replacement: rule.replacement || '',
+      enabled: true,
+      useRegex: rule.useRegex === true,
+      caseSensitive: rule.caseSensitive === true,
+      path: '',
+      value: '',
+      valueType: 'string',
+      jsonValueMode: 'text',
+      jsonValueFileName: '',
+      jsonValueFileToken: '',
+      url: rule.url || '',
+      target:
+        rule.target === 'request' || rule.target === 'response' || rule.target === 'both'
+          ? rule.target
+          : 'both'
+    });
+  }, []);
+
+  const groupedPresets = useMemo(() => {
+    const criteria = {
+      kind: formData.kind,
+      url: formData.url || '',
+      target: formData.target,
+      path: formData.kind === 'jsonPath' ? formData.path : ''
+    };
+    const filtered = presets.filter((preset) => doesPresetMatchRuleCriteria(preset, criteria));
+    return buildGroupedPresets(filtered);
+  }, [formData.kind, formData.path, formData.target, formData.url, presets]);
+
+  /**
+   * Apply a preset directly to an existing rule from the recap list.
+   *
+   * @param {object} rule
+   * @param {string} presetId
+   * @returns {Promise<void>}
+   */
+  const handleQuickPresetChange = async (rule, presetId) => {
+    if (!rule || !presetId) return;
+    const preset = presets.find((item) => item && String(item.id) === String(presetId));
+    if (!preset || !doesPresetMatchRuleCriteria(preset, rule)) return;
+
+    const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+    let patch = null;
+
+    if (rule.kind === 'jsonPath') {
+      patch = {
+        ...rule,
+        value: Object.prototype.hasOwnProperty.call(presetRule, 'value') ? presetRule.value : '',
+        valueType: presetRule.valueType || rule.valueType,
+        valueSource: presetRule.valueSource || null
+      };
+    } else {
+      patch = {
+        ...rule,
+        replacement: presetRule.replacement || ''
+      };
+    }
+
+    try {
+      setUpdatingPresetRuleId(rule.id);
+      await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), patch);
+      await fetchRules();
+      if (onRulesChanged) onRulesChanged();
+      setRulePresetSelections((prev) => ({ ...prev, [rule.id]: String(presetId) }));
+    } catch (error) {
+      console.error('Error applying preset to rule:', error);
+      const message = error.response?.data?.error || error.message || 'Unknown error';
+      if (showAlert) {
+        showAlert('Failed to apply preset', String(message), 'error');
+      } else {
+        alert('Failed to apply preset: ' + message);
+      }
+    } finally {
+      setUpdatingPresetRuleId(null);
+    }
+  };
 
   // When coming from the JSONTree edit icon, prefill a new jsonPath rule
   useEffect(() => {
     if (!initialJsonPathSeed) return;
 
+    const normalizedSeedValue = normalizeJsonPathFormValue(initialJsonPathSeed.value);
+
     setIsCreating(true);
     setEditingRule(null);
+    setSelectedPresetId('');
     setFormData(prev => ({
       ...prev,
       kind: 'jsonPath',
       name: initialJsonPathSeed.name || '',
       path: initialJsonPathSeed.path || '',
-      value: initialJsonPathSeed.value ?? '',
-      valueType: initialJsonPathSeed.valueType || 'string',
+      value: normalizedSeedValue.valueText,
+      valueType: normalizedSeedValue.valueType,
+      jsonValueMode: 'text',
+      jsonValueFileName: '',
+      jsonValueFileToken: '',
       url: initialJsonPathSeed.url || '',
       target:
         initialJsonPathSeed.target === 'response' || initialJsonPathSeed.target === 'both'
@@ -241,6 +904,82 @@ function EditRules({
     }
   }, [formData.value]);
 
+  /**
+   * Open a native file picker via the backend to capture an absolute path.
+   *
+   * @returns {Promise<string | null>}
+   */
+  const openJsonValueFilePicker = useCallback(async () => {
+    const response = await axios.post(buildApiUrl('/api/system/file-picker'), {
+      title: 'Select JSONPath value file',
+      filter: 'Text files (*.txt)|*.txt|All files (*.*)|*.*'
+    });
+
+    if (response?.data?.canceled) return null;
+    return response?.data?.path || null;
+  }, []);
+
+  /**
+   * Handle text input changes for JSONPath values with cascading type conversion.
+   *
+   * @param {React.ChangeEvent<HTMLInputElement>} event
+   */
+  const handleJsonValueTextChange = (event) => {
+    const rawText = event.target.value;
+    const { valueType } = coerceJsonPathScalar(rawText);
+    setFormData((prev) => ({
+      ...prev,
+      value: rawText,
+      valueType,
+      jsonValueMode: 'text'
+    }));
+  };
+
+  /**
+   * Handle JSONPath file selection via the native picker.
+   *
+   * @returns {Promise<void>}
+   */
+  const handleJsonValueFilePick = async () => {
+    try {
+      setIsPickingJsonValueFile(true);
+      const selectedPath = await openJsonValueFilePicker();
+      if (!selectedPath) return;
+      const filename = selectedPath.split(/[\\/]/).pop() || selectedPath;
+      setFormData((prev) => ({
+        ...prev,
+        value: '',
+        valueType: 'string',
+        jsonValueMode: 'file',
+        jsonValueFileName: filename,
+        jsonValueFileToken: selectedPath
+      }));
+    } catch (error) {
+      const message = error?.response?.data?.error || error?.message || 'Unable to open the file picker.';
+      if (showAlert) {
+        showAlert('File picker error', String(message), 'error');
+      } else {
+        alert('Unable to open the file picker: ' + message);
+      }
+    } finally {
+      setIsPickingJsonValueFile(false);
+    }
+  };
+
+  /**
+   * Switch between text and file inputs for JSONPath values.
+   *
+   * @param {'text' | 'file'} mode
+   */
+  const handleJsonValueModeChange = (mode) => {
+    setFormData((prev) => ({
+      ...prev,
+      jsonValueMode: mode,
+      jsonValueFileName: mode === 'file' ? prev.jsonValueFileName : '',
+      jsonValueFileToken: mode === 'file' ? prev.jsonValueFileToken : ''
+    }));
+  };
+
   const handleDelete = async (ruleId) => {
     let confirmed = true;
 
@@ -277,8 +1016,19 @@ function EditRules({
    * @param {{ id: string, kind?: string, name?: string }} rule
    */
   const handleEdit = (rule) => {
+    if (isCreating || (editingRule && editingRule !== rule.id)) {
+      handleCancel();
+    }
     setEditingRule(rule.id);
+    setSelectedPresetId('');
     if (rule.kind === 'jsonPath') {
+      const normalizedValue = normalizeJsonPathFormValue(
+        Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : ''
+      );
+      const fileSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
+      const fileFallbackName = fileSource?.path
+        ? fileSource.path.split(/[\\/]/).pop()
+        : fileSource?.filename;
       setIsCreating(false);
       setFormData({
         kind: 'jsonPath',
@@ -290,8 +1040,11 @@ function EditRules({
         useRegex: false,
         caseSensitive: false,
         path: rule.path || '',
-        value: Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : '',
-        valueType: rule.valueType || 'string',
+        value: fileSource ? '' : normalizedValue.valueText,
+        valueType: fileSource ? (rule.valueType || 'string') : normalizedValue.valueType,
+        jsonValueMode: fileSource ? 'file' : 'text',
+        jsonValueFileName: fileSource?.originalName || fileFallbackName || '',
+        jsonValueFileToken: fileSource?.path || fileSource?.filename || '',
         url: rule.url || '',
         target:
           rule.target === 'response' || rule.target === 'both'
@@ -314,6 +1067,9 @@ function EditRules({
         path: '',
         value: '',
         valueType: 'string',
+        jsonValueMode: 'text',
+        jsonValueFileName: '',
+        jsonValueFileToken: '',
         // For text rules, URL/target are optional; when missing, they are
         // treated as global and "both" respectively.
         url: rule.url || '',
@@ -330,6 +1086,7 @@ function EditRules({
    */
   const handleCreate = () => {
     setIsCreating(true);
+    setSelectedPresetId('');
     setFormData({
       kind: 'text',
       name: '',
@@ -342,6 +1099,9 @@ function EditRules({
       path: '',
       value: '',
       valueType: 'string',
+      jsonValueMode: 'text',
+      jsonValueFileName: '',
+      jsonValueFileToken: '',
       url: '',
       // For new text rules, default to both request and response to preserve
       // the legacy behaviour where text rules applied in all phases.
@@ -353,9 +1113,10 @@ function EditRules({
    * Exit create/edit mode and reset the form to its initial text-rule
    * state.
    */
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     setEditingRule(null);
     setIsCreating(false);
+    setSelectedPresetId('');
     setFormData({
       kind: 'text',
       name: '',
@@ -368,10 +1129,13 @@ function EditRules({
       path: '',
       value: '',
       valueType: 'string',
+      jsonValueMode: 'text',
+      jsonValueFileName: '',
+      jsonValueFileToken: '',
       url: '',
       target: 'request'
     });
-  };
+  }, []);
 
   /**
    * Persist the current rule form, creating or updating a backend edit rule.
@@ -384,7 +1148,7 @@ function EditRules({
    *
    * @returns {Promise<void>}
    */
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     let startMarkers = [];
     let endMarkers = [];
 
@@ -398,6 +1162,16 @@ function EditRules({
         const msg = 'For a JSONPath rule you must specify both the URL and the JSON path.';
         if (showAlert) {
           showAlert('Missing fields', msg, 'warning');
+        } else {
+          alert(msg);
+        }
+        return;
+      }
+
+      if (formData.jsonValueMode === 'file' && !formData.jsonValueFileToken) {
+        const msg = 'Select a file to use as the JSONPath value before saving.';
+        if (showAlert) {
+          showAlert('Missing file', msg, 'warning');
         } else {
           alert(msg);
         }
@@ -423,16 +1197,42 @@ function EditRules({
 
     const payload =
       formData.kind === 'jsonPath'
-        ? {
-            kind: 'jsonPath',
-            name: formData.name,
-            path: formData.path,
-            value: formData.value,
-            valueType: formData.valueType || 'string',
-            url: formData.url,
-            target: formData.target || 'request',
-            enabled: formData.enabled !== false
-          }
+        ? (() => {
+            if (formData.jsonValueMode === 'file' && formData.jsonValueFileToken) {
+              return {
+                kind: 'jsonPath',
+                name: formData.name,
+                path: formData.path,
+                value: '',
+                valueType: formData.valueType,
+                valueSource: {
+                  type: 'file',
+                  path: formData.jsonValueFileToken,
+                  originalName: formData.jsonValueFileName
+                },
+                url: formData.url,
+                target: formData.target || 'request',
+                enabled: formData.enabled !== false
+              };
+            }
+
+            const normalizedValue = coerceJsonPathScalar(formData.value);
+            const storedValue =
+              normalizedValue.valueType === 'json'
+                ? JSON.stringify(normalizedValue.value)
+                : normalizedValue.value;
+            return {
+              kind: 'jsonPath',
+              name: formData.name,
+              path: formData.path,
+              value: storedValue,
+              valueType: normalizedValue.valueType,
+              valueSource: null,
+              url: formData.url,
+              target: formData.target || 'request',
+              enabled: formData.enabled !== false
+            };
+          })()
         : (() => {
             const startVariants = startMarkers;
             const endVariants = endMarkers;
@@ -478,7 +1278,113 @@ function EditRules({
     } finally {
       setSaving(false);
     }
+  }, [
+    editingRule,
+    fetchRules,
+    formData,
+    handleCancel,
+    isCreating,
+    onRulesChanged,
+    showAlert
+  ]);
+
+  /**
+   * Save the current form as a reusable preset.
+   *
+   * @returns {Promise<void>}
+   */
+  const handleSavePreset = useCallback(async () => {
+    const defaultName = formData.name || (formData.kind === 'jsonPath' ? 'JSONPath preset' : 'Text preset');
+    const promptResult = showPrompt
+      ? await showPrompt('Save preset', 'Choose a name for this preset.', defaultName, 'Preset name')
+      : window.prompt('Preset name', defaultName);
+
+    if (!promptResult || typeof promptResult !== 'string' || !promptResult.trim()) {
+      return;
+    }
+
+    const payload = {
+      name: promptResult.trim(),
+      kind: formData.kind === 'jsonPath' ? 'jsonPath' : 'text',
+      rule: buildPresetRuleFromForm()
+    };
+
+    try {
+      const response = await axios.post(buildApiUrl('/api/edit-rule-presets'), payload);
+      const created = response.data?.preset;
+      await fetchPresets();
+      if (created?.id) {
+        setSelectedPresetId(String(created.id));
+      }
+      await handleSave();
+    } catch (error) {
+      console.error('Error saving edit rule preset:', error);
+      const message = error.response?.data?.error || error.message || 'Unknown error';
+      if (showAlert) {
+        showAlert('Failed to save preset', String(message), 'error');
+      } else {
+        alert('Failed to save preset: ' + message);
+      }
+    }
+  }, [buildPresetRuleFromForm, fetchPresets, formData.kind, formData.name, handleSave, showAlert, showPrompt]);
+
+  /**
+   * Handle selection of a preset from the dropdown.
+   *
+   * @param {string} presetId
+   */
+  const handlePresetSelect = (presetId) => {
+    const nextId = String(presetId || '');
+    setSelectedPresetId(nextId);
   };
+
+  useEffect(() => {
+    if (!selectedPresetId) return;
+    const preset = presets.find((item) => item && String(item.id) === selectedPresetId);
+    if (preset) {
+      applyPresetToForm(preset);
+    }
+  }, [applyPresetToForm, presets, selectedPresetId]);
+
+  /**
+   * Delete a preset by id.
+   *
+   * @param {string} presetId
+   * @returns {Promise<void>}
+   */
+  const handleDeletePreset = useCallback(async (presetId) => {
+    const targetId = String(presetId || '');
+    if (!targetId) return;
+
+    const confirmed = showConfirm
+      ? await showConfirm('Delete preset', 'Are you sure you want to delete this preset? This cannot be undone.')
+      : window.confirm('Delete this preset?');
+
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(buildApiUrl(`/api/edit-rule-presets/${targetId}`));
+      await fetchPresets();
+      setSelectedPresetId((prev) => (String(prev) === targetId ? '' : prev));
+      setRulePresetSelections((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((key) => {
+          if (String(next[key]) === targetId) {
+            delete next[key];
+          }
+        });
+        return next;
+      });
+    } catch (error) {
+      console.error('Error deleting preset:', error);
+      const message = error.response?.data?.error || error.message || 'Unknown error';
+      if (showAlert) {
+        showAlert('Failed to delete preset', String(message), 'error');
+      } else {
+        alert('Failed to delete preset: ' + message);
+      }
+    }
+  }, [fetchPresets, showAlert, showConfirm]);
 
   useEffect(() => {
     if ((isCreating || editingRule) && formRef.current && typeof window !== 'undefined') {
@@ -548,16 +1454,16 @@ function EditRules({
           <div className="text-sm text-slate-300">
             <p className="font-medium text-cyan-400 mb-1">How it works</p>
             <p>
-              Rules are applied universally across all contexts (headers, bodies, Connect frames, WebSocket messages).
+              Rules are applied across headers, bodies, Connect frames, and WebSocket messages for traffic that passes through the proxy pipeline.
               Text rules use <span className="font-semibold">start/end markers</span> to match text patterns: everything from the start marker through the end marker (inclusive) is replaced with your value.
               Markers are entered as lists (one per line) and all non-empty lines are treated as <span className="font-semibold">OR variants</span>, so a single rule can cover many similar cases.
-              JSON Path rules let you target structured fields (for example in JSON or protobuf payloads) and overwrite them using a path and value type.
-              Only traffic that passes through the proxy pipeline is affected.
+              JSON Path rules target structured fields and support Manual values or File values read from a local path at runtime (no upload).
+              Presets are scoped by Apply To (target), URL pattern, and JSON path (when applicable) to prevent mismatched usage.
             </p>
             <p className="mt-2 text-xs text-slate-400">
               <strong>Note:</strong> If you provide only start markers and leave end markers empty, the replacement will continue to the end of the content.
               This allows you to replace everything from a marker onwards without needing to specify where to stop. When both start and end marker lists are provided,
-              the proxy applies the rule to every matching start/end combination.
+              the proxy applies the rule to every matching start/end combination. JSON Path rules require both a URL pattern and JSON path; File input requires a local file selection and is read at runtime. Saving a preset also saves the rule.
             </p>
           </div>
         </div>
@@ -571,11 +1477,24 @@ function EditRules({
                 {isCreating ? 'Create rule' : 'Edit rule'}
               </h4>
               <p className="text-xs text-slate-400">
-                Applied to all traffic that passes through the proxy pipeline.
+                Presets are scoped by Apply To (target), URL pattern, and JSON path (when applicable) and apply to all traffic that passes through the proxy pipeline.
               </p>
             </div>
 
             <div className="flex items-center gap-2 text-xs sm:text-sm">
+              <div className="flex items-center gap-2">
+                <PresetDropdown
+                  value={selectedPresetId}
+                  placeholder="Select preset"
+                  groups={groupedPresets}
+                  loading={presetsLoading}
+                  disabled={false}
+                  onSelect={handlePresetSelect}
+                  onDelete={handleDeletePreset}
+                  buttonClassName="min-w-[240px]"
+                  menuClassName="z-50"
+                />
+              </div>
               {formData.kind === 'text' && (
                 <>
                   {/* Regex toggle */}
@@ -674,12 +1593,12 @@ function EditRules({
                   />
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-4 items-end">
-                  <div className="sm:w-auto">
+                <div className="flex flex-col sm:flex-row gap-4 items-start">
+                  <div className="sm:w-64">
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
                       Apply to
                     </label>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex w-full gap-2">
                       {[{ key: 'request', label: 'Request' }, { key: 'response', label: 'Response' }, { key: 'both', label: 'Both' }].map(option => {
                         const isActive = formData.target === option.key;
 
@@ -702,7 +1621,7 @@ function EditRules({
                             key={option.key}
                             type="button"
                             onClick={() => setFormData({ ...formData, target: option.key })}
-                            className={`inline-flex items-center justify-center px-3 h-8 rounded-md border text-xs font-medium transition-colors ${
+                            className={`inline-flex flex-1 items-center justify-center px-3 h-8 rounded-md border text-xs font-medium transition-colors ${
                               isActive
                                 ? activeClasses
                                 : `bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 ${hoverClasses}`
@@ -729,23 +1648,29 @@ function EditRules({
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-4 items-end">
-                  <div className="sm:w-auto">
+                <div className="flex flex-col sm:flex-row gap-4 items-start">
+                  <div className="sm:w-64">
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                      Value type
+                      Input Type
                     </label>
-                    <div className="flex flex-wrap gap-2">
-                      {[{ key: 'string', label: 'String' }, { key: 'number', label: 'Number' }, { key: 'boolean', label: 'Boolean' }].map(option => {
-                        const isActive = formData.valueType === option.key;
+                    <div className="flex w-full gap-2">
+                      {[{ key: 'text', label: 'Manual' }, { key: 'file', label: 'File' }].map(option => {
+                        const isActive = formData.jsonValueMode === option.key;
+                        const activeClasses =
+                          option.key === 'file'
+                            ? 'bg-green-600/20 border-green-500/60 text-green-400'
+                            : 'bg-amber-600/20 border-amber-500/60 text-amber-200';
+                        const inactiveClasses =
+                          option.key === 'file'
+                            ? 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-green-500 hover:text-green-400'
+                            : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-amber-500 hover:text-amber-200';
                         return (
                           <button
                             key={option.key}
                             type="button"
-                            onClick={() => setFormData({ ...formData, valueType: option.key })}
-                            className={`inline-flex items-center justify-center px-3 h-8 rounded-md border text-xs font-medium transition-colors ${
-                              isActive
-                                ? 'bg-amber-600/20 border-amber-500/60 text-amber-200'
-                                : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-amber-500 hover:text-amber-200'
+                            onClick={() => handleJsonValueModeChange(option.key)}
+                            className={`inline-flex flex-1 items-center justify-center px-3 h-8 rounded-md border text-xs font-medium transition-colors ${
+                              isActive ? activeClasses : inactiveClasses
                             }`}
                           >
                             {option.label}
@@ -756,7 +1681,7 @@ function EditRules({
                   </div>
 
                   <div className="flex-1">
-                    <div className="flex items-center gap-1.5 mb-2">
+                    <div className="flex items-start gap-1.5 mb-2">
                       <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Value
                       </label>
@@ -774,26 +1699,48 @@ function EditRules({
                           </p>
                         </div>
                       </div>
+                      <span className="text-[11px] text-slate-500">
+                        [Detected type: <span className="text-amber-200 font-semibold">{formData.valueType}</span>]
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={formData.value}
-                        onChange={(e) => setFormData({ ...formData, value: e.target.value })}
-                        placeholder={formData.valueType === 'string' ? 'Nuovo valore stringa' : 'Valore letterale'}
-                        disabled={formData.valueType === 'null'}
-                        className="flex-1 px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:text-slate-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleCopyJsonValue}
-                        disabled={!formData.value}
-                        className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[#2a2a2a] bg-[#0a0a0a] text-slate-400 hover:border-amber-500 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title="Copy current value"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                    </div>
+                    {formData.jsonValueMode === 'file' ? (
+                      <div className="flex items-center gap-2 min-h-[32px]">
+                        <button
+                          type="button"
+                          onClick={handleJsonValueFilePick}
+                          disabled={isPickingJsonValueFile}
+                          className="inline-flex items-center justify-center px-3 h-8 rounded-md border border-green-500/60 bg-green-600/20 text-green-400 text-xs font-medium hover:bg-green-600/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isPickingJsonValueFile ? 'Picking...' : 'Choose file'}
+                        </button>
+                        <div className="flex-1 min-w-0 px-3 h-8 rounded-lg border border-[#2a2a2a] bg-[#0a0a0a] text-[11px] text-slate-400 flex items-center">
+                          <span className="truncate">
+                            {formData.jsonValueFileToken
+                              ? formData.jsonValueFileToken
+                              : 'Select a file to use at runtime'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 min-h-[32px]">
+                        <input
+                          type="text"
+                          value={formData.value}
+                          onChange={handleJsonValueTextChange}
+                          placeholder="Insert a value"
+                          className="flex-1 px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleCopyJsonValue}
+                          disabled={!formData.value}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[#2a2a2a] bg-[#0a0a0a] text-slate-400 hover:border-amber-500 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Copy current value"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -907,6 +1854,14 @@ function EditRules({
 
             <div className="flex items-center gap-3 pt-4 border-t border-[#2a2a2a]">
               <button
+                type="button"
+                onClick={handleSavePreset}
+                className="inline-flex items-center justify-center gap-2 px-4 h-8 rounded-lg bg-blue-600/10 border border-blue-500/30 text-blue-200 hover:bg-blue-600/20 hover:text-white transition-colors text-xs font-medium"
+              >
+                <Save className="w-4 h-4" />
+                <span>Save as preset</span>
+              </button>
+              <button
                 onClick={handleSave}
                 disabled={saving}
                 className="flex-1 inline-flex items-center justify-center gap-2 px-4 h-8 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-white disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50 transition-colors text-xs font-medium"
@@ -953,6 +1908,10 @@ function EditRules({
           {rules.map((rule) => {
             const startMarkers = buildMarkerList(rule.startVariants);
             const endMarkers = buildMarkerList(rule.endVariants);
+            const filteredPresetsForRule = presets.filter((preset) => doesPresetMatchRuleCriteria(preset, rule));
+            const rulePresetGroups = buildGroupedPresets(filteredPresetsForRule);
+            const matchedPresetId = filteredPresetsForRule.find((preset) => doesRuleMatchPreset(rule, preset))?.id;
+            const rulePresetValue = rulePresetSelections[rule.id] || (matchedPresetId ? String(matchedPresetId) : '');
 
             const isExpanded = expandedRuleIds.includes(rule.id);
             const fullReplacementText = getRulePreviewText(rule, { truncate: false });
@@ -1004,6 +1963,17 @@ function EditRules({
                     </div>
 
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <PresetDropdown
+                        value={rulePresetValue}
+                        placeholder="Apply preset"
+                        groups={rulePresetGroups}
+                        loading={presetsLoading}
+                        disabled={presetsLoading || updatingPresetRuleId === rule.id || rulePresetGroups.length === 0}
+                        onSelect={(presetId) => handleQuickPresetChange(rule, presetId)}
+                        onDelete={handleDeletePreset}
+                        buttonClassName="min-w-[180px] h-8 px-2.5 rounded-lg border border-[#2a2a2a] bg-[#0b0b0b] text-[11px] text-slate-100 inline-flex items-center justify-between gap-2 hover:border-blue-500/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        menuClassName="absolute right-0 mt-2 w-56 bg-[#101010] border border-[#2a2a2a] rounded-lg shadow-2xl z-50"
+                      />
                       <button
                         onClick={() => handleToggleEnabled(rule)}
                         disabled={togglingId === rule.id}
@@ -1022,8 +1992,7 @@ function EditRules({
                       </button>
                       <button
                         onClick={() => handleEdit(rule)}
-                        disabled={isCreating || (editingRule && editingRule !== rule.id)}
-                        className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-blue-600/20 hover:bg-blue-600/30 disabled:bg-slate-700/20 disabled:text-slate-600 text-blue-400 border border-blue-600/30 disabled:border-slate-600/30 rounded-lg transition-colors disabled:cursor-not-allowed text-xs font-medium"
+                        className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-lg transition-colors text-xs font-medium"
                         title="Edit"
                       >
                         <Edit3 className="w-4 h-4" />
@@ -1048,7 +2017,7 @@ function EditRules({
                   <div className="space-y-1 text-sm text-slate-400">
                     {startMarkers.length > 0 && (
                       <div className="flex items-start gap-2">
-                        <span className="text-slate-500 shrink-0">Start markers:</span>
+                        <span className="text-slate-500 shrink-0 w-24 text-left">Start markers:</span>
                         <div className="flex flex-col gap-0.5">
                           {startMarkers.map((marker, idx) => (
                             <code key={idx} className="text-slate-300 break-all">{marker}</code>
@@ -1058,7 +2027,7 @@ function EditRules({
                     )}
                     {endMarkers.length > 0 && (
                       <div className="flex items-start gap-2">
-                        <span className="text-slate-500 shrink-0">End markers:</span>
+                        <span className="text-slate-500 shrink-0 w-24 text-left">End markers:</span>
                         <div className="flex flex-col gap-0.5">
                           {endMarkers.map((marker, idx) => (
                             <code key={idx} className="text-slate-300 break-all">{marker}</code>
@@ -1068,18 +2037,18 @@ function EditRules({
                     )}
                     {rule.kind === 'jsonPath' && rule.path && (
                       <div className="flex items-start gap-2">
-                        <span className="text-slate-500 shrink-0">Path:</span>
+                        <span className="text-slate-500 shrink-0 w-24 text-left">Path:</span>
                         <code className="text-slate-300 break-all">{rule.path}</code>
                       </div>
                     )}
-                    <div className="flex items-start gap-2">
-                      <span className="text-slate-500 shrink-0 mt-0.5">Replace:</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-slate-500 shrink-0 w-24 text-left">Replace with:</span>
                       <div className="flex-1 min-w-0">
                         <button
                           type="button"
                           onClick={() => isTruncatable && toggleRuleExpanded(rule.id)}
                           aria-expanded={isExpanded}
-                          className={`group inline-flex w-full items-start gap-2 rounded-md border border-transparent px-2 py-1 text-left transition-colors ${
+                          className={`group inline-flex w-full items-start gap-2 rounded-md border border-transparent px-0 py-0 text-left transition-colors ${
                             isTruncatable ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-cyan-500/5' : 'cursor-default'
                           }`}
                         >

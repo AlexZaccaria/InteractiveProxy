@@ -23,7 +23,7 @@ import AuditPanel from './components/AuditPanel';
 import { buildApiUrl } from './config/apiConfig';
 
 function App() {
-  const { modalState, closeModal, showConfirm, showAlert } = useModal();
+  const { modalState, closeModal, showConfirm, showPrompt, showAlert } = useModal();
   const [activeTab, setActiveTab] = useState('logs');
   const [resources, setResources] = useState([]);
   const [blockedCount, setBlockedCount] = useState(0);
@@ -573,6 +573,7 @@ function App() {
               editRulesEnabled={editRulesEnabled}
               onEditRulesModeChange={handleEditRulesModeChange}
               showConfirm={showConfirm}
+              showPrompt={showPrompt}
               showAlert={showAlert}
               initialJsonPathSeed={jsonPathRuleSeed}
               onConsumeJsonPathSeed={() => setJsonPathRuleSeed(null)}
