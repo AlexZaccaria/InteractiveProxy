@@ -2,13 +2,8 @@ const http = require('http')
 const https = require('https')
 const net = require('net')
 const tls = require('tls')
-const express = require('express')
-const cors = require('cors')
-const bodyParser = require('body-parser')
-const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
-const fsPromises = fs.promises
 const { URL } = require('url')
 const WebSocket = require('ws')
 const {
@@ -36,12 +31,12 @@ const {
   decodeWebSocketFrame
 } = require('./src/proxy/websocket-codec')
 
-const { showNativeFilePicker } = require('./src/system/file-picker')
 const { loadCaBundle, createUpstream, handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./src/proxy/upstream')
 const { createConfigStore } = require('./src/state/config-store')
 const { createRouter } = require('./src/proxy/router')
 const { createResourceStore } = require('./src/resources/store')
-const { handleBooleanToggleEndpoint } = require('./src/api/toggles')
+const { createApiRouter } = require('./src/api')
+const { createApp } = require('./src/app')
 
 // Upstream access: undici dispatchers, TLS strictness and the shared request
 // helper used by the HTTP bypass path, the main proxy flow and the MITM flow.
@@ -54,7 +49,6 @@ const upstream = createUpstream({
 const { performUpstreamRequest, attachAbortOnClose } = upstream
 const upstreamCaBundle = upstream.caBundle
 
-const app = express()
 
 // Directories
 const BLOCKED_URLS_FILE = path.join(STORAGE_DIR, 'blocked-urls.json')
@@ -144,13 +138,11 @@ const {
   isProxyTargetedRequest,
   getBypassMode,
   loadBlockedUrls,
-  loadBypassUrls,
-  normalizeBlockedRule,
-  normalizeBypassRule
+  loadBypassUrls
 } = router
 const handleUpstreamError = params => handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
 
-const { safeTrim, queryBool, safeString, parseListQuery, isValidId } = require('./src/util/strings')
+const { safeTrim, queryBool, safeString, parseListQuery } = require('./src/util/strings')
 
 const {
   getCachedUrlParse,
@@ -236,12 +228,6 @@ const {
   buildJsonSearchSnapshot
 } = require('./src/logs/preview')
 
-function captureRawBody (req, res, buf) {
-  if (buf && buf.length) {
-    req.rawBody = Buffer.from(buf)
-  }
-}
-
 // Ensure directories exist
 try {
   [STORAGE_DIR, LOGS_DIR].forEach(dir => {
@@ -259,7 +245,7 @@ const {
   ensureLogSearchSnapshots,
   filterLogsCore: filterLogsCoreForStore
 } = require('./src/logs/search')
-const { buildClientLogView, filterLogsForApiRequest: filterLogsForApiRequestForStore } = require('./src/logs/views')
+const { buildClientLogView } = require('./src/logs/views')
 const { createStats, computeLogEntryMetrics } = require('./src/logs/stats')
 const { createSuggestionTracker } = require('./src/logs/suggestions')
 const { createLogEntryFactory } = require('./src/logs/entries')
@@ -285,7 +271,6 @@ const logStore = createLogStore({
 })
 const addLog = entry => logStore.add(entry)
 const filterLogsCore = query => filterLogsCoreForStore(query, logStore)
-const filterLogsForApiRequest = req => filterLogsForApiRequestForStore(req, logStore)
 const computeBypassSuggestions = options => suggestions.compute(options)
 const {
   createLogEntry,
@@ -733,83 +718,6 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl }) {
   })
 }
 
-// Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    // Requests without an Origin header come from non-browser clients
-    // (curl, scripts) and are allowed. Browser requests are allowed only
-    // from the UI origins so other websites cannot read API responses.
-    callback(null, !origin || UI_ORIGINS.includes(origin))
-  }
-}))
-
-app.set('trust proxy', true)
-app.use(bodyParser.raw({
-  type: req => isProtoContentType(getContentType(req.headers)),
-  limit: BODY_LIMIT,
-  verify: captureRawBody,
-  inflate: false
-}))
-app.use(bodyParser.json({ limit: BODY_LIMIT, verify: captureRawBody }))
-app.use(bodyParser.urlencoded({ extended: true, limit: BODY_LIMIT, verify: captureRawBody }))
-// Every other body (text/plain, XML, binary, multipart of proxied traffic) is
-// captured raw so the proxy flow forwards it byte for byte. Multipart bodies
-// addressed to the management API are left to multer.
-app.use(bodyParser.raw({
-  type: req => {
-    const contentType = getContentType(req.headers).toLowerCase()
-    if (contentType.startsWith('multipart/')) return isProxyTargetedRequest(req)
-    return true
-  },
-  limit: BODY_LIMIT,
-  verify: captureRawBody,
-  inflate: false
-}))
-
-// Express routes by path, so a proxied request such as
-// http://example.com/api/users or http://example.com/index.html would
-// otherwise be answered by the management API or the bundled UI. Hand traffic
-// addressed to other hosts to the proxy flow before any route is considered.
-app.use((req, res, next) => {
-  if (isProxyTargetedRequest(req)) {
-    return handleProxiedHttpRequest(req, res)
-  }
-  next()
-})
-
-app.use('/api', (req, res, next) => {
-  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
-    return next()
-  }
-
-  // CORS alone does not stop "simple" cross-site POSTs from reaching the
-  // handlers, so mutations on the management API additionally reject
-  // requests that a browser marks as coming from another site. Non-browser
-  // clients send neither Origin nor Sec-Fetch-Site and keep working.
-  const origin = safeString(req.headers.origin)
-  const fetchSite = safeString(req.headers['sec-fetch-site']).toLowerCase()
-
-  if ((origin && !UI_ORIGINS.includes(origin)) || fetchSite === 'cross-site') {
-    return res.status(403).json({ error: 'Cross-site requests to the proxy API are not allowed' })
-  }
-
-  next()
-})
-
-// Multer configuration for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, STORAGE_DIR)
-  },
-  filename: (req, file, cb) => {
-    // Keep only the base name and replace characters that are unsafe in file
-    // names so an upload can never escape STORAGE_DIR.
-    const baseName = path.basename(file.originalname || 'upload').replace(/[^\w.-]+/g, '_')
-    cb(null, `${Date.now()}-${baseName}`)
-  }
-})
-const upload = multer({ storage })
-
 // Load resources and blocked URLs on startup
 resourceStore.load()
 router.loadBlockedUrls()
@@ -818,586 +726,34 @@ loadEditRules()
 loadEditRulePresets()
 rebuildEditRuleCache()
 
-// API Routes for UI
-app.get('/api/logs', (req, res) => {
-  try {
-    const { items, total, hasMore, offset, limit } = filterLogsForApiRequest(req)
-
-    res.json({
-      items,
-      total,
-      hasMore,
-      offset,
-      limit
-    })
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch logs' })
-  }
+// Management API and Express application. The bypass counter stays here
+// because the flows below increment it; the API reads and resets it.
+// `handleProxiedHttpRequest` is a hoisted function declaration, so the app
+// can reference it before its definition.
+const bypassCounter = {
+  get: () => bypassedRequestCount,
+  increment: incrementBypassedCount,
+  reset: () => { bypassedRequestCount = 0 }
+}
+const apiRouter = createApiRouter({
+  logStore,
+  stats,
+  suggestions,
+  ruleStore,
+  configStore,
+  router,
+  resourceStore,
+  storageDir: STORAGE_DIR,
+  uiOrigins: UI_ORIGINS,
+  bypassCounter
 })
-
-app.get('/api/logs/export', (req, res) => {
-  try {
-    const query = req.query || {}
-    const { ordered } = filterLogsCore(query)
-
-    // When an explicit list of IDs is provided, restrict the export to those
-    // entries only. This allows the UI to mark individual logs for export
-    // while preserving the legacy behaviour (export all filtered logs) when
-    // no IDs are specified.
-    const idsParam = safeString(query.ids)
-    let effective = ordered
-    if (idsParam) {
-      const ids = idsParam
-        .split(',')
-        .map(value => value.trim())
-        .filter(Boolean)
-      if (ids.length > 0) {
-        const idSet = new Set(ids.map(id => String(id)))
-        effective = ordered.filter(log => log && idSet.has(String(log.id)))
-      }
-    }
-
-    const items = effective.map(log => ({
-      ...log,
-      fileType: log && log.fileType ? log.fileType : getFileTypeFromLogEntry(log)
-    }))
-
-    res.json({ items, total: items.length })
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to export logs' })
-  }
-})
-
-app.get('/api/logs/:id', (req, res) => {
-  try {
-    const { id } = req.params
-    const log = logStore.findById(id)
-
-    if (!log) {
-      return res.status(404).json({ error: 'Log not found' })
-    }
-
-    const view = buildClientLogView(log)
-    if (!view) {
-      return res.status(500).json({ error: 'Failed to build log view' })
-    }
-
-    res.json(view)
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch log details' })
-  }
-})
-
-// Get config
-app.get('/api/config', (req, res) => {
-  res.json({
-    ...configStore.snapshot(),
-    filteredRequestCount: bypassedRequestCount
-  })
-})
-
-// Toggle endpoints for boolean config flags
-;[
-  { path: '/api/interactive-mode', field: 'interactiveModeEnabled', set: v => { configStore.interactiveModeEnabled = v } },
-  { path: '/api/edit-rules-mode', field: 'editRulesEnabled', set: v => { ruleStore.setEnabled(v) } },
-  { path: '/api/local-resources-mode', field: 'localResourcesEnabled', set: v => { configStore.localResourcesEnabled = v } },
-  { path: '/api/filter-rules-mode', field: 'filterRulesEnabled', set: v => { configStore.filterRulesEnabled = v } },
-  { path: '/api/blocked-rules-mode', field: 'blockedRulesEnabled', set: v => { configStore.blockedRulesEnabled = v } }
-].forEach(({ path, field, set }) => {
-  app.post(path, (req, res) => handleBooleanToggleEndpoint({
-    req,
-    res,
-    assignValue: set,
-    responseFieldName: field,
-    defaultEnabled: true,
-    persist: () => configStore.persist()
-  }))
-})
-
-// Get filter mode
-app.get('/api/filter-mode', (req, res) => {
-  res.json({ filterMode: getBypassMode() })
-})
-
-// Set filter mode ("ignore" or "focus")
-app.post('/api/filter-mode', (req, res) => {
-  const { mode } = req.body || {}
-  const normalized = safeString(mode).toLowerCase()
-
-  if (normalized !== 'ignore' && normalized !== 'focus') {
-    return res.status(400).json({ error: 'Invalid filter mode. Expected "ignore" or "focus".' })
-  }
-
-  configStore.filterMode = normalized
-  configStore.persist()
-  router.rebuildBypassUrlsForCurrentMode()
-
-  res.json({ success: true, filterMode: getBypassMode() })
-})
-
-// Open a native file picker (Windows) for local path selection.
-app.post('/api/system/file-picker', async (req, res) => {
-  if (process.platform !== 'win32') {
-    return res.status(501).json({ error: 'The native file picker is only available on Windows.' })
-  }
-
-  const body = req.body && typeof req.body === 'object' ? req.body : {}
-  const title = body.title == null ? undefined : String(body.title)
-  const filter = body.filter == null ? undefined : String(body.filter)
-
-  try {
-    const filePath = await showNativeFilePicker({ title, filter })
-    res.json({ path: filePath || null, canceled: !filePath })
-  } catch (error) {
-    res.status(500).json({ error: error?.message || 'Failed to open the file picker.' })
-  }
-})
-
-app.get('/api/resources', (req, res) => {
-  res.json(resourceStore.list())
-})
-
-app.post('/api/resources', upload.single('file'), async (req, res) => {
-  try {
-    const { url, contentType } = req.body || {}
-    const rawUrl = safeTrim(url)
-
-    if (!rawUrl) {
-      return res.status(400).json({ error: 'URL is required' })
-    }
-
-    const normalizedContentType = safeTrim(contentType)
-
-    let resourceData
-
-    if (req.file) {
-      // File upload
-      resourceData = {
-        type: 'file',
-        filename: req.file.filename,
-        originalName: req.file.originalname,
-        contentType: normalizedContentType || req.file.mimetype,
-        size: req.file.size,
-        createdAt: new Date().toISOString(),
-        enabled: true
-      }
-    } else if (req.body && Object.hasOwn(req.body, 'content') && req.body.content) {
-      // Text/JSON content
-      const filename = `${Date.now()}-content.txt`
-      await fsPromises.writeFile(path.join(STORAGE_DIR, filename), req.body.content)
-      resourceData = {
-        type: 'text',
-        filename,
-        contentType: normalizedContentType || 'text/plain',
-        size: req.body.content.length,
-        createdAt: new Date().toISOString(),
-        enabled: true
-      }
-    } else {
-      return res.status(400).json({ error: 'File or content is required' })
-    }
-
-    resourceStore.set(rawUrl, resourceData)
-    await resourceStore.save()
-
-    res.json({
-      success: true,
-      message: 'Resource added successfully',
-      resource: { url: rawUrl, ...resourceData }
-    })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-app.get('/api/edit-rule-presets', (req, res) => {
-  res.json({ presets: ruleStore.getPresets() })
-})
-
-app.post('/api/edit-rule-presets', async (req, res) => {
-  const raw = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
-
-  if (!raw) {
-    return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
-  }
-
-  const preset = ruleStore.addPreset(raw)
-  await ruleStore.savePresets()
-
-  res.status(201).json({ preset })
-})
-
-app.delete('/api/edit-rule-presets/:id', async (req, res) => {
-  const { id } = req.params
-
-  if (!ruleStore.removePreset(id)) {
-    return res.status(404).json({ error: 'Preset not found' })
-  }
-
-  await ruleStore.savePresets()
-  res.status(204).end()
-})
-
-app.post('/api/resources/toggle', async (req, res) => {
-  try {
-    const { url, enabled } = req.body || {}
-    const rawUrl = safeTrim(url)
-
-    if (!rawUrl) {
-      return res.status(400).json({ error: 'URL is required' })
-    }
-
-    if (!resourceStore.has(rawUrl)) {
-      return res.status(404).json({ error: 'Resource not found' })
-    }
-
-    if (enabled !== undefined && typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
-    }
-
-    const updated = resourceStore.toggle(rawUrl, enabled !== false)
-    await resourceStore.save()
-
-    res.json({ success: true, resource: { url: rawUrl, ...updated } })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-app.delete('/api/resources/:encodedUrl', async (req, res) => {
-  try {
-    const url = decodeURIComponent(req.params.encodedUrl)
-
-    if (await resourceStore.remove(url)) {
-      await resourceStore.save()
-
-      res.json({ success: true, message: 'Resource deleted successfully' })
-    } else {
-      res.status(404).json({ error: 'Resource not found' })
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-app.delete('/api/logs', (req, res) => {
-  logStore.clear()
-  bypassedRequestCount = 0
-  suggestions.reset()
-  stats.reset()
-  ruleStore.clearUsage()
-  res.json({ success: true, message: 'Logs cleared' })
-})
-
-// Get all blocked rules
-app.get('/api/blocked', (req, res) => {
-  res.json(router.getBlockedRules())
-})
-
-// Add/update/remove blocked URL
-app.post('/api/blocked', async (req, res) => {
-  const { id, url, action, enabled, name } = req.body || {}
-  const blockedRules = router.getBlockedRules()
-
-  if (typeof action !== 'string') {
-    return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
-  }
-
-  if (action === 'add') {
-    const normalizedUrl = safeTrim(url)
-    if (!normalizedUrl) {
-      return res.status(400).json({ error: 'URL is required' })
-    }
-    if (enabled !== undefined && typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
-    }
-
-    const newRule = normalizeBlockedRule({ id, enabled, name, url: normalizedUrl })
-    blockedRules.push(newRule)
-    await router.saveBlockedUrls()
-  } else if (action === 'update') {
-    if (!isValidId(id)) {
-      return res.status(400).json({ error: 'ID is required for update' })
-    }
-    const idx = blockedRules.findIndex(r => r.id === id)
-    if (idx !== -1) {
-      const existing = blockedRules[idx]
-      const next = { ...existing }
-
-      if (url !== undefined) {
-        const normalizedUrl = safeTrim(url)
-        if (!normalizedUrl) {
-          return res.status(400).json({ error: 'URL is required' })
-        }
-        next.url = normalizedUrl
-      }
-
-      if (enabled !== undefined) {
-        if (typeof enabled !== 'boolean') {
-          return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
-        }
-        next.enabled = enabled
-      }
-
-      if (name !== undefined) {
-        if (typeof name !== 'string') {
-          return res.status(400).json({ error: 'Invalid "name" field: expected a string.' })
-        }
-        next.name = name
-      }
-
-      blockedRules[idx] = normalizeBlockedRule(next)
-      await router.saveBlockedUrls()
-    } else {
-      return res.status(404).json({ error: 'Rule not found' })
-    }
-  } else if (action === 'remove') {
-    if (!isValidId(id)) {
-      return res.status(400).json({ error: 'ID is required for remove' })
-    }
-    router.setBlockedRules(blockedRules.filter(r => r.id !== id))
-    await router.saveBlockedUrls()
-  } else {
-    return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
-  }
-
-  res.json({ success: true, blockedRules: router.getBlockedRules() })
-})
-
-// Get all filter rules
-app.get('/api/filters', (req, res) => {
-  try {
-    const queryModeRaw = typeof req.query.mode === 'string' ? req.query.mode.toLowerCase() : null
-    const effectiveMode = (queryModeRaw === 'focus' || queryModeRaw === 'ignore')
-      ? queryModeRaw
-      : getBypassMode()
-
-    const rulesForMode = router.getBypassRules()
-      .filter(rule => rule && rule.mode === effectiveMode)
-
-    res.json(rulesForMode)
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to load filter rules' })
-  }
-})
-
-// Add/update/remove filter URL
-app.post('/api/filters', (req, res) => {
-  const { id, url, action, enabled, name, mode } = req.body || {}
-  const bypassRules = router.getBypassRules()
-
-  if (typeof action !== 'string') {
-    return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
-  }
-
-  if (action === 'add') {
-    const normalizedUrl = safeTrim(url)
-    if (!normalizedUrl) {
-      return res.status(400).json({ error: 'URL is required' })
-    }
-    if (enabled !== undefined && typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
-    }
-
-    const baseRule = {
-      id,
-      enabled,
-      name,
-      url: normalizedUrl,
-      mode: typeof mode === 'string' ? mode : getBypassMode()
-    }
-    const newRule = normalizeBypassRule(baseRule)
-    bypassRules.push(newRule)
-    router.saveBypassUrls()
-  } else if (action === 'update') {
-    if (!isValidId(id)) {
-      return res.status(400).json({ error: 'ID is required for update' })
-    }
-    const ruleIndex = bypassRules.findIndex(r => r.id === id)
-    if (ruleIndex !== -1) {
-      const existing = normalizeBypassRule(bypassRules[ruleIndex])
-      const nextModeRaw = typeof mode === 'string' ? mode.toLowerCase() : existing.mode
-      const nextMode = (nextModeRaw === 'focus' || nextModeRaw === 'ignore') ? nextModeRaw : existing.mode
-
-      let nextUrl = existing.url
-      if (url !== undefined) {
-        const normalizedUrl = safeTrim(url)
-        if (!normalizedUrl) {
-          return res.status(400).json({ error: 'URL is required' })
-        }
-        nextUrl = normalizedUrl
-      }
-
-      if (enabled !== undefined && typeof enabled !== 'boolean') {
-        return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
-      }
-
-      if (name !== undefined && typeof name !== 'string') {
-        return res.status(400).json({ error: 'Invalid "name" field: expected a string.' })
-      }
-
-      const updated = normalizeBypassRule({
-        ...existing,
-        url: nextUrl,
-        enabled: enabled !== undefined ? enabled : existing.enabled,
-        name: name !== undefined ? name : existing.name,
-        mode: nextMode
-      })
-
-      bypassRules[ruleIndex] = updated
-      router.saveBypassUrls()
-    } else {
-      return res.status(404).json({ error: 'Rule not found' })
-    }
-  } else if (action === 'remove') {
-    if (!isValidId(id)) {
-      return res.status(400).json({ error: 'ID is required for remove' })
-    }
-    router.setBypassRules(bypassRules.filter(r => r.id !== id))
-    router.saveBypassUrls()
-  } else {
-    return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
-  }
-
-  res.json({ success: true, bypassRules: router.getBypassRules() })
-})
-
-app.get('/api/filters/suggestions', (req, res) => {
-  try {
-    const limit = Number.parseInt(req.query.limit, 10)
-    const windowSize = Number.parseInt(req.query.windowSize, 10)
-
-    const suggestions = computeBypassSuggestions({
-      limit: Number.isNaN(limit) ? undefined : limit,
-      windowSize: Number.isNaN(windowSize) ? undefined : windowSize
-    })
-
-    res.json({ suggestions })
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to compute filter suggestions' })
-  }
-})
-
-app.get('/api/filters/metrics', (req, res) => {
-  res.json({
-    totalFiltered: bypassedRequestCount,
-    activeRules: router.getBypassUrls().length
-  })
-})
-
-app.get('/api/edit-rules', (req, res) => {
-  res.json({ rules: ruleStore.getRules() })
-})
-
-/**
- * Return a lightweight usage report for live edit rules.
- *
- * The payload is intentionally compact: a flat id->count map that the
- * frontend can join with /api/edit-rules metadata without duplicating
- * rule configuration on the wire.
- */
-app.get('/api/edit-rules/usage', (req, res) => {
-  res.json(ruleStore.getUsageSnapshot())
-})
-
-app.post('/api/edit-rules/value-file', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File is required' })
-    }
-
-    let valueType = 'string'
-    try {
-      const filePath = path.join(STORAGE_DIR, req.file.filename)
-      const text = await fsPromises.readFile(filePath, 'utf8')
-      valueType = coerceJsonPathScalarFromText(text).valueType
-    } catch {
-      valueType = 'string'
-    }
-
-    res.json({
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      valueType
-    })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-app.post('/api/edit-rules', (req, res) => {
-  // Allow both legacy text rules and new jsonPath rules. The normalizeEditRule
-  // helper is responsible for interpreting the payload and ensuring a
-  // consistent internal representation.
-  const raw = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
-
-  if (!raw) {
-    return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
-  }
-
-  const rule = ruleStore.addRule(raw)
-  ruleStore.save()
-
-  res.status(201).json({ rule })
-})
-
-app.put('/api/edit-rules/:id', (req, res) => {
-  const { id } = req.params
-  if (!ruleStore.findRule(id)) {
-    return res.status(404).json({ error: 'Rule not found' })
-  }
-
-  const patch = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
-
-  if (!patch) {
-    return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
-  }
-
-  const updated = ruleStore.updateRule(id, patch)
-  ruleStore.save()
-
-  res.json({ rule: updated })
-})
-
-app.delete('/api/edit-rules/:id', (req, res) => {
-  const { id } = req.params
-
-  if (!ruleStore.removeRule(id)) {
-    return res.status(404).json({ error: 'Rule not found' })
-  }
-
-  ruleStore.save()
-
-  res.status(204).end()
-})
-
-app.get('/api/dashboard', (req, res) => {
-  const { stats: dashboard, editedRequests, performance, payloads, routes } = stats.getDashboardSnapshot()
-
-  res.json({
-    stats: dashboard,
-    performance,
-    payloads,
-    routes,
-    resources: resourceStore.list(),
-    blocked: router.getBlockedUrls(),
-    filterMetrics: {
-      totalFiltered: bypassedRequestCount,
-      activeRules: router.getBypassUrls().length
-    },
-    editedRequests
-  })
-})
-
-// Lightweight audit snapshot of the current in-memory log window (upstream
-// error distribution and per-host latency) for the secret Proxy Audit Panel.
-app.get('/api/audit', (req, res) => {
-  try {
-    res.json(stats.buildAuditSnapshot(logStore))
-  } catch (error) {
-    console.error('[proxy] Error building audit snapshot:', error)
-    res.status(500).json({ error: 'Failed to build audit snapshot' })
-  }
+const app = createApp({
+  uiOrigins: UI_ORIGINS,
+  bodyLimit: BODY_LIMIT,
+  isProxyTargetedRequest,
+  handleProxiedHttpRequest,
+  apiRouter,
+  clientBuildDir: path.join(__dirname, '..', 'client', 'build')
 })
 
 /**
@@ -1637,18 +993,6 @@ async function handleProxiedHttpRequest (req, res) {
     }
   }
 }
-
-// Bundled UI: when the client has been built (`npm run build`), serve it from
-// the proxy's own origin so a single process is enough. Only requests
-// addressed to the proxy itself get here (see isProxyTargetedRequest), and
-// paths that are not files of the build fall through to the proxy flow.
-const CLIENT_BUILD_DIR = path.join(__dirname, '..', 'client', 'build')
-if (fs.existsSync(path.join(CLIENT_BUILD_DIR, 'index.html'))) {
-  app.use(express.static(CLIENT_BUILD_DIR, { index: 'index.html' }))
-}
-
-// Proxy middleware - handles all other requests
-app.use('*', handleProxiedHttpRequest)
 
 const server = http.createServer((req, res) => {
   tryHandleHttpBypass(req, res)
