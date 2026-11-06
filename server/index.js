@@ -8338,14 +8338,18 @@ function isProxyTargetedRequest (req) {
   return Boolean(hostHeader) && !PROXY_OWN_AUTHORITIES.has(hostHeader)
 }
 
-app.use('/api', (req, res, next) => {
-  // Express routes by path, so a proxied request such as
-  // http://example.com/api/users would otherwise be answered by the
-  // management API. Hand traffic addressed to other hosts to the proxy flow.
+// Express routes by path, so a proxied request such as
+// http://example.com/api/users or http://example.com/index.html would
+// otherwise be answered by the management API or the bundled UI. Hand traffic
+// addressed to other hosts to the proxy flow before any route is considered.
+app.use((req, res, next) => {
   if (isProxyTargetedRequest(req)) {
     return handleProxiedHttpRequest(req, res)
   }
+  next()
+})
 
+app.use('/api', (req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next()
   }
@@ -8386,8 +8390,15 @@ loadEditRules()
 loadEditRulePresets()
 rebuildEditRuleCache()
 
-// Initialize CA certificate
-const CA = getOrCreateCA()
+// CA certificate, created on first use so that loading this module (tests,
+// embedders) pays neither the RSA key generation nor a write to CERTS_DIR.
+let caCache = null
+function getCA () {
+  if (!caCache) {
+    caCache = getOrCreateCA()
+  }
+  return caCache
+}
 
 // API Routes for UI
 app.get('/api/logs', (req, res) => {
@@ -9413,6 +9424,15 @@ async function handleProxiedHttpRequest (req, res) {
   }
 }
 
+// Bundled UI: when the client has been built (`npm run build`), serve it from
+// the proxy's own origin so a single process is enough. Only requests
+// addressed to the proxy itself get here (see isProxyTargetedRequest), and
+// paths that are not files of the build fall through to the proxy flow.
+const CLIENT_BUILD_DIR = path.join(__dirname, '..', 'client', 'build')
+if (fs.existsSync(path.join(CLIENT_BUILD_DIR, 'index.html'))) {
+  app.use(express.static(CLIENT_BUILD_DIR, { index: 'index.html' }))
+}
+
 // Proxy middleware - handles all other requests
 app.use('*', handleProxiedHttpRequest)
 
@@ -9949,7 +9969,7 @@ server.on('connect', (req, clientSocket, head) => {
   }
 
   // Generate certificate for this host
-  const cert = generateCertForHost(targetHost, CA)
+  const cert = generateCertForHost(targetHost, getCA())
 
   // Create HTTPS server for this connection
   const httpsServerOptions = {
@@ -9957,7 +9977,7 @@ server.on('connect', (req, clientSocket, head) => {
     cert: cert.cert,
     maxHeaderSize: 16384, // 16KB header limit (default is 8KB)
     SNICallback: (servername, cb) => {
-      const sniCert = generateCertForHost(servername, CA)
+      const sniCert = generateCertForHost(servername, getCA())
       cb(null, require('tls').createSecureContext({
         key: sniCert.key,
         cert: sniCert.cert
@@ -10192,6 +10212,175 @@ server.on('connect', (req, clientSocket, head) => {
   }
 })
 
-server.listen(PORT, HOST, () => {
-  console.log(`[proxy] listening on http://${HOST}:${PORT}`)
-})
+/**
+ * Start listening. `node server/index.js` starts immediately; tests and
+ * embedders require this module and call start() themselves.
+ *
+ * @param {{ port?: number, host?: string }} [options]
+ * @returns {Promise<import('net').AddressInfo>}
+ */
+function start ({ port = PORT, host = HOST } = {}) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, host, () => {
+      server.removeListener('error', reject)
+      resolve(server.address())
+    })
+  })
+}
+
+/**
+ * Stop listening and drop open connections (upstream keep-alive sockets of
+ * the undici dispatchers are closed too, so a test process can exit).
+ *
+ * @returns {Promise<void>}
+ */
+async function stop () {
+  await new Promise(resolve => {
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections()
+    }
+    server.close(() => resolve())
+  })
+  await Promise.allSettled([httpDispatcher.close(), httpsDispatcher.close()])
+}
+
+if (require.main === module) {
+  start()
+    .then(address => {
+      console.log(`[proxy] listening on http://${address.address}:${address.port}`)
+    })
+    .catch(error => {
+      console.error(`[proxy] failed to start on ${HOST}:${PORT}:`, error.message)
+      process.exit(1)
+    })
+}
+
+module.exports = {
+  app,
+  server,
+  start,
+  stop,
+  config: { PORT, HOST, UI_ORIGINS, STORAGE_DIR, CERTS_DIR },
+  files: {
+    BLOCKED_URLS_FILE,
+    FILTER_URLS_FILE,
+    EDIT_RULES_FILE,
+    EDIT_RULE_PRESETS_FILE
+  },
+  // Internal functions exposed for characterization tests. Not a public API:
+  // names and signatures follow the implementation and change with it.
+  internals: {
+    // protobuf
+    readVarint,
+    encodeVarint32,
+    encodeProtobufKey,
+    encodeLengthDelimitedField,
+    parseMessageDetailed,
+    parseProtobuf,
+    encodeProtobufFromFields,
+    encodeJsonToProtobuf,
+    rewriteMessage,
+    rewriteProtobufFields,
+    extractJsonFromProtobufBuffer,
+    stripTrivialBinaryBlobs,
+    printableRatio,
+    // connect
+    looksLikeConnectEnvelope,
+    rebuildConnectEnvelope,
+    decodeConnectPayload,
+    applyConnectFrameRewrites,
+    applyConnectRewritesForBypass,
+    getConnectEncodingHeader,
+    // edit rules
+    parseJsonPath,
+    applyJsonPathRulesToObject,
+    applyJsonPathRulesToProtobufBuffer,
+    normalizeEditRule,
+    normalizeEditRulePreset,
+    serializeEditRuleForDisk,
+    deserializeEditRuleFromDisk,
+    splitLongStringIntoSegments,
+    compileEditRule,
+    rebuildEditRuleCache,
+    getCompiledRules,
+    getCompiledRulesForContext,
+    getCompiledJsonPathRules,
+    hasAnyEditOrJsonPathRules,
+    replaceTextLiteral,
+    applyCompiledRuleToText,
+    applyEditRulesToText,
+    applyEditRulesToHeaders,
+    applyEditRulesToBuffer,
+    rewriteJsonHttpBody,
+    coerceJsonPathScalarFromText,
+    loadEditRules,
+    loadEditRulePresets,
+    // url matching
+    getCachedUrlParse,
+    buildUrlMatchCandidatesFromContext,
+    buildUrlMatchContext,
+    urlPatternMatchesCandidates,
+    urlPatternMatchesContext,
+    textRuleMatchesUrl,
+    jsonPathRuleMatchesUrl,
+    deriveDisplayNameFromUrlPattern,
+    hostPatternMatches,
+    // websocket
+    createWebSocketFrame,
+    decodeWebSocketFrame,
+    generateWebSocketAccept,
+    httpUrlToWebSocketUrl,
+    normalizeWebSocketPayload,
+    stripSocketIoPrefix,
+    tryParseWebSocketJson,
+    normalizeNestedJsonStrings,
+    rewriteWebSocketPayload,
+    // compression and content types
+    getCompressionCodec,
+    decompressData,
+    shouldDecompress,
+    isTextualContentType,
+    isClearlyBinaryContentType,
+    isProtoContentType,
+    getContentType,
+    getContentEncoding,
+    getHeaderCaseInsensitive,
+    // routing and headers
+    resolveTargetFromRequest,
+    buildRoutingContext,
+    createBypassContext,
+    decideHttpHandling,
+    decideWebSocketHandling,
+    isInternalProxyRequest,
+    shouldUseDirectConnection,
+    shouldBypassRequest,
+    isRequestBlocked,
+    isProxyTargetedRequest,
+    createForwardHeaders,
+    sanitizeHeaders,
+    stripIdentifyingHeaders,
+    sanitizeAndStripIdentifyingHeaders,
+    loadBlockedUrls,
+    loadBypassUrls,
+    getBypassMode,
+    // logs and search
+    createLogEntry,
+    addLog,
+    filterLogsCore,
+    buildSearchSnapshot,
+    buildJsonSearchSnapshot,
+    ensureLogSearchSnapshots,
+    tryParseJsonString,
+    bufferToTextPreview,
+    getFileTypeFromLogEntry,
+    buildClientLogView,
+    computeLogEntryMetrics,
+    computeBypassSuggestions,
+    // misc helpers
+    safeTrim,
+    safeString,
+    queryBool,
+    parseListQuery
+  }
+}

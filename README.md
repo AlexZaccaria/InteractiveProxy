@@ -56,16 +56,24 @@ A modern interactive development proxy with a sleek web interface for intercepti
 
 ### Installation
 ```bash
-# Install all dependencies (backend and frontend)
-npm run install-all
+# Install all dependencies (npm workspace: root tooling, server and client)
+npm install
 
-# Start proxy server and web interface
+# Start proxy server and web interface (development, with hot reload)
 npm run dev
 ```
 
 ### Access
 - **Web UI**: http://localhost:3050
 - **Proxy Server**: http://localhost:8050
+
+### Single process
+```bash
+# Build the UI once, then run the proxy alone: it serves the built UI itself
+npm run build
+npm start
+```
+- **Web UI and proxy**: http://127.0.0.1:8050/
 
 ## 📖 Documentation
 
@@ -136,15 +144,17 @@ Go to **"Request Logs"** in the web interface to see all requests!
 
 ```
 proxy/
-├── server/                 # Node.js backend
+├── server/                 # Node.js backend (npm workspace)
 │   ├── index.js           # Main proxy server (HTTP/HTTPS, WebSocket, filters, edit rules, CA, Connect/Protobuf rewriting)
 │   ├── config.js          # Server configuration (reads ports.config.json + env overrides)
+│   ├── package.json       # Runtime dependencies and `npm test`
+│   ├── test/              # node:test suites (unit characterization + integration)
 │   └── storage/           # Persistent configuration and rules
 │       ├── config.json        # Global modes (interactive, filters, edit, blocked, local)
 │       ├── blocked-urls.json  # Blocked URL rules
 │       ├── filter-urls.json   # Filter rules (ignore/focus)
 │       └── edit-rules.json    # Live edit rules
-├── client/                # React frontend
+├── client/                # React frontend (npm workspace)
 │   ├── src/
 │   │   ├── App.js            # Main layout, dashboard and modes
 │   │   ├── components/       # UI components
@@ -156,7 +166,10 @@ proxy/
 │   │   │   └── AuditPanel.js      # Secret audit panel for performance analysis
 │   │   └── index.css         # Global styles
 │   └── public/
-├── package.json             # Root scripts and dependencies
+├── .github/workflows/ci.yml # Lint, test and build on push / pull request
+├── eslint.config.mjs        # ESLint 9 flat config (server + client)
+├── package.json             # Workspace root: scripts and dev tooling
+├── IMPROVEMENT-PLAN.md      # Analysis and phased improvement plan
 ├── README.md               # This file
 ├── QUICKSTART.md           # Quick guide
 ├── USAGE.md                # Complete usage documentation
@@ -167,16 +180,21 @@ proxy/
 ## 🔧 Available Commands
 
 ```bash
+# Installation
+npm install              # Install everything (workspace)
+
 # Development
-npm run dev              # Start server + UI
+npm run dev              # Start server + UI dev server
 npm run server           # Proxy server only
 npm run client           # Web interface only
 
-# Installation
-npm run install-all      # Install all dependencies
+# Quality
+npm run lint             # ESLint on server and client
+npm test                 # node:test suites of the server
 
-# Production
+# Single process
 npm run build            # Build frontend for production
+npm start                # Proxy serving the built UI at http://127.0.0.1:8050/
 ```
 
 ## 🌟 Features in Detail
@@ -259,8 +277,8 @@ taskkill /PID <PID> /F
 ### Dependencies not installed
 ```bash
 # Reinstall everything
-rm -rf node_modules client/node_modules
-npm run install-all
+rm -rf node_modules
+npm install
 ```
 
 ### TailwindCSS errors

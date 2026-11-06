@@ -25,8 +25,8 @@ Requires **Node.js >= 22.15** and **npm >= 10**.
 # Clone or navigate to project directory
 cd interactive-proxy
 
-# Install all dependencies (backend + frontend)
-npm run install-all
+# Install all dependencies (npm workspace: root tooling, server and client)
+npm install
 ```
 
 ## ▶️ Starting
@@ -36,6 +36,13 @@ npm run install-all
 npm run dev
 ```
 This command starts both the proxy server (port 8050) and web interface (port 3050).
+
+### Single Process
+```bash
+npm run build
+npm start
+```
+After a build, the proxy serves the UI itself at http://127.0.0.1:8050/ (no dev server needed).
 
 ### Separate Start
 

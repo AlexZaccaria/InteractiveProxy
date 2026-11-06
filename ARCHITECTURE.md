@@ -363,19 +363,23 @@ UI Toggle → POST /api/interactive-mode
 
 ## 🧪 Testing
 
-### Unit Tests
-Currently no automated tests. Manual testing via:
-- Web UI - Manual testing of all features
+`npm test` runs the suites under `server/test/` with Node's built-in
+`node:test` runner (no test framework dependency; the server is CommonJS and
+is required directly).
 
-### Test Scenarios
-1. Local resource serving
-2. Proxy to external API
-3. HTTPS interception
-4. WebSocket message relay
-5. Blocked URL filtering
-6. Interactive Mode toggle
-7. Resource upload/delete
-8. Filter and search functionality
+- `server/test/helpers/load-server.js` requires `server/index.js` with
+  storage, certificates and logs redirected to a temporary directory and a
+  free port, without listening. `server/index.js` exports `app`, `server`,
+  `start()`, `stop()` and an `internals` object with the pure functions
+  (Protobuf/Connect codecs, edit rules, URL matching, WebSocket codec,
+  compression, routing, log search) for characterization tests.
+- `server/test/*.test.js`: unit characterization tests of those functions.
+- `server/test/integration/*.test.js`: the proxy started on a free port
+  against local upstreams (HTTP echo, HTTPS with a self-signed certificate,
+  WebSocket echo): HTTP forwarding, management API, MITM, WebSocket.
+
+CI (`.github/workflows/ci.yml`) runs `npm run lint`, `npm test` and
+`npm run build` on Node 22, 24 and 26.
 
 ## 📈 Future Improvements
 

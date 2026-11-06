@@ -24,10 +24,16 @@ function main() {
   const clientDir = path.join(ROOT_DIR, 'client');
   process.chdir(clientDir);
 
+  // Linting is done by ESLint 9 from the workspace root (`npm run lint`);
+  // CRA's bundled ESLint 8 plugin would pick up the hoisted ESLint 9 and fail
+  // to load its legacy "react-app" config.
+  process.env.DISABLE_ESLINT_PLUGIN = 'true';
+
   // Delegate directly to CRA's start script. This avoids cross-platform spawn
-  // issues while still respecting the PORT env we just set.
-  // eslint-disable-next-line import/no-dynamic-require, global-require
-  require(path.join(clientDir, 'node_modules', 'react-scripts', 'scripts', 'start'));
+  // issues while still respecting the PORT env we just set. react-scripts is
+  // resolved from the client package so it works whether npm hoisted it to
+  // the workspace root or kept it under client/node_modules.
+  require(require.resolve('react-scripts/scripts/start', { paths: [clientDir] }));
 }
 
 main();

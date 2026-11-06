@@ -5,7 +5,7 @@ Requires Node.js >= 22.15 and npm >= 10.
 
 ```bash
 # Install all dependencies
-npm run install-all
+npm install
 
 # Start server and UI
 npm run dev
@@ -98,8 +98,13 @@ npm run server
 # Web interface only
 npm run client
 
-# Production build frontend
+# Production build frontend, then proxy + UI in one process
 npm run build
+npm start
+
+# Lint and tests
+npm run lint
+npm test
 ```
 
 ## 💡 Tips
