@@ -13,7 +13,6 @@ const fsPromises = fs.promises
 const crypto = require('crypto')
 const { URL } = require('url')
 const WebSocket = require('ws')
-const forge = require('node-forge')
 const { request, Agent } = require('undici')
 const {
   PORT,
@@ -35,8 +34,12 @@ const {
   WS_LOG_BODY_ENABLED
 } = require('./config')
 
-// Constant GUID used for WebSocket Sec-WebSocket-Accept computation
-const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+const {
+  generateWebSocketAccept,
+  httpUrlToWebSocketUrl,
+  createWebSocketFrame,
+  decodeWebSocketFrame
+} = require('./src/proxy/websocket-codec')
 
 const { logDebug, logWarn } = require('./src/util/logger')
 
@@ -139,89 +142,7 @@ const LEGACY_BYPASS_URLS_FILE = path.join(STORAGE_DIR, 'bypass-urls.json')
 const EDIT_RULES_FILE = path.join(STORAGE_DIR, 'edit-rules.json')
 const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
 
-// Certificate paths (inlined from cert-manager.js)
-const CA_KEY_PATH = path.join(CERTS_DIR, 'ca-key.pem')
-const CA_CERT_PATH = path.join(CERTS_DIR, 'ca-cert.pem')
-
-if (!fs.existsSync(CERTS_DIR)) {
-  fs.mkdirSync(CERTS_DIR, { recursive: true })
-}
-
-const certCache = new Map()
-
-function getOrCreateCA () {
-  if (fs.existsSync(CA_KEY_PATH) && fs.existsSync(CA_CERT_PATH)) {
-    const caKeyPem = fs.readFileSync(CA_KEY_PATH, 'utf8')
-    const caCertPem = fs.readFileSync(CA_CERT_PATH, 'utf8')
-
-    return {
-      key: forge.pki.privateKeyFromPem(caKeyPem),
-      cert: forge.pki.certificateFromPem(caCertPem),
-      keyPem: caKeyPem,
-      certPem: caCertPem
-    }
-  }
-
-  const keys = forge.pki.rsa.generateKeyPair(2048)
-  const cert = forge.pki.createCertificate()
-
-  cert.publicKey = keys.publicKey
-  cert.serialNumber = '01'
-  cert.validity.notBefore = new Date()
-  cert.validity.notAfter = new Date()
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 10)
-
-  const attrs = [
-    { name: 'commonName', value: 'Cascade Proxy CA' },
-    { name: 'countryName', value: 'US' },
-    { name: 'organizationName', value: 'Cascade Proxy' },
-    { shortName: 'OU', value: 'Development' }
-  ]
-
-  cert.setSubject(attrs)
-  cert.setIssuer(attrs)
-
-  cert.setExtensions([
-    {
-      name: 'basicConstraints',
-      cA: true
-    },
-    {
-      name: 'keyUsage',
-      keyCertSign: true,
-      digitalSignature: true,
-      nonRepudiation: true,
-      keyEncipherment: true,
-      dataEncipherment: true
-    },
-    {
-      name: 'extKeyUsage',
-      serverAuth: true,
-      clientAuth: true,
-      codeSigning: true,
-      emailProtection: true,
-      timeStamping: true
-    },
-    {
-      name: 'subjectKeyIdentifier'
-    }
-  ])
-
-  cert.sign(keys.privateKey, forge.md.sha256.create())
-
-  const keyPem = forge.pki.privateKeyToPem(keys.privateKey)
-  const certPem = forge.pki.certificateToPem(cert)
-
-  fs.writeFileSync(CA_KEY_PATH, keyPem)
-  fs.writeFileSync(CA_CERT_PATH, certPem)
-
-  return {
-    key: keys.privateKey,
-    cert,
-    keyPem,
-    certPem
-  }
-}
+const { getCA, generateCertForHost } = require('./src/tls/ca')
 
 /**
  * Recompute the hiddenByBlockedRules flag on all existing log entries after
@@ -251,76 +172,6 @@ function recomputeBlockedVisibilityForLogs () {
       ? patterns.some(pattern => urlString.includes(pattern))
       : false
   }
-}
-
-function generateCertForHost (hostname, ca) {
-  if (certCache.has(hostname)) {
-    return certCache.get(hostname)
-  }
-
-  const keys = forge.pki.rsa.generateKeyPair(2048)
-  const cert = forge.pki.createCertificate()
-
-  cert.publicKey = keys.publicKey
-  cert.serialNumber = Date.now().toString()
-  cert.validity.notBefore = new Date()
-  cert.validity.notAfter = new Date()
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1)
-
-  const attrs = [
-    { name: 'commonName', value: hostname },
-    { name: 'countryName', value: 'US' },
-    { name: 'organizationName', value: 'Cascade Proxy' }
-  ]
-
-  cert.setSubject(attrs)
-  cert.setIssuer(ca.cert.subject.attributes)
-
-  cert.setExtensions([
-    {
-      name: 'basicConstraints',
-      cA: false
-    },
-    {
-      name: 'keyUsage',
-      digitalSignature: true,
-      nonRepudiation: true,
-      keyEncipherment: true,
-      dataEncipherment: true
-    },
-    {
-      name: 'extKeyUsage',
-      serverAuth: true,
-      clientAuth: true
-    },
-    {
-      name: 'subjectAltName',
-      altNames: [
-        {
-          type: 2,
-          value: hostname
-        },
-        {
-          type: 2,
-          value: '*.' + hostname
-        }
-      ]
-    },
-    {
-      name: 'subjectKeyIdentifier'
-    }
-  ])
-
-  cert.sign(ca.key, forge.md.sha256.create())
-
-  const result = {
-    key: forge.pki.privateKeyToPem(keys.privateKey),
-    cert: forge.pki.certificateToPem(cert)
-  }
-
-  certCache.set(hostname, result)
-
-  return result
 }
 
 // Blocked/BYPASS URL lists
@@ -675,43 +526,20 @@ async function saveBypassUrls () {
   }
 }
 
-/**
- * Derive a human-friendly display name from a URL or host pattern.
- *
- * Examples:
- *   "https://api.facebook.com/v1" -> "Facebook.com"
- *   "api.example.co.uk/path"      -> "Co.uk" (last two labels)
- *   "localhost:3000/foo"          -> "Localhost"
- *
- * Used for both filter (bypass) rules and blocked rules so that the
- * frontend does not need to duplicate this normalisation logic.
- *
- * @param {string} pattern
- * @returns {string}
- */
-function deriveDisplayNameFromUrlPattern (pattern) {
-  if (!pattern || typeof pattern !== 'string') return ''
-
-  try {
-    // Strip protocol if present
-    let domain = pattern.replace(/^https?:\/\//i, '')
-    // Drop path
-    domain = domain.split('/')[0]
-    // Drop port
-    domain = domain.split(':')[0]
-
-    const parts = domain.split('.').filter(Boolean)
-    if (parts.length >= 2) {
-      const mainDomain = parts.slice(-2).join('.')
-      return mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1)
-    }
-
-    if (!domain) return ''
-    return domain.charAt(0).toUpperCase() + domain.slice(1)
-  } catch {
-    return ''
-  }
-}
+const {
+  normalizeHostValue,
+  parseUrlCandidate,
+  getCachedUrlParse,
+  buildUrlMatchCandidatesFromContext,
+  buildUrlMatchContext,
+  buildJsonPathRuleContext,
+  urlPatternMatchesCandidates,
+  urlPatternMatchesContext,
+  jsonPathRuleMatchesUrl,
+  textRuleMatchesUrl,
+  deriveDisplayNameFromUrlPattern,
+  hostPatternMatches
+} = require('./src/rules/url-match')
 
 /**
  * Base normalisation logic shared by bypass and blocked rules.
@@ -1480,251 +1308,6 @@ function getCompiledRulesForContext (context) {
 
     return textRuleMatchesUrl(rule, matchContext)
   })
-}
-
-/**
- * LRU cache for parsed URL components to avoid repeated URL parsing on hot paths.
- * Key: lowercase URL string, Value: { host, path }
- */
-const urlParseCache = new Map()
-const URL_PARSE_CACHE_MAX = 500
-
-/**
- * Get cached URL parse result or parse and cache it.
- *
- * @param {string} url - URL string to parse
- * @returns {{ host: string|null, path: string }|null}
- */
-function getCachedUrlParse (url) {
-  if (!url || typeof url !== 'string') return null
-  const key = url.toLowerCase()
-
-  if (urlParseCache.has(key)) {
-    return urlParseCache.get(key)
-  }
-
-  try {
-    const parsed = new URL(url)
-    const result = {
-      host: normalizeHostValue(parsed.hostname) || null,
-      path: parsed.pathname || '/'
-    }
-
-    // Simple LRU: delete oldest entry when cache is full
-    if (urlParseCache.size >= URL_PARSE_CACHE_MAX) {
-      const firstKey = urlParseCache.keys().next().value
-      urlParseCache.delete(firstKey)
-    }
-
-    urlParseCache.set(key, result)
-    return result
-  } catch {
-    return null
-  }
-}
-
-/**
- * Build a set of URL candidates (raw, host, path) from the current context,
- * normalising lower-case values and extracting host/path information when the
- * string looks like a full HTTP URL.
- *
- * This is used by both jsonPathRuleMatchesUrl and textRuleMatchesUrl to avoid
- * relying purely on naive substring checks.
- *
- * @param {{requestUrl?: string, fullUrl?: string}} [context]
- * @returns {{ raw: string, host: (string|null), path: (string|null) }[]}
- */
-function buildUrlMatchCandidatesFromContext (context = {}) {
-  const candidates = []
-
-  const pushCandidate = (value) => {
-    if (typeof value !== 'string') return
-    const trimmed = value.trim().toLowerCase()
-    if (!trimmed) return
-
-    // When the value looks like a full HTTP URL, use cached parsing
-    if (/^https?:\/\//.test(trimmed)) {
-      const cached = getCachedUrlParse(trimmed)
-      if (cached) {
-        candidates.push({
-          raw: trimmed,
-          host: cached.host,
-          path: cached.path
-        })
-        return
-      }
-    }
-
-    // For non-HTTP values (relative paths, opaque identifiers, etc), keep the
-    // raw value and optionally treat leading "/..." strings as paths.
-    const path = trimmed.startsWith('/') ? trimmed : null
-    candidates.push({ raw: trimmed, host: null, path })
-  }
-
-  if (typeof context.requestUrl === 'string' && context.requestUrl) {
-    pushCandidate(context.requestUrl)
-  }
-  if (typeof context.fullUrl === 'string' && context.fullUrl) {
-    pushCandidate(context.fullUrl)
-  }
-
-  return candidates
-}
-
-/**
- * Build a reusable URL match context which includes both the original context
- * properties and a precomputed candidate list. This allows hot paths to share
- * URL parsing work across many rules.
- *
- * @param {{requestUrl?: string, fullUrl?: string, phase?: string}} [context]
- * @returns {{requestUrl?: string, fullUrl?: string, phase?: string, candidates: { raw: string, host: (string|null), path: (string|null) }[]}}
- */
-function buildUrlMatchContext (context = {}) {
-  const baseContext = context && typeof context === 'object' ? context : {}
-  const candidates = buildUrlMatchCandidatesFromContext(baseContext)
-  return { ...baseContext, candidates }
-}
-
-/**
- * Build a JSONPath-aware URL/phase context and precompute URL candidates via
- * buildUrlMatchContext so that downstream helpers can share consistent
- * matching semantics across HTTP, Connect and WebSocket flows.
- *
- * @param {{requestUrl?: string, fullUrl?: string, phase?: string}} [context]
- * @returns {{requestUrl?: string, fullUrl?: string, phase: string, candidates: { raw: string, host: (string|null), path: (string|null) }[]}}
- */
-function buildJsonPathRuleContext (context = {}) {
-  const base = context && typeof context === 'object' ? { ...context } : {}
-  base.phase = base.phase === 'response' ? 'response' : 'request'
-  return buildUrlMatchContext(base)
-}
-
-/**
- * Core URL pattern matcher shared by jsonPathRuleMatchesUrl and
- * textRuleMatchesUrl.
- *
- * Semantics:
- * - Absolute patterns ("http(s)://...") are matched by host equality and
- *   path equality/prefix against any candidate that has a host/path.
- * - Pure path patterns ("/foo/bar") are matched by path equality/prefix.
- * - Other patterns (e.g. "example.com", "login") fall back to a
- *   case-insensitive substring check against the raw candidate values to
- *   preserve backwards-compatible behaviour for non-URL-like inputs.
- *
- * @param {string} rawPattern Non-empty pattern string.
- * @param {{ raw: string, host: (string|null), path: (string|null) }[]} candidates
- * @returns {boolean}
- */
-function urlPatternMatchesCandidates (rawPattern, candidates) {
-  const pattern = rawPattern.trim().toLowerCase()
-  if (!pattern) return false
-
-  if (!Array.isArray(candidates) || candidates.length === 0) return false
-
-  const isAbsolutePattern = /^https?:\/\//.test(pattern)
-  const isPathPattern = !isAbsolutePattern && pattern.startsWith('/')
-
-  // Absolute URL pattern: match on host + path (exact or prefix).
-  if (isAbsolutePattern) {
-    let parsed
-    try {
-      parsed = new URL(pattern)
-    } catch (error) {
-      // If parsing fails, fall back to raw substring matching below.
-      parsed = null
-    }
-
-    if (parsed) {
-      const patternHost = normalizeHostValue(parsed.hostname)
-      const patternPath = parsed.pathname || '/'
-      const normalizedPrefix = patternPath.endsWith('/') ? patternPath : `${patternPath}/`
-
-      return candidates.some(candidate => {
-        if (!candidate) return false
-
-        // A pattern with a host is satisfied only by candidates that carry
-        // the same host; the relative requestUrl candidate (no host) cannot
-        // match it on its own.
-        if (patternHost && candidate.host !== patternHost) {
-          return false
-        }
-
-        const candidatePath = candidate.path || '/'
-        if (candidatePath === patternPath) return true
-        return candidatePath.startsWith(normalizedPrefix)
-      })
-    }
-  }
-
-  // Pure path pattern: match by path equality/prefix only.
-  if (isPathPattern) {
-    const patternPath = pattern
-    const normalizedPrefix = patternPath.endsWith('/') ? patternPath : `${patternPath}/`
-
-    return candidates.some(candidate => {
-      if (!candidate) return false
-      const candidatePath = candidate.path || '/'
-      if (candidatePath === patternPath) return true
-      return candidatePath.startsWith(normalizedPrefix)
-    })
-  }
-
-  // Fallback: legacy substring semantics for non-URL-like patterns
-  // (e.g. plain hostnames, generic identifiers).
-  return candidates.some(candidate => candidate && candidate.raw.includes(pattern))
-}
-
-/**
- * Core URL pattern matcher shared by jsonPathRuleMatchesUrl and
- * textRuleMatchesUrl when only a raw URL/phase context is available.
- *
- * @param {string} rawPattern Non-empty pattern string.
- * @param {{requestUrl?: string, fullUrl?: string}} [context]
- * @returns {boolean}
- */
-function urlPatternMatchesContext (rawPattern, context = {}) {
-  const baseContext = context && typeof context === 'object' ? context : {}
-  const candidates = buildUrlMatchCandidatesFromContext(baseContext)
-  return urlPatternMatchesCandidates(rawPattern, candidates)
-}
-
-function jsonPathRuleMatchesUrl (rule, contextOrMatch = {}) {
-  const rawPattern = safeString(rule.url)
-  const trimmed = rawPattern.trim()
-  if (!trimmed) return false
-
-  if (contextOrMatch && Array.isArray(contextOrMatch.candidates)) {
-    return urlPatternMatchesCandidates(trimmed, contextOrMatch.candidates)
-  }
-
-  return urlPatternMatchesContext(trimmed, contextOrMatch || {})
-}
-
-/**
- * Determine whether a text edit rule should run for the given URL context.
- *
- * Text rules treat an empty URL pattern as "no constraint" (match all URLs),
- * while non-empty patterns behave like JSONPath rules and are matched using a
- * bidirectional contains check against requestUrl/fullUrl.
- *
- * @param {{url?: string}} rule
- * @param {{requestUrl?: string, fullUrl?: string, candidates?: { raw: string, host: (string|null), path: (string|null) }[]}} [contextOrMatch]
- * @returns {boolean}
- */
-function textRuleMatchesUrl (rule, contextOrMatch = {}) {
-  if (!rule || typeof rule !== 'object') return true
-
-  const rawPattern = safeString(rule.url)
-  const trimmed = rawPattern.trim()
-
-  // When no URL pattern is provided, treat the rule as global.
-  if (!trimmed) return true
-
-  if (contextOrMatch && Array.isArray(contextOrMatch.candidates)) {
-    return urlPatternMatchesCandidates(trimmed, contextOrMatch.candidates)
-  }
-
-  return urlPatternMatchesContext(trimmed, contextOrMatch || {})
 }
 
 function applyJsonPathRulesToObject (root, context = {}) {
@@ -5497,37 +5080,6 @@ function filterLogsForApiRequest (req) {
   return { items, total, hasMore, offset, limit }
 }
 
-function normalizeHostValue (value) {
-  if (!value || typeof value !== 'string') return null
-  return value.trim().toLowerCase().split(':')[0]
-}
-
-function parseUrlCandidate (candidate) {
-  if (!candidate || typeof candidate !== 'string') return null
-  const trimmed = candidate.trim()
-  if (!trimmed) return null
-
-  try {
-    const parsed = new URL(trimmed)
-    const protocol = safeString(parsed.protocol).toLowerCase()
-    // WebSocket targets are carried as their HTTP equivalent; the upgrade
-    // path converts them back with httpUrlToWebSocketUrl.
-    let url = trimmed
-    if (protocol === 'ws:' || protocol === 'wss:') {
-      url = (protocol === 'wss:' ? 'https:' : 'http:') + trimmed.slice(protocol.length)
-    } else if (protocol !== 'http:' && protocol !== 'https:') {
-      return null
-    }
-    return {
-      url,
-      host: normalizeHostValue(parsed.hostname) || null,
-      hostWithPort: parsed.host.toLowerCase()
-    }
-  } catch (error) {
-    return null
-  }
-}
-
 function resolveTargetFromRequest (req) {
   const targetHeader = parseUrlCandidate(req.headers['x-target-url'])
   if (targetHeader) {
@@ -5635,26 +5187,6 @@ function createBypassContext ({ requestUrl, fullUrl, host, path, targetUrl } = {
     hostCandidates,
     valueCandidates
   }
-}
-
-/**
- * Check whether a host string matches a bypass host pattern.
- *
- * @param {string} patternValue
- * @param {string} host
- * @returns {boolean}
- */
-function hostPatternMatches (patternValue, host) {
-  if (!patternValue || !host) return false
-  if (patternValue.startsWith('.')) {
-    const suffix = patternValue.slice(1)
-    return host === suffix || host.endsWith(`.${suffix}`)
-  }
-
-  if (host === patternValue) return true
-  if (host.endsWith(`.${patternValue}`)) return true
-
-  return false
 }
 
 /**
@@ -5771,69 +5303,18 @@ function decideWebSocketHandling (routingContext) {
   return { action: 'mitm', requestUrl, fullUrl }
 }
 
-const OMIT_HEADERS_BASE = ['proxy-connection', 'connection']
-const OMIT_HEADERS_CONDITIONAL = ['if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since']
-
-// Composed header omission sets used across different upstream flows to keep
-// behaviour consistent while avoiding inline array duplication.
-const OMIT_HEADERS_PROXY = ['x-target-url', ...OMIT_HEADERS_BASE, 'content-length', ...OMIT_HEADERS_CONDITIONAL]
-const OMIT_HEADERS_MITM = [...OMIT_HEADERS_BASE, ...OMIT_HEADERS_CONDITIONAL]
-
-// Precomputed omit sets for hot-path header forwarding helpers to avoid
-// repeatedly lower-casing and allocating Sets for the same static lists.
-const OMIT_HEADERS_PROXY_SET = new Set(OMIT_HEADERS_PROXY.map(header => header.toLowerCase()))
-const OMIT_HEADERS_MITM_SET = new Set(OMIT_HEADERS_MITM.map(header => header.toLowerCase()))
-const OMIT_HEADERS_BASE_SET = new Set(OMIT_HEADERS_BASE.map(header => header.toLowerCase()))
-
-// Common response header omissions used when forwarding upstream responses.
-// This constant is shared across call sites so sanitizeHeaders can cheaply
-// specialise caching for this very frequent omit set.
-const OMIT_RESPONSE_HEADERS = ['transfer-encoding', 'connection']
-const OMIT_RESPONSE_HEADERS_KEY = 'connection,transfer-encoding'
-const OMIT_RESPONSE_HEADERS_SET = new Set(OMIT_RESPONSE_HEADERS_KEY.split(','))
-
-// Cache for custom omit sets to avoid repeated allocations
-const customOmitSetCache = new Map()
-
-/**
- * Get or create a Set for the given omit array, using cached precomputed sets
- * for known constants and caching custom arrays by their joined key.
- */
-function getOmitSet (omit) {
-  if (omit === OMIT_HEADERS_PROXY) return OMIT_HEADERS_PROXY_SET
-  if (omit === OMIT_HEADERS_MITM) return OMIT_HEADERS_MITM_SET
-  if (omit === OMIT_HEADERS_BASE) return OMIT_HEADERS_BASE_SET
-  if (!Array.isArray(omit) || omit.length === 0) return new Set()
-
-  const key = omit.map(h => h.toLowerCase()).sort().join(',')
-  if (customOmitSetCache.has(key)) return customOmitSetCache.get(key)
-
-  const set = new Set(omit.map(h => h.toLowerCase()))
-  customOmitSetCache.set(key, set)
-  return set
-}
-
-function createForwardHeaders (sourceHeaders, omit = [], overrides = {}) {
-  const result = {}
-  const omitSet = getOmitSet(omit)
-
-  for (const headerName in sourceHeaders) {
-    if (!Object.hasOwn(sourceHeaders, headerName)) continue
-    const lower = headerName.toLowerCase()
-    if (omitSet.has(lower)) continue
-    const value = sourceHeaders[headerName]
-    if (value !== undefined) {
-      result[headerName] = value
-    }
-  }
-
-  for (const overrideName in overrides) {
-    if (!Object.hasOwn(overrides, overrideName)) continue
-    result[overrideName] = overrides[overrideName]
-  }
-
-  return result
-}
+const {
+  OMIT_HEADERS_BASE,
+  OMIT_HEADERS_PROXY,
+  OMIT_HEADERS_MITM,
+  OMIT_RESPONSE_HEADERS,
+  createForwardHeaders,
+  stripIdentifyingHeaders,
+  sanitizeHeaders,
+  sanitizeAndStripIdentifyingHeaders,
+  applyCacheBypassHeadersToResponse,
+  applyCacheBypassHeadersToObject
+} = require('./src/proxy/headers')
 
 function selectDispatcher (urlString) {
   try {
@@ -5933,201 +5414,6 @@ function attachAbortOnClose (res, abortController) {
 
   res.on('close', onClose)
   return onClose
-}
-
-/**
- * Header names that are considered identifying for tracing/telemetry and
- * should be stripped from requests/responses that are actively processed
- * by the proxy (non-blocked, non-bypassed flows).
- *
- * This targets Sentry-style tracing headers and related baggage entries.
- *
- * @type {Set<string>}
- */
-const IDENTIFYING_HEADER_EXACT_NAMES = new Set(['baggage', 'sentry-trace'])
-
-/**
- * Header name prefixes that should be treated as identifying.
- *
- * @type {string[]}
- */
-const IDENTIFYING_HEADER_PREFIXES = ['sentry-']
-
-/**
- * Return a shallow copy of the given headers object with identifying/tracing
- * headers (such as Sentry tracing and baggage) removed.
- *
- * This is applied only on flows that are actively processed by the proxy –
- * proxied HTTP and MITM traffic – and not on plain bypass/direct flows.
- *
- * @param {object} [headers]
- * @returns {object}
- */
-function stripIdentifyingHeaders (headers = {}) {
-  if (!headers || typeof headers !== 'object') return {}
-
-  const result = {}
-
-  for (const [name, value] of Object.entries(headers)) {
-    const lower = name.toLowerCase()
-
-    const isExact = IDENTIFYING_HEADER_EXACT_NAMES.has(lower)
-    const hasPrefix = IDENTIFYING_HEADER_PREFIXES.some(prefix => lower.startsWith(prefix))
-
-    if (isExact || hasPrefix) {
-      continue
-    }
-
-    if (value === undefined) continue
-    result[name] = value
-  }
-
-  return result
-}
-
-const sanitizedHeadersCache = new WeakMap()
-
-/**
- * Return a copy of the given headers object with a specific set of header
- * names omitted. Results are cached per (headers, omitKey) pair to avoid
- * repeatedly walking large header objects for the same omit configuration.
- *
- * The OMIT_RESPONSE_HEADERS constant is special-cased to avoid rebuilding
- * both the cache key and omission Set on every call.
- *
- * @param {object} [headers]
- * @param {string[]} [omit]
- * @returns {object}
- */
-function sanitizeHeaders (headers = {}, omit = []) {
-  if (!headers || typeof headers !== 'object') return {}
-
-  let omitKey = ''
-  let omitSet
-
-  if (omit === OMIT_RESPONSE_HEADERS) {
-    omitKey = OMIT_RESPONSE_HEADERS_KEY
-    omitSet = OMIT_RESPONSE_HEADERS_SET
-  } else if (Array.isArray(omit) && omit.length) {
-    const normalized = omit.map(header => header.toLowerCase()).sort()
-    omitKey = normalized.join(',')
-    omitSet = new Set(normalized)
-  } else {
-    omitKey = ''
-    omitSet = new Set()
-  }
-
-  // Cached per headers object and invalidated when keys were added or
-  // removed since the cache was built.
-  const keys = Object.keys(headers)
-  let cacheForHeaders = sanitizedHeadersCache.get(headers)
-  if (!cacheForHeaders || cacheForHeaders.count !== keys.length) {
-    cacheForHeaders = { count: keys.length, byOmit: new Map() }
-    sanitizedHeadersCache.set(headers, cacheForHeaders)
-  }
-
-  if (cacheForHeaders.byOmit.has(omitKey)) {
-    return cacheForHeaders.byOmit.get(omitKey)
-  }
-
-  const sanitized = {}
-
-  for (const key of keys) {
-    const value = headers[key]
-    if (omitSet.has(key.toLowerCase())) continue
-    if (value === undefined) continue
-    sanitized[key] = value
-  }
-
-  cacheForHeaders.byOmit.set(omitKey, sanitized)
-  return sanitized
-}
-
-/**
- * Return a copy of the given headers object with both a specific omit set
- * applied and identifying/tracing headers stripped in a single pass.
- *
- * This is equivalent to calling `sanitizeHeaders(headers, omit)` followed by
- * `stripIdentifyingHeaders(...)` but avoids allocating two intermediate
- * objects and walking the header map twice on hot paths.
- *
- * Behaviour is intentionally identical to the existing combination:
- * - `omit` controls which generic protocol headers (e.g. connection,
- *   transfer-encoding) are removed.
- * - IDENTIFYING_HEADER_EXACT_NAMES / IDENTIFYING_HEADER_PREFIXES decide which
- *   tracing headers (e.g. Sentry baggage) are stripped.
- *
- * This helper is used only for actively processed proxy flows; bypass/direct
- * paths continue to rely on sanitizeHeaders alone to preserve existing
- * semantics.
- *
- * @param {object} [headers]
- * @param {string[]} [omit]
- * @returns {object}
- */
-function sanitizeAndStripIdentifyingHeaders (headers = {}, omit = []) {
-  if (!headers || typeof headers !== 'object') return {}
-
-  let omitSet = null
-
-  if (omit === OMIT_RESPONSE_HEADERS) {
-    // Fast-path for the most common omit configuration used when forwarding
-    // upstream responses.
-    omitSet = OMIT_RESPONSE_HEADERS_SET
-  } else if (Array.isArray(omit) && omit.length) {
-    omitSet = new Set(omit.map(header => header.toLowerCase()))
-  }
-
-  const result = {}
-
-  for (const [name, value] of Object.entries(headers)) {
-    if (value === undefined) continue
-
-    const lower = name.toLowerCase()
-
-    if (omitSet && omitSet.has(lower)) continue
-
-    const isExact = IDENTIFYING_HEADER_EXACT_NAMES.has(lower)
-    const hasPrefix = IDENTIFYING_HEADER_PREFIXES.some(prefix => lower.startsWith(prefix))
-
-    if (isExact || hasPrefix) continue
-
-    result[name] = value
-  }
-
-  return result
-}
-
-/**
- * Apply cache-busting headers to an HTTP response, optionally tagging the
- * source of the response (for example "remote" or "local").
- *
- * @param {import('http').ServerResponse} res
- * @param {string} [sourceTag]
- */
-function applyCacheBypassHeadersToResponse (res, sourceTag) {
-  if (!res || typeof res.setHeader !== 'function') return
-  try {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
-    res.setHeader('Pragma', 'no-cache')
-    res.setHeader('Expires', '0')
-    if (sourceTag) {
-      res.setHeader('X-Proxy-Source', sourceTag)
-    }
-  } catch {}
-}
-
-/**
- * Attach cache-busting headers to a plain headers object used when forwarding
- * upstream responses (for example in HTTPS MITM flows).
- *
- * @param {object} headers
- */
-function applyCacheBypassHeadersToObject (headers) {
-  if (!headers || typeof headers !== 'object') return
-  headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate'
-  headers.Pragma = 'no-cache'
-  headers.Expires = '0'
 }
 
 function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
@@ -6815,16 +6101,6 @@ loadBypassUrls()
 loadEditRules()
 loadEditRulePresets()
 rebuildEditRuleCache()
-
-// CA certificate, created on first use so that loading this module (tests,
-// embedders) pays neither the RSA key generation nor a write to CERTS_DIR.
-let caCache = null
-function getCA () {
-  if (!caCache) {
-    caCache = getOrCreateCA()
-  }
-  return caCache
-}
 
 // API Routes for UI
 app.get('/api/logs', (req, res) => {
@@ -8199,25 +7475,6 @@ function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, targetPort
   }
 }
 
-// WebSocket helper functions
-function generateWebSocketAccept (key) {
-  return crypto.createHash('sha1').update(key + WEBSOCKET_GUID).digest('base64')
-}
-
-/**
- * Convert an HTTP(S) URL string to its WebSocket equivalent. Existing ws:/wss:
- * URLs are returned unchanged.
- *
- * @param {string} url
- * @returns {string}
- */
-function httpUrlToWebSocketUrl (url = '') {
-  if (!url) return ''
-  if (/^wss?:\/\//i.test(url)) return url
-  // Only the scheme at the start is rewritten, never a URL inside the query.
-  return url.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
-}
-
 /**
  * Build a standardised WebSocket connection log entry.
  * Delegates to createLogEntry with wsOptions.
@@ -8258,82 +7515,6 @@ function logWebSocketDirectTunnel ({ targetUrl, headers, suffix = '' }) {
     message
   })
   addLog(logEntry)
-}
-
-function createWebSocketFrame (data, isBinary) {
-  const payload = Buffer.from(data)
-  const payloadLength = payload.length
-  let frame
-
-  if (payloadLength < 126) {
-    frame = Buffer.allocUnsafe(2 + payloadLength)
-    frame[0] = isBinary ? 0x82 : 0x81 // FIN + opcode
-    frame[1] = payloadLength
-    payload.copy(frame, 2)
-  } else if (payloadLength < 65536) {
-    frame = Buffer.allocUnsafe(4 + payloadLength)
-    frame[0] = isBinary ? 0x82 : 0x81
-    frame[1] = 126
-    frame.writeUInt16BE(payloadLength, 2)
-    payload.copy(frame, 4)
-  } else {
-    frame = Buffer.allocUnsafe(10 + payloadLength)
-    frame[0] = isBinary ? 0x82 : 0x81
-    frame[1] = 127
-    frame.writeUInt32BE(0, 2)
-    frame.writeUInt32BE(payloadLength, 6)
-    payload.copy(frame, 10)
-  }
-
-  return frame
-}
-
-function decodeWebSocketFrame (buffer) {
-  if (buffer.length < 2) return null
-
-  const firstByte = buffer[0]
-  const secondByte = buffer[1]
-
-  const isFinal = (firstByte & 0x80) !== 0
-  const opcode = firstByte & 0x0F
-  const isMasked = (secondByte & 0x80) !== 0
-  let payloadLength = secondByte & 0x7F
-  let offset = 2
-
-  if (payloadLength === 126) {
-    if (buffer.length < 4) return null
-    payloadLength = buffer.readUInt16BE(2)
-    offset = 4
-  } else if (payloadLength === 127) {
-    if (buffer.length < 10) return null
-    payloadLength = buffer.readUInt32BE(6)
-    offset = 10
-  }
-
-  let maskingKey
-  if (isMasked) {
-    if (buffer.length < offset + 4) return null
-    maskingKey = buffer.slice(offset, offset + 4)
-    offset += 4
-  }
-
-  if (buffer.length < offset + payloadLength) return null
-
-  let payload = buffer.slice(offset, offset + payloadLength)
-
-  if (isMasked && maskingKey) {
-    payload = Buffer.from(payload)
-    for (let i = 0; i < payload.length; i++) {
-      payload[i] ^= maskingKey[i % 4]
-    }
-  }
-
-  return {
-    isFinal,
-    opcode,
-    isBinary: opcode === 2,
-    payload
-  }
 }
 
 server.on('connect', (req, clientSocket, head) => {
