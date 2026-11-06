@@ -20,7 +20,7 @@ const http = require('http')
  * @property {import('express').Express} app
  * @property {Pick<HttpFlow, 'tryHandleHttpBypass'>} httpFlow
  * @property {Pick<WebSocketProxy, 'handleUpgrade'>} webSocketProxy
- * @property {Pick<MitmHandler, 'handleConnect'>} mitm
+ * @property {Pick<MitmHandler, 'handleConnect' | 'close'>} mitm
  * @property {Pick<Upstream, 'close'>} upstream
  * @property {{ port: number, host: string }} defaults Address used when `start()` gets no options.
  */
@@ -74,8 +74,9 @@ function createProxyServer ({ app, httpFlow, webSocketProxy, mitm, upstream, def
   }
 
   /**
-   * Stop listening and drop open connections (upstream keep-alive sockets of
-   * the undici dispatchers are closed too, so a test process can exit).
+   * Stop listening and drop open connections: the MITM HTTPS server and the
+   * upstream keep-alive sockets of the undici dispatchers are closed too, so
+   * a test process can exit.
    *
    * @returns {Promise<void>}
    */
@@ -86,6 +87,7 @@ function createProxyServer ({ app, httpFlow, webSocketProxy, mitm, upstream, def
       }
       server.close(() => resolve(undefined))
     })
+    await mitm.close()
     await upstream.close()
   }
 

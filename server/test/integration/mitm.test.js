@@ -207,3 +207,57 @@ test('CONNECT with an unparsable target is refused with 400', async () => {
   assert.equal(statusLine, 'HTTP/1.1 400 Bad Request')
   socket.destroy()
 })
+
+test('tunnels for different SNI names get their own certificate from the same CA and leaf key', async () => {
+  const first = await openTunnel(`127.0.0.1:${upstreamPort}`)
+  const alpha = await secureTunnel(first.socket, 'alpha.test')
+  const second = await openTunnel(`127.0.0.1:${upstreamPort}`)
+  const beta = await secureTunnel(second.socket, 'beta.test')
+
+  const peerAlpha = alpha.getPeerCertificate()
+  const peerBeta = beta.getPeerCertificate()
+  assert.equal(peerAlpha.subject.CN, 'alpha.test')
+  assert.equal(peerBeta.subject.CN, 'beta.test')
+  assert.equal(peerAlpha.issuer.CN, 'Cascade Proxy CA')
+  assert.equal(peerBeta.issuer.CN, 'Cascade Proxy CA')
+  assert.notEqual(peerAlpha.serialNumber, peerBeta.serialNumber)
+  assert.notEqual(peerAlpha.fingerprint256, peerBeta.fingerprint256)
+  assert.equal(peerAlpha.modulus, peerBeta.modulus, 'both certificates carry the shared leaf key')
+
+  assert.equal(fs.existsSync(path.join(certsDir, 'leaf-key.pem')), true)
+  assert.equal(fs.existsSync(path.join(certsDir, 'hosts', 'alpha.test.pem')), true)
+  assert.equal(fs.existsSync(path.join(certsDir, 'hosts', 'beta.test.pem')), true)
+
+  alpha.destroy()
+  beta.destroy()
+})
+
+test('a client that sends no SNI gets the certificate of the CONNECT host and is served', async () => {
+  await api('DELETE', '/api/logs')
+
+  const { socket } = await openTunnel(`127.0.0.1:${upstreamPort}`)
+  const secure = await new Promise((resolve, reject) => {
+    socket.resume()
+    // No servername and no host: the ClientHello carries no SNI extension.
+    const tlsSocket = tls.connect({ socket, rejectUnauthorized: false }, () => resolve(tlsSocket))
+    tlsSocket.on('error', reject)
+  })
+
+  const peer = secure.getPeerCertificate()
+  assert.equal(peer.subject.CN, '127.0.0.1')
+  assert.equal(peer.issuer.CN, 'Cascade Proxy CA')
+
+  const res = await requestOverSocket(secure, {
+    method: 'GET',
+    path: '/no-sni',
+    headers: { host: `127.0.0.1:${upstreamPort}`, connection: 'close' }
+  })
+  assert.equal(res.status, 200)
+  assert.equal(JSON.parse(res.body).url, '/no-sni')
+
+  const logs = await api('GET', '/api/logs?sources=mitm')
+  assert.equal(logs.json.total, 1)
+  assert.equal(logs.json.items[0].fullUrl, `https://127.0.0.1:${upstreamPort}/no-sni`)
+
+  secure.destroy()
+})
