@@ -40,14 +40,20 @@ const { safeString } = require('../util/strings')
  */
 
 /**
- * Lower-case a host value and drop any port suffix.
+ * Lower-case a host value and drop any port suffix. A bracketed IPv6
+ * literal (`[::1]:8050`) keeps its brackets and its colons.
  *
  * @param {unknown} value
  * @returns {string|null}
  */
 function normalizeHostValue (value) {
   if (!value || typeof value !== 'string') return null
-  return value.trim().toLowerCase().split(':')[0]
+  const lower = value.trim().toLowerCase()
+  if (lower.startsWith('[')) {
+    const close = lower.indexOf(']')
+    return close === -1 ? lower : lower.slice(0, close + 1)
+  }
+  return lower.split(':')[0]
 }
 
 /**

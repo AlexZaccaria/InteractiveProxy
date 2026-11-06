@@ -2,7 +2,6 @@ const http = require('http')
 const https = require('https')
 const net = require('net')
 const tls = require('tls')
-const { spawn } = require('child_process')
 const express = require('express')
 const cors = require('cors')
 const bodyParser = require('body-parser')
@@ -12,7 +11,6 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const { URL } = require('url')
 const WebSocket = require('ws')
-const { request, Agent } = require('undici')
 const {
   PORT,
   HOST,
@@ -38,99 +36,25 @@ const {
   decodeWebSocketFrame
 } = require('./src/proxy/websocket-codec')
 
-const { logWarn } = require('./src/util/logger')
+const { showNativeFilePicker } = require('./src/system/file-picker')
+const { loadCaBundle, createUpstream, handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./src/proxy/upstream')
+const { createConfigStore } = require('./src/state/config-store')
+const { createRouter } = require('./src/proxy/router')
+const { createResourceStore } = require('./src/resources/store')
+const { handleBooleanToggleEndpoint } = require('./src/api/toggles')
 
-/**
- * Escape a string for safe inclusion in a PowerShell double-quoted string.
- *
- * @param {string} value
- * @returns {string}
- */
-const escapePowerShellString = (value) => {
-  const raw = value == null ? '' : String(value)
-  if (!raw) return ''
-  return raw.replace(/`/g, '``').replace(/"/g, '`"')
-}
-
-/**
- * Open a native Windows file picker and resolve the selected path.
- *
- * @param {{ title?: string, filter?: string }} options
- * @returns {Promise<string | null>}
- */
-function showNativeFilePicker (options = {}) {
-  return new Promise((resolve, reject) => {
-    const title = escapePowerShellString(options.title || 'Select a file')
-    const filter = escapePowerShellString(options.filter || 'All files (*.*)|*.*')
-
-    const script = [
-      'Add-Type -AssemblyName System.Windows.Forms;',
-      '$dialog = New-Object System.Windows.Forms.OpenFileDialog;',
-      `$dialog.Title = "${title}";`,
-      `$dialog.Filter = "${filter}";`,
-      '$dialog.Multiselect = $false;',
-      '$result = $dialog.ShowDialog();',
-      'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName }'
-    ].join(' ')
-
-    const ps = spawn('powershell', ['-STA', '-NoProfile', '-Command', script])
-    let output = ''
-    let errorOutput = ''
-
-    ps.stdout.on('data', chunk => {
-      output += chunk.toString()
-    })
-
-    ps.stderr.on('data', chunk => {
-      errorOutput += chunk.toString()
-    })
-
-    ps.on('error', reject)
-    ps.on('close', code => {
-      if (code !== 0 && errorOutput) {
-        reject(new Error(errorOutput.trim()))
-        return
-      }
-      const trimmed = output == null ? '' : String(output).trim()
-      resolve(trimmed || null)
-    })
-  })
-}
-
-// Optional upstream CA bundle for strict TLS mode
-let upstreamCaBundle = null
-if (STRICT_TLS_CA_FILE) {
-	try {
-		upstreamCaBundle = fs.readFileSync(STRICT_TLS_CA_FILE, 'utf8')
-	} catch (error) {
-		upstreamCaBundle = null
-		logWarn('tls', `Failed to read STRICT TLS CA file at ${STRICT_TLS_CA_FILE}`, error)
-	}
-}
+// Upstream access: undici dispatchers, TLS strictness and the shared request
+// helper used by the HTTP bypass path, the main proxy flow and the MITM flow.
+const upstream = createUpstream({
+  strictTls: STRICT_TLS_ENABLED,
+  caBundle: loadCaBundle(STRICT_TLS_CA_FILE),
+  headersTimeoutMs: UPSTREAM_HEADERS_TIMEOUT_MS,
+  bodyTimeoutMs: UPSTREAM_BODY_TIMEOUT_MS
+})
+const { performUpstreamRequest, attachAbortOnClose } = upstream
+const upstreamCaBundle = upstream.caBundle
 
 const app = express()
-
-const httpDispatcher = new Agent({
-  connections: 128,
-  keepAliveTimeout: 60_000,
-  keepAliveMaxTimeout: 600_000
-})
-
-const httpsConnectOptions = STRICT_TLS_ENABLED
-  ? {
-      rejectUnauthorized: true,
-      ca: upstreamCaBundle || undefined
-    }
-  : {
-      rejectUnauthorized: false
-    }
-
-const httpsDispatcher = new Agent({
-  connections: 128,
-  keepAliveTimeout: 60_000,
-  keepAliveMaxTimeout: 600_000,
-  connect: httpsConnectOptions
-})
 
 // Directories
 const BLOCKED_URLS_FILE = path.join(STORAGE_DIR, 'blocked-urls.json')
@@ -138,19 +62,11 @@ const FILTER_URLS_FILE = path.join(STORAGE_DIR, 'filter-urls.json')
 const LEGACY_BYPASS_URLS_FILE = path.join(STORAGE_DIR, 'bypass-urls.json')
 const EDIT_RULES_FILE = path.join(STORAGE_DIR, 'edit-rules.json')
 const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
+const RESOURCES_FILE = path.join(STORAGE_DIR, 'resources.json')
+const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
 
 const { getCA, generateCertForHost } = require('./src/tls/ca')
 
-// Blocked/BYPASS URL lists
-let blockedUrls = [] // Array of URL strings (enabled only)
-let bypassUrls = [] // Array of URL strings (enabled only, current mode)
-let blockedRules = [] // Full rule objects with id, enabled, name, url
-let bypassRules = [] // Full rule objects with id, enabled, name, url, mode
-let bypassMatchers = []
-// Precomputed blocked URL patterns used by filterLogsCore to cheaply hide
-// blocked traffic from the log view without rebuilding the pattern list on
-// every /api/logs request.
-let blockedUrlSubstringsForFilter = []
 const {
   normalizeEditRule,
   normalizeEditRulePreset,
@@ -196,166 +112,47 @@ const { applyJsonPathRulesToObject, applyJsonPathRulesToProtobufBuffer } = jsonP
 const attachRewriteMetadata = (logEntry, appliedRuleIds, phase) =>
   attachRewriteMetadataToStore(logEntry, appliedRuleIds, phase, ruleStore)
 
+// Persisted global flags, routing rules (blocked / filter) and local
+// resources. The router feeds the log store's blocked patterns through a
+// callback that resolves at call time (the log store is created below).
+const configStore = createConfigStore({ file: CONFIG_FILE, ruleStore })
+configStore.load()
+const router = createRouter({
+  configStore,
+  files: {
+    blockedFile: BLOCKED_URLS_FILE,
+    filterFile: FILTER_URLS_FILE,
+    legacyBypassFile: LEGACY_BYPASS_URLS_FILE
+  },
+  port: PORT,
+  host: HOST,
+  uiOrigins: UI_ORIGINS,
+  onBlockedPatternsChanged: () => logStore.recomputeBlockedVisibility()
+})
+const resourceStore = createResourceStore({ file: RESOURCES_FILE, storageDir: STORAGE_DIR, configStore })
+const {
+  resolveTargetFromRequest,
+  buildRoutingContext,
+  createBypassContext,
+  isInternalProxyRequest,
+  shouldUseDirectConnection,
+  shouldBypassRequest,
+  isRequestBlocked,
+  decideHttpHandling,
+  decideWebSocketHandling,
+  buildBypassInputFromHttpRequest,
+  isProxyTargetedRequest,
+  getBypassMode,
+  loadBlockedUrls,
+  loadBypassUrls,
+  normalizeBlockedRule,
+  normalizeBypassRule
+} = router
+const handleUpstreamError = params => handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
+
 const { safeTrim, queryBool, safeString, parseListQuery, isValidId } = require('./src/util/strings')
 
-/**
- * Determine the assumed protocol (http or https) from a request object.
- * Checks x-forwarded-proto header first, then falls back to socket encryption.
- *
- * @param {import('http').IncomingMessage} req
- * @returns {string}
- */
-function getAssumedProtocol (req) {
-  return (
-    req.headers['x-forwarded-proto']?.split(',')[0]?.trim() ||
-    req.protocol ||
-    (req.socket?.encrypted ? 'https' : 'http')
-  )
-}
-
-function buildBypassMatchers () {
-  bypassMatchers = bypassUrls
-    .map(pattern => safeTrim(pattern))
-    .filter(pattern => pattern)
-    .map(pattern => {
-      const lower = pattern.toLowerCase()
-      const isHostPattern = lower.startsWith('.') || (lower.includes('.') && !lower.includes('/') && !lower.includes(':'))
-
-      return {
-        raw: pattern,
-        value: lower,
-        type: isHostPattern ? 'host' : 'path'
-      }
-    })
-}
-
-// Load blocked URLs from file
-function loadBlockedUrls () {
-  try {
-    if (fs.existsSync(BLOCKED_URLS_FILE)) {
-      const data = fs.readFileSync(BLOCKED_URLS_FILE, 'utf8')
-      const parsed = JSON.parse(data)
-      blockedRules = Array.isArray(parsed) ? parsed.map(normalizeBlockedRule) : []
-      // Filter only enabled rules and extract URLs
-      blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
-    }
-    // Keep the log filtering patterns in sync with the latest blocked rules.
-    recomputeBlockedUrlSubstringsForFilter()
-  } catch (error) {
-    console.error('[proxy] Error loading blocked URLs:', error)
-  }
-}
-
-function loadBypassUrls () {
-  try {
-    let fileToRead = null
-
-    if (fs.existsSync(FILTER_URLS_FILE)) {
-      fileToRead = FILTER_URLS_FILE
-    } else if (fs.existsSync(LEGACY_BYPASS_URLS_FILE)) {
-      fileToRead = LEGACY_BYPASS_URLS_FILE
-    }
-
-    if (fileToRead) {
-      const data = fs.readFileSync(fileToRead, 'utf8')
-      const parsed = JSON.parse(data)
-      if (Array.isArray(parsed)) {
-        bypassRules = parsed.map(normalizeBypassRule)
-      } else {
-        bypassRules = []
-      }
-      rebuildBypassUrlsForCurrentMode()
-
-      if (fileToRead === LEGACY_BYPASS_URLS_FILE) {
-        saveBypassUrlsSync()
-      }
-    }
-  } catch (error) {
-    console.error('[proxy] Error loading bypass URLs:', error)
-  }
-}
-
-// Save blocked URLs to file
-async function saveBlockedUrls () {
-  // Activate the rules in memory before the (asynchronous) write so that a
-  // request arriving right after the API call already sees them.
-  blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
-  // Keep the log filtering patterns in sync with the latest blocked rules.
-  recomputeBlockedUrlSubstringsForFilter()
-
-  try {
-    const payload = JSON.stringify(blockedRules, null, 2)
-    await fsPromises.writeFile(BLOCKED_URLS_FILE, payload)
-  } catch (error) {
-    console.error('[proxy] Error saving blocked URLs:', error)
-  }
-}
-
-/**
- * Recompute the list of blocked URL substrings used exclusively by the log
- * filtering layer. Unlike `blockedUrls`, this includes all blocked rules
- * (enabled and disabled) to preserve the legacy behaviour where any blocked
- * pattern hides matching entries from the log view.
- */
-function recomputeBlockedUrlSubstringsForFilter () {
-  blockedUrlSubstringsForFilter = Array.isArray(blockedRules)
-    ? blockedRules
-        .map(rule => safeString(rule?.url))
-        .filter(Boolean)
-    : []
-
-  // Keep per-log visibility flags in sync with the latest blocked patterns so
-  // that filterLogsCore can rely on a cheap boolean check instead of
-  // re-scanning patterns for every log entry on each API call.
-  recomputeBlockedVisibilityForLogs()
-}
-
-function isRequestBlocked (requestUrl, fullUrl) {
-  if (!blockedRulesEnabled) return false
-  if (!Array.isArray(blockedUrls) || blockedUrls.length === 0) return false
-
-  const req = safeString(requestUrl)
-  const full = safeString(fullUrl)
-
-  return blockedUrls.some(blockedUrl => {
-    if (!blockedUrl || typeof blockedUrl !== 'string') return false
-    return (req && req.includes(blockedUrl)) || (full && full.includes(blockedUrl))
-  })
-}
-
-/**
- * Build a JSON snapshot of the current bypass rules.
- *
- * Note: bypassRules are stored in normalised form. They are normalised on
- * load (loadBypassUrls) and when mutated via the /api/filters endpoint.
- */
-function buildBypassRulesSnapshot () {
-  const payload = JSON.stringify(bypassRules, null, 2)
-  rebuildBypassUrlsForCurrentMode()
-  return payload
-}
-
-function saveBypassUrlsSync () {
-  try {
-    const payload = buildBypassRulesSnapshot()
-    fs.writeFileSync(FILTER_URLS_FILE, payload)
-  } catch (error) {
-    console.error('[proxy] Error saving bypass URLs (sync):', error)
-  }
-}
-
-async function saveBypassUrls () {
-  try {
-    const payload = buildBypassRulesSnapshot()
-    await fsPromises.writeFile(FILTER_URLS_FILE, payload)
-  } catch (error) {
-    console.error('[proxy] Error saving bypass URLs:', error)
-  }
-}
-
 const {
-  normalizeHostValue,
-  parseUrlCandidate,
   getCachedUrlParse,
   buildUrlMatchCandidatesFromContext,
   buildUrlMatchContext,
@@ -366,54 +163,6 @@ const {
   deriveDisplayNameFromUrlPattern,
   hostPatternMatches
 } = require('./src/rules/url-match')
-
-/**
- * Base normalisation logic shared by bypass and blocked rules.
- * Extracts URL, derives name, generates ID with prefix, sets enabled flag.
- *
- * @param {object} rule - Raw rule object.
- * @param {string} idPrefix - Prefix for generated IDs (e.g. 'bypass', 'blocked').
- * @param {object} [extraDefaults] - Additional default properties to merge.
- * @returns {object} Normalised rule object.
- */
-function normalizeRuleBase (rule = {}, idPrefix, extraDefaults = {}) {
-  const url = safeString(rule.url)
-  const name = (typeof rule.name === 'string' && rule.name.trim())
-    ? rule.name.trim()
-    : deriveDisplayNameFromUrlPattern(url)
-
-  const id = (typeof rule.id === 'string' && rule.id.trim())
-    ? rule.id
-    : `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-
-  return { id, enabled: rule.enabled !== false, name, url, ...extraDefaults }
-}
-
-/**
- * Normalise a raw bypass rule into the canonical internal representation.
- */
-function normalizeBypassRule (rule = {}) {
-  return normalizeRuleBase(rule, 'bypass', { mode: rule.mode === 'focus' ? 'focus' : 'ignore' })
-}
-
-/**
- * Normalise a raw blocked-rule entry into a canonical representation.
- */
-function normalizeBlockedRule (rule = {}) {
-  return normalizeRuleBase(rule, 'blocked')
-}
-
-/**
- * Rebuild the list of bypass URLs and matchers for the current mode from the
- * already-normalised bypassRules array.
- */
-function rebuildBypassUrlsForCurrentMode () {
-  const mode = getBypassMode()
-  bypassUrls = bypassRules
-    .filter(rule => rule && rule.enabled && rule.mode === mode)
-    .map(rule => rule.url)
-  buildBypassMatchers()
-}
 
 const {
   getConnectEncodingHeader,
@@ -446,7 +195,7 @@ const { createWebSocketRewriter } = require('./src/rewrite/websocket')
 // Rewrite orchestration bound to the rule store. Interactive mode and the
 // log store still live in this file, so they are reached through a getter
 // and a callback (both resolve at call time).
-const isInteractive = () => interactiveModeEnabled
+const isInteractive = () => configStore.interactiveModeEnabled
 const httpJsonRewriter = createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInteractive })
 const connectRewriter = createConnectRewriter({ ruleStore, textRules, jsonPathRules, isInteractive })
 const bodyRewriter = createBodyRewriter({
@@ -519,12 +268,12 @@ const { createLogEntryFactory } = require('./src/logs/entries')
 // trackers that follow it: dashboard/route statistics and filter-rule
 // suggestions. The getters read the routing state declared above lazily.
 const stats = createStats()
-const suggestions = createSuggestionTracker({ getBypassMatchers: () => bypassMatchers })
+const suggestions = createSuggestionTracker({ getBypassMatchers: () => router.getBypassMatchers() })
 const logStore = createLogStore({
   maxEntries: MAX_LOG_ENTRIES,
   ruleStore,
   isInteractive,
-  getBlockedPatterns: () => blockedUrlSubstringsForFilter,
+  getBlockedPatterns: () => router.getBlockedPatterns(),
   onAdd: entry => {
     suggestions.onAdd(entry)
     stats.applyDashboardStatsDelta(entry, 1)
@@ -538,7 +287,6 @@ const addLog = entry => logStore.add(entry)
 const filterLogsCore = query => filterLogsCoreForStore(query, logStore)
 const filterLogsForApiRequest = req => filterLogsForApiRequestForStore(req, logStore)
 const computeBypassSuggestions = options => suggestions.compute(options)
-const recomputeBlockedVisibilityForLogs = () => logStore.recomputeBlockedVisibility()
 const {
   createLogEntry,
   createHttpFlowLogEntry,
@@ -548,434 +296,11 @@ const {
   recordUpstreamErrorOnLog
 } = createLogEntryFactory({ isInteractive, addLog, attachRewriteMetadata })
 
-let localResources = new Map()
 let bypassedRequestCount = 0
-let bypassMode = 'ignore' // bypass mode: 'ignore' (default) or 'focus'
-
 function incrementBypassedCount (increment = 1) {
   const value = Number(increment)
   if (!Number.isFinite(value) || value <= 0) return
   bypassedRequestCount += value
-}
-
-function findMatchingLocalResource (requestUrl, fullUrl) {
-  if (!localResourcesEnabled || localResources.size === 0) return null
-
-  const req = safeString(requestUrl)
-  const full = safeString(fullUrl)
-
-  for (const [resourceUrl, resourceData] of localResources.entries()) {
-    if (!resourceData || resourceData.enabled === false) continue
-    if ((req && req.includes(resourceUrl)) || (full && full.includes(resourceUrl))) {
-      return { url: resourceUrl, resource: resourceData }
-    }
-  }
-
-  return null
-}
-
-// Load interactive mode, filter mode, and global feature modes from disk
-const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
-let interactiveModeEnabled = true // interactive mode flag
-let localResourcesEnabled = true // global local resources flag
-let filterRulesEnabled = true // global filter rules flag
-let blockedRulesEnabled = true // global blocked rules flag
-let persistConfigWritePromise = null
-let persistConfigQueued = false
-try {
-  if (fs.existsSync(CONFIG_FILE)) {
-    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
-    interactiveModeEnabled = config.interactiveModeEnabled !== false
-    if (typeof config.editRulesEnabled === 'boolean') {
-      ruleStore.setEnabled(config.editRulesEnabled)
-    }
-    if (typeof config.localResourcesEnabled === 'boolean') {
-      localResourcesEnabled = config.localResourcesEnabled
-    }
-    if (typeof config.filterRulesEnabled === 'boolean') {
-      filterRulesEnabled = config.filterRulesEnabled
-    }
-    if (typeof config.blockedRulesEnabled === 'boolean') {
-      blockedRulesEnabled = config.blockedRulesEnabled
-    }
-
-    let rawMode = null
-    if (typeof config.filterMode === 'string') {
-      rawMode = config.filterMode
-    } else if (typeof config.bypassMode === 'string') {
-      // Legacy key, kept for backward compatibility
-      rawMode = config.bypassMode
-    }
-
-    if (typeof rawMode === 'string') {
-      const normalized = rawMode.toLowerCase()
-      if (normalized === 'focus' || normalized === 'ignore') {
-        bypassMode = normalized
-      }
-    }
-  }
-} catch (error) {
-  console.error('Error loading config:', error)
-}
-
-function getBypassMode () {
-  return bypassMode === 'focus' ? 'focus' : 'ignore'
-}
-
-function persistConfig () {
-  if (persistConfigWritePromise) {
-    persistConfigQueued = true
-    return
-  }
-
-  persistConfigWritePromise = (async () => {
-    try {
-      let existing = {}
-      try {
-        const raw = await fsPromises.readFile(CONFIG_FILE, 'utf8')
-        existing = JSON.parse(raw) || {}
-      } catch (readError) {
-        if (readError && readError.code !== 'ENOENT') {
-          console.error('Error reading config file:', readError)
-        }
-        existing = {}
-      }
-
-      const updated = {
-        ...existing,
-        interactiveModeEnabled,
-        editRulesEnabled: ruleStore.isEnabled(),
-        localResourcesEnabled,
-        filterRulesEnabled,
-        blockedRulesEnabled,
-        filterMode: getBypassMode()
-      }
-
-      // Drop legacy key if present
-      if (Object.hasOwn(updated, 'bypassMode')) {
-        delete updated.bypassMode
-      }
-
-      await fsPromises.writeFile(CONFIG_FILE, JSON.stringify(updated, null, 2))
-    } catch (error) {
-      console.error('Error saving config:', error)
-    } finally {
-      persistConfigWritePromise = null
-      if (persistConfigQueued) {
-        persistConfigQueued = false
-        persistConfig()
-      }
-    }
-  })()
-}
-
-function isIgnoreMode () {
-  return getBypassMode() === 'ignore'
-}
-
-function isFocusMode () {
-  return getBypassMode() === 'focus'
-}
-
-/**
- * Handle an upstream request error by logging it and sending an appropriate
- * error response to the client. Works with both Express responses and raw
- * HTTP ServerResponse objects.
- *
- * @param {object} params
- * @param {object|null} params.logEntry - Log entry to record the error on.
- * @param {Error} params.error - The upstream error.
- * @param {import('http').ServerResponse} params.res - Response object.
- * @param {string} [params.message='Bad Gateway'] - Error message for raw responses.
- * @param {boolean} [params.useJson=false] - Use JSON response (Express style).
- */
-function handleUpstreamError ({ logEntry, error, res, message = 'Bad Gateway', useJson = false }) {
-  if (logEntry) {
-    recordUpstreamErrorOnLog(logEntry, error)
-  }
-
-  if (!res.headersSent) {
-    if (useJson && typeof res.status === 'function') {
-      res.status(502).json({ error: 'Proxy error', message: error.message })
-    } else {
-      res.writeHead(502)
-      res.end(message)
-    }
-  } else {
-    try { res.end() } catch {}
-  }
-}
-
-/**
- * Normalize a simple toggle payload coming from the UI.
- *
- * This keeps the existing default behaviour (omitted `enabled` means
- * `defaultEnabled`) but ensures that, when present, `enabled` is a boolean.
- * Invalid values produce a 400 with a clear message.
- *
- * @param {any} body
- * @param {boolean} defaultEnabled
- * @returns {{ ok: boolean, value: boolean, error?: string }}
- */
-function validateTogglePayload (body, defaultEnabled) {
-  const source = (body && typeof body === 'object') ? body : {}
-
-  if (!Object.hasOwn(source, 'enabled')) {
-    return {
-      ok: false,
-      value: defaultEnabled,
-      error: 'Missing "enabled" flag: expected a boolean.'
-    }
-  }
-
-  const { enabled } = source
-
-  if (typeof enabled === 'boolean') {
-    return { ok: true, value: enabled }
-  }
-
-  return {
-    ok: false,
-    value: defaultEnabled,
-    error: 'Invalid "enabled" flag: expected a boolean.'
-  }
-}
-
-function handleBooleanToggleEndpoint ({ req, res, assignValue, responseFieldName, defaultEnabled = true }) {
-  const result = validateTogglePayload(req.body, defaultEnabled)
-  if (!result.ok) {
-    return res.status(400).json({ error: result.error })
-  }
-
-  assignValue(result.value)
-  persistConfig()
-
-  const payload = { success: true }
-  payload[responseFieldName] = result.value
-  return res.json(payload)
-}
-
-function resolveTargetFromRequest (req) {
-  const targetHeader = parseUrlCandidate(req.headers['x-target-url'])
-  if (targetHeader) {
-    return targetHeader
-  }
-
-  const rawUrl = safeString(req.originalUrl) || safeString(req.url)
-  const requestUrl = rawUrl || ''
-
-  if (/^(https?|wss?):\/\//i.test(requestUrl)) {
-    const parsedRequestUrl = parseUrlCandidate(requestUrl)
-    if (parsedRequestUrl) {
-      return parsedRequestUrl
-    }
-  }
-
-  const hostHeader = safeTrim(req.headers.host)
-  const normalizedHeaderHost = normalizeHostValue(hostHeader)
-
-  if (hostHeader && !PROXY_OWN_AUTHORITIES.has(hostHeader.toLowerCase())) {
-    const assumedProtocol = getAssumedProtocol(req)
-    const candidate = `${assumedProtocol}://${hostHeader}${requestUrl}`
-    const parsedCandidate = parseUrlCandidate(candidate)
-    if (parsedCandidate) {
-      return parsedCandidate
-    }
-
-    return {
-      url: null,
-      host: normalizedHeaderHost
-    }
-  }
-
-  return {
-    url: null,
-    host: normalizedHeaderHost
-  }
-}
-
-/**
- * Build a canonical routing context used for block/bypass decisions across
- * HTTP, HTTPS MITM, CONNECT and WebSocket flows.
- *
- * @param {object} [params]
- * @param {string} [params.requestUrl]
- * @param {string} [params.fullUrl]
- * @param {string} [params.host]
- * @param {string} [params.path]
- * @param {string} [params.targetUrl]
- * @param {string} [params.method]
- * @returns {{requestUrl: string, fullUrl: (string|null), host: (string|null), path: (string|null), targetUrl: (string|null), method: (string|undefined)}}
- */
-function buildRoutingContext ({ requestUrl, fullUrl, host, path, targetUrl, method } = {}) {
-  return {
-    requestUrl: typeof requestUrl === 'string' ? requestUrl : '/',
-    fullUrl: typeof fullUrl === 'string' ? fullUrl : null,
-    host: typeof host === 'string' ? host : (host ? String(host) : null),
-    path: typeof path === 'string' ? path : null,
-    targetUrl: typeof targetUrl === 'string' ? targetUrl : null,
-    method
-  }
-}
-
-/**
- * Build the bypass matching context (host/value candidates) used by
- * shouldBypassRequest from a routing context-like shape.
- *
- * @param {{requestUrl?: string, fullUrl?: string|null, host?: string|null, path?: string|null, targetUrl?: string|null}} [params]
- * @returns {{hostCandidates: string[], valueCandidates: string[]}}
- */
-function createBypassContext ({ requestUrl, fullUrl, host, path, targetUrl } = {}) {
-  const hostCandidates = []
-  const valueCandidates = []
-
-  const pushHostCandidate = candidate => {
-    const normalized = normalizeHostValue(candidate)
-    if (normalized) hostCandidates.push(normalized)
-  }
-
-  const pushValueCandidate = candidate => {
-    if (!candidate) return
-    valueCandidates.push(candidate.toString().toLowerCase())
-  }
-
-  pushHostCandidate(host)
-  pushValueCandidate(requestUrl)
-
-  const addUrlCandidates = url => {
-    if (!url || typeof url !== 'string') return
-    pushValueCandidate(url)
-    try {
-      const parsed = new URL(url)
-      pushHostCandidate(parsed.hostname)
-      pushValueCandidate(parsed.pathname || '/')
-    } catch (error) {
-      // ignore invalid URL
-    }
-  }
-
-  addUrlCandidates(targetUrl)
-  addUrlCandidates(fullUrl)
-  pushValueCandidate(path)
-
-  return {
-    hostCandidates,
-    valueCandidates
-  }
-}
-
-/**
- * Determine whether a request should be treated as an internal proxy/UI call
- * that must never be bypassed.
- *
- * @param {{host?: string|null, requestUrl?: string, fullUrl?: string|null, targetUrl?: string|null}} [input]
- * @returns {boolean}
- */
-function isInternalProxyRequest (rawInput = {}) {
-  const input = rawInput && typeof rawInput === 'object' ? rawInput : {}
-  const host = normalizeHostValue(input.host) || ''
-  if (
-    !host &&
-    typeof input.requestUrl !== 'string' &&
-    typeof input.fullUrl !== 'string' &&
-    typeof input.targetUrl !== 'string'
-  ) {
-    return false
-  }
-
-  const localHostnames = new Set(['localhost', '127.0.0.1'])
-  if (host && localHostnames.has(host)) {
-    return true
-  }
-
-  const portSuffixes = [`localhost:${PORT}`, `127.0.0.1:${PORT}`]
-  const urlCandidates = [input.fullUrl, input.targetUrl, input.requestUrl]
-
-  for (const value of urlCandidates) {
-    if (typeof value !== 'string' || !value) continue
-    const lower = value.toLowerCase()
-    if (portSuffixes.some(suffix => lower.includes(suffix))) {
-      return true
-    }
-  }
-
-  return false
-}
-
-/**
- * Decide whether a request should use a direct upstream connection instead of
- * going through the proxy/MITM logic, based on bypass mode and rules.
- *
- * @param {{requestUrl?: string, fullUrl?: string|null, host?: string|null, path?: string|null, targetUrl?: string|null}} input
- * @returns {boolean}
- */
-function shouldUseDirectConnection (input) {
-  // Never bypass internal proxy requests (API calls, UI, etc.)
-  if (isInternalProxyRequest(input)) {
-    return false
-  }
-
-  if (!filterRulesEnabled) {
-    return false
-  }
-
-  const matches = shouldBypassRequest(input)
-
-  if (isIgnoreMode()) {
-    // Ignore mode: behave like legacy bypass list
-    return matches
-  }
-
-  if (isFocusMode()) {
-    // Focus mode: only focused (matched) traffic uses proxy logic; others go direct
-    return !matches
-  }
-
-  // Fallback to legacy behavior
-  return matches
-}
-
-/**
- * Decide how to handle a generic HTTP request based on block and
- * bypass/focus rules.
- *
- * @param {{requestUrl?: string, fullUrl?: string|null, host?: string|null, path?: string|null, targetUrl?: string|null, method?: string}} context
- * @returns {'block'|'direct'|'proxy'}
- */
-function decideHttpHandling (rawContext) {
-  const context = rawContext && typeof rawContext === 'object' ? rawContext : {}
-  const requestUrl = context.requestUrl || '/'
-  const fullUrl = context.fullUrl || null
-
-  // Blocked URLs take precedence over bypass/focus logic
-  if (isRequestBlocked(requestUrl, fullUrl)) {
-    return 'block'
-  }
-
-  return shouldUseDirectConnection(context) ? 'direct' : 'proxy'
-}
-
-/**
- * Decide how to handle a WebSocket connection based on block and bypass
- * rules, mapping the generic HTTP decision into WebSocket-specific actions.
- *
- * @param {{requestUrl?: string, fullUrl?: string|null, host?: string|null, path?: string|null, targetUrl?: string|null, method?: string}} routingContext
- * @returns {{action: 'block'|'direct'|'mitm', requestUrl: string, fullUrl: (string|null)}}
- */
-function decideWebSocketHandling (routingContext) {
-  const requestUrl = routingContext?.requestUrl || '/'
-  const fullUrl = routingContext?.fullUrl || null
-  const httpDecision = decideHttpHandling(routingContext)
-
-  if (httpDecision === 'block') {
-    return { action: 'block', requestUrl, fullUrl }
-  }
-
-  if (httpDecision === 'direct') {
-    return { action: 'direct', requestUrl, fullUrl }
-  }
-
-  return { action: 'mitm', requestUrl, fullUrl }
 }
 
 const {
@@ -990,106 +315,6 @@ const {
   applyCacheBypassHeadersToResponse,
   applyCacheBypassHeadersToObject
 } = require('./src/proxy/headers')
-
-function selectDispatcher (urlString) {
-  try {
-    const parsed = new URL(urlString)
-    return parsed.protocol === 'https:' ? httpsDispatcher : httpDispatcher
-  } catch (error) {
-    return httpDispatcher
-  }
-}
-
-function createUpstreamRequestOptions (url, baseOptions, abortSignal) {
-	const options = {
-		...baseOptions,
-		dispatcher: selectDispatcher(url),
-		maxRedirections: 0
-	}
-
-	if (UPSTREAM_HEADERS_TIMEOUT_MS > 0) {
-		options.headersTimeout = UPSTREAM_HEADERS_TIMEOUT_MS
-	}
-
-	if (UPSTREAM_BODY_TIMEOUT_MS > 0) {
-		options.bodyTimeout = UPSTREAM_BODY_TIMEOUT_MS
-	}
-
-	if (abortSignal) {
-		options.signal = abortSignal
-	}
-
-	return options
-}
-
-/**
- * Perform an upstream HTTP(S) request via Undici with standard dispatcher
- * selection and timeout handling, returning the raw response plus an
- * optional buffered body.
- *
- * This helper centralises the common request pattern used by the HTTP
- * bypass path, the main proxy middleware and the HTTPS MITM flows while
- * leaving logging and rewrite responsibilities to callers.
- *
- * @param {object} params
- * @param {string} params.url - Fully qualified upstream URL.
- * @param {string} params.method - HTTP method.
- * @param {object} params.headers - Headers to send upstream.
- * @param {any} [params.body] - Optional request body (Buffer, stream or string).
- * @param {AbortSignal} [params.abortSignal] - Optional abort signal.
- * @param {boolean} [params.bufferResponse=false] - Whether to buffer the entire response body.
- * @returns {Promise<{response: import('undici').Dispatcher.ResponseData, buffer: Buffer|null}>}
- */
-async function performUpstreamRequest ({
-  url,
-  method,
-  headers,
-  body,
-  abortSignal,
-  bufferResponse = false
-}) {
-  const response = await request(
-    url,
-    createUpstreamRequestOptions(
-      url,
-      {
-        method,
-        headers,
-        body
-      },
-      abortSignal
-    )
-  )
-
-  let buffer = null
-  if (bufferResponse) {
-    buffer = response.body
-      ? Buffer.from(await response.body.arrayBuffer())
-      : Buffer.alloc(0)
-  }
-
-  return { response, buffer }
-}
-
-/**
- * Attach an AbortController to an HTTP response so that an upstream
- * request can be aborted automatically when the client connection
- * closes.
- *
- * @param {import('http').ServerResponse} res - HTTP response object.
- * @param {AbortController} abortController - Controller to abort.
- * @returns {() => void} The close listener that was attached.
- */
-function attachAbortOnClose (res, abortController) {
-  const onClose = () => {
-    try {
-      abortController.abort()
-    } catch {}
-  }
-
-  res.on('close', onClose)
-  return onClose
-}
 
 function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
   const targetSocket = net.connect(targetPort, targetHost, () => {
@@ -1120,44 +345,6 @@ function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
   return targetSocket
 }
 
-function buildBypassInputFromHttpRequest (req, resolvedTarget) {
-  const requestUrl = safeString(req.url) || '/'
-  const hostHeader = safeString(req.headers?.host)
-  const host = resolvedTarget?.host || normalizeHostValue(hostHeader)
-
-  const assumedProtocol = getAssumedProtocol(req)
-
-  let fullUrl = resolvedTarget?.url || null
-  if (!fullUrl) {
-    if (/^(https?|wss?):\/\//i.test(requestUrl)) {
-      fullUrl = requestUrl
-    } else if (hostHeader) {
-      const prefixedPath = requestUrl.startsWith('/') ? requestUrl : `/${requestUrl}`
-      fullUrl = `${assumedProtocol}://${hostHeader}${prefixedPath}`
-    }
-  }
-
-  let path = null
-  if (fullUrl) {
-    try {
-      path = new URL(fullUrl).pathname || requestUrl
-    } catch {
-      path = requestUrl
-    }
-  } else {
-    path = requestUrl
-  }
-
-  return buildRoutingContext({
-    requestUrl,
-    fullUrl,
-    host,
-    path,
-    targetUrl: resolvedTarget?.url,
-    method: req.method
-  })
-}
-
 /**
  * Shared helper for direct/bypass HTTP flows. Handles log entry creation,
  * bypass count increment, header forwarding, and upstream request.
@@ -1182,7 +369,7 @@ async function handleDirectHttpFlow ({
   req, res, targetUrl, requestUrl, fullUrl, targetHost, requestStart, clientIp,
   omitHeaders, body, applyRewrites = false, bufferResponse = false, handleHead = false
 }) {
-  const hasLogging = interactiveModeEnabled === true
+  const hasLogging = configStore.interactiveModeEnabled === true
   const logEntry = hasLogging
     ? createHttpFlowLogEntry({
         requestStart,
@@ -1287,7 +474,7 @@ async function tryHandleHttpBypass (req, res) {
   const clientIp = req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
 
   if (handling === 'block') {
-    if (interactiveModeEnabled) {
+    if (configStore.interactiveModeEnabled) {
       const logEntry = createHttpFlowLogEntry({
         requestStart,
         method: req.method,
@@ -1546,115 +733,6 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl }) {
   })
 }
 
-function shouldBypassRequest (input) {
-  if (!filterRulesEnabled) return false
-  if (!bypassMatchers.length) return false
-
-  const context = createBypassContext(input)
-  if (!context.hostCandidates.length && !context.valueCandidates.length) return false
-
-  for (const matcher of bypassMatchers) {
-    if (matcher.type === 'host') {
-      for (const hostCandidate of context.hostCandidates) {
-        if (hostPatternMatches(matcher.value, hostCandidate)) {
-          return true
-        }
-      }
-    } else {
-      for (const valueCandidate of context.valueCandidates) {
-        if (valueCandidate.includes(matcher.value)) {
-          return true
-        }
-      }
-    }
-  }
-
-  return false
-}
-
-// Load existing local resources on startup
-function loadLocalResources () {
-  const resourcesFile = path.join(STORAGE_DIR, 'resources.json')
-  if (fs.existsSync(resourcesFile)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(resourcesFile, 'utf8'))
-      localResources = new Map(Object.entries(data))
-    } catch (error) {
-      console.error('[proxy] Error loading local resources:', error)
-    }
-  }
-}
-
-async function saveLocalResources () {
-  const resourcesFile = path.join(STORAGE_DIR, 'resources.json')
-  const data = Object.fromEntries(localResources)
-  try {
-    await fsPromises.writeFile(resourcesFile, JSON.stringify(data, null, 2))
-  } catch (error) {
-    console.error('[proxy] Error saving local resources:', error)
-  }
-}
-
-function getLocalResourcesList () {
-  return Array.from(localResources.entries()).map(([url, data]) => ({
-    url,
-    ...data
-  }))
-}
-
-/**
- * Stream a local resource file to an HTTP response with consistent
- * headers and error handling for both proxy and MITM flows.
- *
- * On error, a 500 JSON payload with a generic error message is sent.
- *
- * @param {import('http').ServerResponse} res
- * @param {{ filename: string, contentType: string }} resource
- * @param {{ sourceTag: string, errorPrefix: string }} options
- */
-function serveLocalResourceStream (res, resource, { sourceTag, errorPrefix }) {
-  const filePath = path.join(STORAGE_DIR, resource.filename)
-
-  const sendError = () => {
-    try {
-      if (!res.headersSent) {
-        res.statusCode = 500
-        try {
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-        } catch {}
-        res.end(JSON.stringify({ error: 'Error serving local resource' }))
-      } else {
-        res.end()
-      }
-    } catch {
-      try {
-        res.end()
-      } catch {}
-    }
-  }
-
-  try {
-    const stream = fs.createReadStream(filePath)
-
-    try {
-      if (!res.headersSent) {
-        res.setHeader('Content-Type', resource.contentType)
-        res.setHeader('X-Proxy-Source', sourceTag)
-      }
-    } catch {}
-
-    stream.on('error', error => {
-      console.error(`${errorPrefix}:`, error)
-      sendError()
-    })
-
-    stream.pipe(res)
-  } catch (error) {
-    console.error(`${errorPrefix}:`, error)
-    sendError()
-  }
-}
-
 // Middleware
 app.use(cors({
   origin: (origin, callback) => {
@@ -1687,43 +765,6 @@ app.use(bodyParser.raw({
   verify: captureRawBody,
   inflate: false
 }))
-
-/**
- * `host:port` values under which the proxy itself is addressed. A request
- * whose Host header is not one of these is traffic for another server.
- *
- * @type {Set<string>}
- */
-const PROXY_OWN_AUTHORITIES = new Set(
-  ['localhost', '127.0.0.1', '[::1]', HOST]
-    .concat(UI_ORIGINS.map(origin => {
-      try {
-        return new URL(origin).hostname
-      } catch {
-        return null
-      }
-    }))
-    .filter(host => host && host !== '0.0.0.0' && host !== '::')
-    .map(host => `${host.toLowerCase()}:${PORT}`)
-)
-
-/**
- * True when a request that reached the Express app is traffic to forward
- * (proxy-style absolute URL, X-Target-URL header or a Host header that is not
- * the proxy itself) rather than a call to the management API.
- *
- * @param {import('express').Request} req
- * @returns {boolean}
- */
-function isProxyTargetedRequest (req) {
-  if (safeString(req.headers['x-target-url'])) return true
-
-  const rawUrl = safeString(req.originalUrl) || safeString(req.url)
-  if (/^(https?|wss?):\/\//i.test(rawUrl)) return true
-
-  const hostHeader = safeTrim(req.headers.host).toLowerCase()
-  return Boolean(hostHeader) && !PROXY_OWN_AUTHORITIES.has(hostHeader)
-}
 
 // Express routes by path, so a proxied request such as
 // http://example.com/api/users or http://example.com/index.html would
@@ -1770,9 +811,9 @@ const storage = multer.diskStorage({
 const upload = multer({ storage })
 
 // Load resources and blocked URLs on startup
-loadLocalResources()
-loadBlockedUrls()
-loadBypassUrls()
+resourceStore.load()
+router.loadBlockedUrls()
+router.loadBypassUrls()
 loadEditRules()
 loadEditRulePresets()
 rebuildEditRuleCache()
@@ -1850,26 +891,26 @@ app.get('/api/logs/:id', (req, res) => {
 // Get config
 app.get('/api/config', (req, res) => {
   res.json({
-    interactiveModeEnabled,
-    editRulesEnabled: ruleStore.isEnabled(),
-    localResourcesEnabled,
-    filterRulesEnabled,
-    blockedRulesEnabled,
-    filteredRequestCount: bypassedRequestCount,
-    filterMode: getBypassMode()
+    ...configStore.snapshot(),
+    filteredRequestCount: bypassedRequestCount
   })
 })
 
 // Toggle endpoints for boolean config flags
 ;[
-  { path: '/api/interactive-mode', field: 'interactiveModeEnabled', set: v => { interactiveModeEnabled = v } },
+  { path: '/api/interactive-mode', field: 'interactiveModeEnabled', set: v => { configStore.interactiveModeEnabled = v } },
   { path: '/api/edit-rules-mode', field: 'editRulesEnabled', set: v => { ruleStore.setEnabled(v) } },
-  { path: '/api/local-resources-mode', field: 'localResourcesEnabled', set: v => { localResourcesEnabled = v } },
-  { path: '/api/filter-rules-mode', field: 'filterRulesEnabled', set: v => { filterRulesEnabled = v } },
-  { path: '/api/blocked-rules-mode', field: 'blockedRulesEnabled', set: v => { blockedRulesEnabled = v } }
+  { path: '/api/local-resources-mode', field: 'localResourcesEnabled', set: v => { configStore.localResourcesEnabled = v } },
+  { path: '/api/filter-rules-mode', field: 'filterRulesEnabled', set: v => { configStore.filterRulesEnabled = v } },
+  { path: '/api/blocked-rules-mode', field: 'blockedRulesEnabled', set: v => { configStore.blockedRulesEnabled = v } }
 ].forEach(({ path, field, set }) => {
   app.post(path, (req, res) => handleBooleanToggleEndpoint({
-    req, res, assignValue: set, responseFieldName: field, defaultEnabled: true
+    req,
+    res,
+    assignValue: set,
+    responseFieldName: field,
+    defaultEnabled: true,
+    persist: () => configStore.persist()
   }))
 })
 
@@ -1887,9 +928,9 @@ app.post('/api/filter-mode', (req, res) => {
     return res.status(400).json({ error: 'Invalid filter mode. Expected "ignore" or "focus".' })
   }
 
-  bypassMode = normalized
-  persistConfig()
-  rebuildBypassUrlsForCurrentMode()
+  configStore.filterMode = normalized
+  configStore.persist()
+  router.rebuildBypassUrlsForCurrentMode()
 
   res.json({ success: true, filterMode: getBypassMode() })
 })
@@ -1913,7 +954,7 @@ app.post('/api/system/file-picker', async (req, res) => {
 })
 
 app.get('/api/resources', (req, res) => {
-  res.json(getLocalResourcesList())
+  res.json(resourceStore.list())
 })
 
 app.post('/api/resources', upload.single('file'), async (req, res) => {
@@ -1956,8 +997,8 @@ app.post('/api/resources', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'File or content is required' })
     }
 
-    localResources.set(rawUrl, resourceData)
-    await saveLocalResources()
+    resourceStore.set(rawUrl, resourceData)
+    await resourceStore.save()
 
     res.json({
       success: true,
@@ -2006,7 +1047,7 @@ app.post('/api/resources/toggle', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' })
     }
 
-    if (!localResources.has(rawUrl)) {
+    if (!resourceStore.has(rawUrl)) {
       return res.status(404).json({ error: 'Resource not found' })
     }
 
@@ -2014,16 +1055,8 @@ app.post('/api/resources/toggle', async (req, res) => {
       return res.status(400).json({ error: 'Invalid "enabled" flag: expected a boolean.' })
     }
 
-    const resource = localResources.get(rawUrl) || {}
-    const nextEnabled = enabled !== false
-
-    const updated = {
-      ...resource,
-      enabled: nextEnabled
-    }
-
-    localResources.set(rawUrl, updated)
-    await saveLocalResources()
+    const updated = resourceStore.toggle(rawUrl, enabled !== false)
+    await resourceStore.save()
 
     res.json({ success: true, resource: { url: rawUrl, ...updated } })
   } catch (error) {
@@ -2035,22 +1068,8 @@ app.delete('/api/resources/:encodedUrl', async (req, res) => {
   try {
     const url = decodeURIComponent(req.params.encodedUrl)
 
-    if (localResources.has(url)) {
-      const resource = localResources.get(url)
-      const filePath = path.join(STORAGE_DIR, resource.filename)
-
-      try {
-        await fsPromises.unlink(filePath)
-      } catch (fsError) {
-        // If the file is already missing, keep behaviour simple and just log
-        if (!fsError || fsError.code !== 'ENOENT') {
-          console.error('[proxy] Error deleting local resource file:', fsError)
-          throw fsError
-        }
-      }
-
-      localResources.delete(url)
-      await saveLocalResources()
+    if (await resourceStore.remove(url)) {
+      await resourceStore.save()
 
       res.json({ success: true, message: 'Resource deleted successfully' })
     } else {
@@ -2072,12 +1091,13 @@ app.delete('/api/logs', (req, res) => {
 
 // Get all blocked rules
 app.get('/api/blocked', (req, res) => {
-  res.json(blockedRules)
+  res.json(router.getBlockedRules())
 })
 
 // Add/update/remove blocked URL
 app.post('/api/blocked', async (req, res) => {
   const { id, url, action, enabled, name } = req.body || {}
+  const blockedRules = router.getBlockedRules()
 
   if (typeof action !== 'string') {
     return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
@@ -2094,7 +1114,7 @@ app.post('/api/blocked', async (req, res) => {
 
     const newRule = normalizeBlockedRule({ id, enabled, name, url: normalizedUrl })
     blockedRules.push(newRule)
-    await saveBlockedUrls()
+    await router.saveBlockedUrls()
   } else if (action === 'update') {
     if (!isValidId(id)) {
       return res.status(400).json({ error: 'ID is required for update' })
@@ -2127,7 +1147,7 @@ app.post('/api/blocked', async (req, res) => {
       }
 
       blockedRules[idx] = normalizeBlockedRule(next)
-      await saveBlockedUrls()
+      await router.saveBlockedUrls()
     } else {
       return res.status(404).json({ error: 'Rule not found' })
     }
@@ -2135,13 +1155,13 @@ app.post('/api/blocked', async (req, res) => {
     if (!isValidId(id)) {
       return res.status(400).json({ error: 'ID is required for remove' })
     }
-    blockedRules = blockedRules.filter(r => r.id !== id)
-    await saveBlockedUrls()
+    router.setBlockedRules(blockedRules.filter(r => r.id !== id))
+    await router.saveBlockedUrls()
   } else {
     return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
   }
 
-  res.json({ success: true, blockedRules })
+  res.json({ success: true, blockedRules: router.getBlockedRules() })
 })
 
 // Get all filter rules
@@ -2152,7 +1172,7 @@ app.get('/api/filters', (req, res) => {
       ? queryModeRaw
       : getBypassMode()
 
-    const rulesForMode = bypassRules
+    const rulesForMode = router.getBypassRules()
       .filter(rule => rule && rule.mode === effectiveMode)
 
     res.json(rulesForMode)
@@ -2164,6 +1184,7 @@ app.get('/api/filters', (req, res) => {
 // Add/update/remove filter URL
 app.post('/api/filters', (req, res) => {
   const { id, url, action, enabled, name, mode } = req.body || {}
+  const bypassRules = router.getBypassRules()
 
   if (typeof action !== 'string') {
     return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
@@ -2187,7 +1208,7 @@ app.post('/api/filters', (req, res) => {
     }
     const newRule = normalizeBypassRule(baseRule)
     bypassRules.push(newRule)
-    saveBypassUrls()
+    router.saveBypassUrls()
   } else if (action === 'update') {
     if (!isValidId(id)) {
       return res.status(400).json({ error: 'ID is required for update' })
@@ -2224,7 +1245,7 @@ app.post('/api/filters', (req, res) => {
       })
 
       bypassRules[ruleIndex] = updated
-      saveBypassUrls()
+      router.saveBypassUrls()
     } else {
       return res.status(404).json({ error: 'Rule not found' })
     }
@@ -2232,13 +1253,13 @@ app.post('/api/filters', (req, res) => {
     if (!isValidId(id)) {
       return res.status(400).json({ error: 'ID is required for remove' })
     }
-    bypassRules = bypassRules.filter(r => r.id !== id)
-    saveBypassUrls()
+    router.setBypassRules(bypassRules.filter(r => r.id !== id))
+    router.saveBypassUrls()
   } else {
     return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
   }
 
-  res.json({ success: true, bypassRules })
+  res.json({ success: true, bypassRules: router.getBypassRules() })
 })
 
 app.get('/api/filters/suggestions', (req, res) => {
@@ -2260,7 +1281,7 @@ app.get('/api/filters/suggestions', (req, res) => {
 app.get('/api/filters/metrics', (req, res) => {
   res.json({
     totalFiltered: bypassedRequestCount,
-    activeRules: bypassUrls.length
+    activeRules: router.getBypassUrls().length
   })
 })
 
@@ -2358,11 +1379,11 @@ app.get('/api/dashboard', (req, res) => {
     performance,
     payloads,
     routes,
-    resources: getLocalResourcesList(),
-    blocked: blockedUrls,
+    resources: resourceStore.list(),
+    blocked: router.getBlockedUrls(),
     filterMetrics: {
       totalFiltered: bypassedRequestCount,
-      activeRules: bypassUrls.length
+      activeRules: router.getBypassUrls().length
     },
     editedRequests
   })
@@ -2396,7 +1417,7 @@ async function handleProxiedHttpRequest (req, res) {
   const clientIp = req.ip || req.connection?.remoteAddress || 'unknown'
   const requestStart = Date.now()
 
-  const hasLogging = interactiveModeEnabled === true
+  const hasLogging = configStore.interactiveModeEnabled === true
 
   // Log the request (only build a detailed log entry when interactive mode is enabled)
   const logEntry = hasLogging
@@ -2429,7 +1450,7 @@ async function handleProxiedHttpRequest (req, res) {
   }
 
   // Check if we have an enabled local resource for this URL
-  const localMatch = findMatchingLocalResource(requestUrl, fullUrl)
+  const localMatch = resourceStore.findMatching(requestUrl, fullUrl)
 
   if (localMatch) {
     const { url: matchedUrl, resource } = localMatch
@@ -2440,7 +1461,7 @@ async function handleProxiedHttpRequest (req, res) {
       addLog(logEntry)
     }
 
-    serveLocalResourceStream(res, resource, {
+    resourceStore.serveStream(res, resource, {
       sourceTag: 'local',
       errorPrefix: '[proxy] Error streaming local resource'
     })
@@ -2519,7 +1540,7 @@ async function handleProxiedHttpRequest (req, res) {
 
         let needsInspection = hasAnyEditRules || !isBinary || shouldDecompress(contentType)
 
-        if (!interactiveModeEnabled && !hasAnyEditRules) {
+        if (!configStore.interactiveModeEnabled && !hasAnyEditRules) {
           // When logging is disabled and there are no active edit rules, avoid
           // buffering large responses purely for preview/logging. Allow
           // uninspected streaming for responses that would otherwise only be
@@ -2994,7 +2015,7 @@ server.on('connect', (req, clientSocket, head) => {
   if (httpHandling === 'direct') {
     incrementBypassedCount()
 
-    if (interactiveModeEnabled) {
+    if (configStore.interactiveModeEnabled) {
       const requestStart = Date.now()
       const fullUrl = `https://${targetAuthority}`
       const logEntry = createHttpFlowLogEntry({
@@ -3132,7 +2153,7 @@ server.on('connect', (req, clientSocket, head) => {
         return
       }
 
-      const hasLogging = interactiveModeEnabled === true
+      const hasLogging = configStore.interactiveModeEnabled === true
 
       // Log to UI (only build a detailed log entry when interactive mode is enabled)
       const logEntry = hasLogging
@@ -3175,7 +2196,7 @@ server.on('connect', (req, clientSocket, head) => {
       }
 
       // Check for enabled local resource
-      const localMatch = findMatchingLocalResource(requestUrl, fullUrl)
+      const localMatch = resourceStore.findMatching(requestUrl, fullUrl)
 
       if (localMatch) {
         const { url: matchedUrl, resource } = localMatch
@@ -3186,7 +2207,7 @@ server.on('connect', (req, clientSocket, head) => {
           addLog(logEntry)
         }
 
-        serveLocalResourceStream(clientRes, resource, {
+        resourceStore.serveStream(clientRes, resource, {
           sourceTag: 'local',
           errorPrefix: '[proxy] Error streaming local resource (connect)'
         })
@@ -3302,7 +2323,7 @@ async function stop () {
     }
     server.close(() => resolve())
   })
-  await Promise.allSettled([httpDispatcher.close(), httpsDispatcher.close()])
+  await upstream.close()
 }
 
 if (require.main === module) {
