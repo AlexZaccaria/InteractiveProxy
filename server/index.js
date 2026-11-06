@@ -28,24 +28,12 @@ const {
   STRICT_TLS_ENABLED,
   STRICT_TLS_CA_FILE,
   BODY_LIMIT,
-  CONNECT_MAX_FRAMES,
-  CONNECT_MAX_FRAME_BYTES,
   WS_MAX_TEXT_BYTES,
   UPSTREAM_HEADERS_TIMEOUT_MS,
   UPSTREAM_BODY_TIMEOUT_MS,
   STREAM_UNINSPECTED_RESPONSES,
   WS_LOG_BODY_ENABLED
 } = require('./config')
-
-// Normalised Connect limits computed once at startup to avoid repeated
-// ternaries and allocations on hot paths.
-const CONNECT_MAX_FRAMES_LIMIT = CONNECT_MAX_FRAMES > 0
-  ? CONNECT_MAX_FRAMES
-  : Number.POSITIVE_INFINITY
-
-const CONNECT_MAX_FRAME_BYTES_LIMIT = CONNECT_MAX_FRAME_BYTES > 0
-  ? CONNECT_MAX_FRAME_BYTES
-  : Number.POSITIVE_INFINITY
 
 // Constant GUID used for WebSocket Sec-WebSocket-Accept computation
 const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -1221,33 +1209,17 @@ function hasAnyEditOrJsonPathRules () {
   return hasCompiledTextRules() || hasCompiledJsonPathRules()
 }
 
-function rebuildConnectEnvelope (frames = []) {
-  if (!Array.isArray(frames) || frames.length === 0) {
-    return Buffer.alloc(0)
-  }
-
-  let totalLength = 0
-  for (const frame of frames) {
-    const dataLength = Buffer.isBuffer(frame?.data) ? frame.data.length : 0
-    totalLength += 5 + dataLength
-  }
-
-  const rebuilt = Buffer.allocUnsafe(totalLength)
-  let offset = 0
-
-  for (const frame of frames) {
-    const flags = typeof frame?.flags === 'number' ? frame.flags : 0
-    const data = Buffer.isBuffer(frame?.data) ? frame.data : Buffer.alloc(0)
-    rebuilt.writeUInt8(flags & 0xFF, offset)
-    rebuilt.writeUInt32BE(data.length, offset + 1)
-    if (data.length > 0) {
-      data.copy(rebuilt, offset + 5)
-    }
-    offset += 5 + data.length
-  }
-
-  return rebuilt
-}
+const {
+  CONNECT_MAX_FRAMES_LIMIT,
+  CONNECT_MAX_FRAME_BYTES_LIMIT,
+  getConnectEncodingHeader,
+  looksLikeConnectEnvelope,
+  rebuildConnectEnvelope,
+  decodeConnectPayload,
+  countConnectFrames,
+  buildConnectSearchContentForLog,
+  buildConnectViewForClient
+} = require('./src/codecs/connect')
 
 function replaceTextLiteral (text, start, end, replacement, caseSensitive) {
   if (!start && !end) return { text, count: 0 }
@@ -2432,25 +2404,6 @@ const {
   isEmptyBuffer
 } = require('./src/codecs/compression')
 
-function looksLikeConnectEnvelope (buffer) {
-  if (!buffer || buffer.length < 5 || !Buffer.isBuffer(buffer)) return false
-  try {
-    let offset = 0
-    while (offset + 5 <= buffer.length) {
-      const flags = buffer.readUInt8(offset)
-      if ((flags & 0xFC) !== 0) return false
-      const length = buffer.readUInt32BE(offset + 1)
-      offset += 5
-      if (length < 0 || offset + length > buffer.length) return false
-      offset += length
-    }
-    return offset === buffer.length
-  } catch (error) {
-    logDebug('looksLikeConnectEnvelope', 'Failed while scanning Connect envelope', error)
-    return false
-  }
-}
-
 /**
  * Apply Connect/gRPC frame-level rewrites (text + JSONPath) to a raw HTTP
  * body buffer, optionally collecting per-frame metadata for logging.
@@ -3031,157 +2984,16 @@ function applyWebSocketRewritesAndDescribe (payload, isBinary, context) {
   return { buffer: payloadBuffer, rewrites, body, originalBody, jsonAfter }
 }
 
-/**
- * Normalize a WebSocket payload into a Buffer, regardless of whether it
- * arrived as a Buffer, string or other binary-like value.
- *
- * @param {Buffer|string|any} data
- * @returns {Buffer}
- */
-function normalizeWebSocketPayload (data) {
-  if (Buffer.isBuffer(data)) return data
-  if (typeof data === 'string') return Buffer.from(data, 'utf8')
-  if (data == null) return Buffer.alloc(0)
-  return Buffer.from(data)
-}
-
-/**
- * Attempt to extract and parse a JSON payload from a WebSocket text frame.
- *
- * This mirrors the Socket.IO normalisation that previously lived in the
- * frontend so that WebSocket logs already contain structured JSON suitable
- * for before/after previews. It understands frames such as
- * "42/ws/namespace,[\"event\",{...}]" or "0{...}", stripping the numeric
- * engine.io code and optional namespace/path prefix before calling
- * JSON.parse.
- *
- * Non-JSON bodies (binary markers, oversized-frame markers, etc.) yield
- * null so that the caller can gracefully fall back to a raw string view.
- *
- * @param {string} text
- * @returns {any|null}
- */
-/**
- * Recursively normalise an object tree by parsing any properties that contain
- * JSON-as-string into real objects/arrays. This is used to ensure that
- * JSONPath rules and logging see a consistent, fully structured view even
- * when protocols embed JSON inside string fields such as `data` or
- * `channel_data`.
- *
- * The function mutates the provided root object in-place.
- *
- * @param {any} root
- * @returns {any}
- */
-function normalizeNestedJsonStrings (root) {
-  if (!root || typeof root !== 'object') return root
-
-  const stack = [root]
-
-  while (stack.length) {
-    const current = stack.pop()
-    if (!current || typeof current !== 'object') continue
-
-    if (Array.isArray(current)) {
-      for (let i = 0; i < current.length; i++) {
-        const value = current[i]
-        if (typeof value === 'string') {
-          const trimmed = value.trim()
-          if (trimmed.length > 0 && (trimmed[0] === '{' || trimmed[0] === '[')) {
-            try {
-              const parsed = JSON.parse(trimmed)
-              if (parsed && typeof parsed === 'object') {
-                current[i] = parsed
-                stack.push(parsed)
-              }
-            } catch {
-              // Not valid JSON - keep original string
-            }
-          }
-        } else if (value && typeof value === 'object') {
-          stack.push(value)
-        }
-      }
-      continue
-    }
-
-    for (const [key, value] of Object.entries(current)) {
-      if (typeof value === 'string') {
-        const trimmed = value.trim()
-        if (trimmed.length > 0 && (trimmed[0] === '{' || trimmed[0] === '[')) {
-          try {
-            const parsed = JSON.parse(trimmed)
-            if (parsed && typeof parsed === 'object') {
-              current[key] = parsed
-              stack.push(parsed)
-            }
-          } catch {
-            // Not valid JSON - keep original string
-          }
-        }
-      } else if (value && typeof value === 'object') {
-        stack.push(value)
-      }
-    }
-  }
-
-  return root
-}
-
-/**
- * Strip Socket.IO/Engine.IO prefixes from a text payload.
- * Removes leading numeric codes (e.g. "42") and namespace prefixes (e.g. "/ws/character,").
- *
- * @param {string} text
- * @returns {string}
- */
-function stripSocketIoPrefix (text) {
-  if (!text) return text
-  let body = text
-
-  // Drop leading engine.io numeric code(s), e.g. "42" or "0".
-  let i = 0
-  while (i < body.length && body.charCodeAt(i) >= 48 && body.charCodeAt(i) <= 57) {
-    i += 1
-  }
-  if (i > 0) {
-    body = body.slice(i)
-  }
-
-  // Drop Socket.IO namespace/path prefix like "/ws/character,".
-  if (body.startsWith('/')) {
-    const commaIndex = body.indexOf(',')
-    if (commaIndex > 0 && commaIndex + 1 < body.length) {
-      body = body.slice(commaIndex + 1)
-    }
-  }
-
-  return body
-}
-
-function tryParseWebSocketJson (text) {
-  if (!text || typeof text !== 'string') return null
-
-  // Skip placeholder bodies that are clearly not JSON payloads.
-  if (
-    text.startsWith('[Binary data:') ||
-    text.startsWith('[WebSocket text frame too large') ||
-    text.startsWith('[WS ') ||
-    text.startsWith('[WebSocket text frame decode error:')
-  ) {
-    return null
-  }
-
-  const body = stripSocketIoPrefix(text)
-
-  try {
-    const parsed = JSON.parse(body)
-    return normalizeNestedJsonStrings(parsed)
-  } catch (error) {
-    logDebug('tryParseWebSocketJson', 'Failed to parse WebSocket JSON payload for logging', error)
-    return null
-  }
-}
+const {
+  bufferToTextPreview,
+  tryParseJsonString,
+  normalizeNestedJsonStrings,
+  stripSocketIoPrefix,
+  tryParseWebSocketJson,
+  normalizeWebSocketPayload,
+  buildSearchSnapshot,
+  buildJsonSearchSnapshot
+} = require('./src/logs/preview')
 
 /**
  * Build and log a WebSocket message entry with consistent structure for both
@@ -3286,24 +3098,6 @@ function logWebSocketMessage ({
   }
 
   addLog(messageLog)
-}
-
-// Content-types we bother to decompress for preview/logging
-/**
- * Extract the Connect/gRPC frame-level encoding header from an HTTP headers
- * object. Checks connect-content-encoding, connect-encoding, and grpc-encoding
- * in order.
- *
- * @param {object} headers
- * @returns {string}
- */
-function getConnectEncodingHeader (headers) {
-  return (
-    getHeaderCaseInsensitive(headers, 'connect-content-encoding') ||
-    getHeaderCaseInsensitive(headers, 'connect-encoding') ||
-    getHeaderCaseInsensitive(headers, 'grpc-encoding') ||
-    ''
-  )
 }
 
 /**
@@ -3637,122 +3431,6 @@ function applyJsonResponseRewritesForLog ({
   return { buffer: nextBuffer, jsonRewrite }
 }
 
-function applyLogPreviewLimit (text) {
-  if (!text) return ''
-  if (!Number.isFinite(LOG_PREVIEW_MAX_BYTES) || LOG_PREVIEW_MAX_BYTES <= 0) {
-    return text
-  }
-
-  if (text.length <= LOG_PREVIEW_MAX_BYTES) {
-    return text
-  }
-
-  const truncated = text.slice(0, LOG_PREVIEW_MAX_BYTES)
-  const omitted = text.length - LOG_PREVIEW_MAX_BYTES
-
-  return `${truncated}\n[preview truncated: ${omitted} chars not shown]`
-}
-
-/**
- * Maximum size for precomputed search snapshots such as
- * requestSearchContent/responseSearchContent and header snapshots. This
- * guards against very large strings for huge bodies or many frames.
- *
- * The limit is intentionally generous to preserve useful searchability while
- * avoiding unbounded CPU and memory usage when building and storing
- * snapshots.
- */
-const SEARCH_SNAPSHOT_MAX_BYTES = 256 * 1024
-
-/**
- * Build a lower-cased search snapshot from a list of string parts, applying
- * a maximum size guard with early termination. Stops processing parts as soon
- * as the limit is reached to avoid unnecessary string operations.
- *
- * @param {string[]} parts
- * @returns {string} lower-cased snapshot or an empty string
- */
-function buildSearchSnapshot (parts) {
-  if (!Array.isArray(parts) || parts.length === 0) return ''
-
-  const maxBytes = Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
-    ? SEARCH_SNAPSHOT_MAX_BYTES
-    : 0
-
-  const result = []
-  let totalLength = 0
-  let truncated = false
-
-  for (const part of parts) {
-    if (typeof part !== 'string' || !part) continue
-    if (maxBytes && totalLength >= maxBytes) {
-      truncated = true
-      break
-    }
-
-    const lower = part.toLowerCase()
-    if (!maxBytes) {
-      result.push(lower)
-      continue
-    }
-
-    const remaining = maxBytes - totalLength
-    if (lower.length <= remaining) {
-      result.push(lower)
-      totalLength += lower.length
-    } else {
-      result.push(lower.slice(0, remaining))
-      totalLength += remaining
-      truncated = true
-      break
-    }
-  }
-
-  if (!result.length) return ''
-
-  const snapshot = result.join('\n')
-  if (truncated) {
-    return `${snapshot}\n[search snapshot truncated]`
-  }
-  return snapshot
-}
-
-/**
- * Convenience helper to build a size-limited, lower-cased search snapshot
- * from a JSON-serializable object (typically headers).
- * Optimized for flat objects to avoid full JSON.stringify overhead.
- *
- * @param {any} value
- * @returns {string} search snapshot or an empty string
- */
-function buildJsonSearchSnapshot (value) {
-  if (!value) return ''
-
-  // Fast path for flat objects (common case: headers)
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    const parts = []
-    for (const key in value) {
-      if (!Object.hasOwn(value, key)) continue
-      const v = value[key]
-      if (v === undefined) continue
-      parts.push(`${key}:${v}`)
-    }
-    if (parts.length) {
-      return buildSearchSnapshot(parts)
-    }
-  }
-
-  // Fallback for complex values
-  let jsonString
-  try {
-    jsonString = JSON.stringify(value)
-  } catch (error) {
-    return ''
-  }
-
-  return buildSearchSnapshot([jsonString])
-}
-
 /**
  * Ensure request/response body and header search snapshots are populated on a
  * log entry. This centralises snapshot construction so that addLog and
@@ -3840,102 +3518,6 @@ function ensureLogSearchSnapshots (log) {
     // Defensive: never block logging if snapshot computation fails
     logDebug('ensureLogSearchSnapshots', 'Failed to build search snapshots', error)
   }
-}
-
-// Precompiled regex for bufferToTextPreview to avoid repeated compilation
-// Control characters (minus tab/newline/carriage return) and U+FFFD, which
-// is what invalid UTF-8 decodes to; every other code point, accented letters
-// included, counts as printable.
-const NON_PRINTABLE_REGEX = /(?![\x09\x0A\x0D])[\p{C}�]/gu
-const ASCII_SEGMENT_REGEX = /[\x20-\x7E]{4,}/g
-
-/**
- * Build a size-limited UTF-8 preview string from a Buffer for logging/search.
- *
- * The preview length is bounded using LOG_PREVIEW_MAX_BYTES so that very large
- * bodies do not require decoding the entire payload.
- *
- * @param {Buffer} buffer
- * @returns {string}
- */
-function bufferToTextPreview (buffer) {
-  if (!buffer || buffer.length === 0) return ''
-
-  let source = buffer
-  if (Number.isFinite(LOG_PREVIEW_MAX_BYTES) && LOG_PREVIEW_MAX_BYTES > 0) {
-    const maxDecodeBytes = LOG_PREVIEW_MAX_BYTES * 4
-    if (buffer.length > maxDecodeBytes) {
-      source = buffer.slice(0, maxDecodeBytes)
-    }
-  }
-
-  const text = source.toString('utf8')
-  if (!text.trim()) return ''
-
-  NON_PRINTABLE_REGEX.lastIndex = 0
-  const printable = text.replace(NON_PRINTABLE_REGEX, '')
-  const ratio = printable.length / text.length
-
-  let result = ''
-
-  if (ratio >= 0.85) {
-    result = text
-  } else if (ratio >= 0.35 && printable.trim()) {
-    result = printable.trim()
-  } else {
-    ASCII_SEGMENT_REGEX.lastIndex = 0
-    const asciiSegments = printable.match(ASCII_SEGMENT_REGEX)
-    if (asciiSegments && asciiSegments.length) {
-      result = asciiSegments.join('\n')
-    }
-  }
-
-  if (!result) return ''
-
-  return applyLogPreviewLimit(result)
-}
-
-/**
- * Try to parse a string (or a substring) as JSON for logging purposes.
- * This scans for top-level object/array candidates and logs at most one
- * parse failure per invocation in debug mode.
- *
- * @param {string} text
- * @returns {any|null}
- */
-function tryParseJsonString (text) {
-  if (!text) return null
-  const trimmed = text.trim()
-  if (!trimmed) return null
-
-  const candidates = [trimmed]
-
-  const firstBrace = trimmed.indexOf('{')
-  const lastBrace = trimmed.lastIndexOf('}')
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    candidates.push(trimmed.slice(firstBrace, lastBrace + 1))
-  }
-
-  const firstBracket = trimmed.indexOf('[')
-  const lastBracket = trimmed.lastIndexOf(']')
-  if (firstBracket !== -1 && lastBracket > firstBracket) {
-    candidates.push(trimmed.slice(firstBracket, lastBracket + 1))
-  }
-
-  let loggedFailure = false
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate)
-    } catch (error) {
-      if (!loggedFailure) {
-        logDebug('tryParseJsonString', 'Failed to parse JSON candidate', error)
-        loggedFailure = true
-      }
-    }
-  }
-
-  return null
 }
 
 /**
@@ -4062,258 +3644,6 @@ function buildHttpResponseLoggingView ({
   }
 
   return { body: responseBody }
-}
-
-/**
- * Decode a potential Connect/gRPC over HTTP payload into a structured view
- * used for interactive logging.
- *
- * The decoder:
- * - validates the content-type / envelope shape;
- * - transparently decompresses the HTTP body when needed;
- * - splits Connect envelopes into frames while enforcing CONNECT_MAX_FRAMES
- *   and CONNECT_MAX_FRAME_BYTES;
- * - extracts a small text preview and a best-effort JSON representation for
- *   each frame via extractJsonFromProtobufBuffer.
- *
- * All size limits are enforced before attempting expensive protobuf/JSON
- * work to keep CPU usage under control on large payloads.
- *
- * @param {Buffer} buffer - Raw HTTP body buffer.
- * @param {object} headers - HTTP headers associated with the body.
- * @returns {null|{
- *   contentType: string,
- *   envelope: boolean,
- *   frameCount: number,
- *   frames: Array<{
- *     index: number,
- *     length: number,
- *     compressed: boolean,
- *     endStream: boolean,
- *     frameDecompressed: boolean,
- *     preview: string,
- *     json: any,
- *     note: string|null
- *   }>,
- *   httpDecompressed: boolean,
- *   httpEncoding: string,
- *   rawBase64: string,
- *   httpDecodedBuffer?: Buffer
- * }>} Decoded Connect payload suitable for logging, or null if the payload
- * is not recognised as Connect/gRPC.
- */
-function decodeConnectPayload (buffer, headers = {}) {
-  if (isEmptyBuffer(buffer)) return null
-
-  const contentType = getContentType(headers)
-
-  if (!isProtoContentType(contentType) && !looksLikeConnectEnvelope(buffer)) {
-    return null
-  }
-
-  const encodingHeader = getContentEncoding(headers).toLowerCase()
-  let decodedBuffer = buffer
-  let httpDecompressed = false
-  const httpEncoding = encodingHeader || ''
-
-  if (encodingHeader && encodingHeader !== 'identity') {
-    const maybeDecoded = decompressData(buffer, encodingHeader, contentType)
-    if (maybeDecoded && Buffer.isBuffer(maybeDecoded) && maybeDecoded !== buffer) {
-      decodedBuffer = maybeDecoded
-      httpDecompressed = true
-    }
-  }
-
-  const rawBase64 = decodedBuffer.toString('base64')
-
-  const connectEncodingHeader = getConnectEncodingHeader(headers)
-  const connectCodec = getCompressionCodec(connectEncodingHeader)
-
-  const maxFrames = CONNECT_MAX_FRAMES_LIMIT
-  const maxFrameBytes = CONNECT_MAX_FRAME_BYTES_LIMIT
-
-  const frames = []
-  let envelope = false
-
-  if (looksLikeConnectEnvelope(decodedBuffer)) {
-    envelope = true
-    let offset = 0
-    let frameIndex = 0
-    let envelopeValid = true
-
-    while (offset + 5 <= decodedBuffer.length) {
-      const flags = decodedBuffer.readUInt8(offset)
-      const length = decodedBuffer.readUInt32BE(offset + 1)
-      offset += 5
-
-      if (length < 0 || offset + length > decodedBuffer.length) {
-        envelopeValid = false
-        break
-      }
-
-      const frameData = decodedBuffer.slice(offset, offset + length)
-      offset += length
-
-      const isCompressed = (flags & 0x01) === 0x01
-      const endStream = (flags & 0x02) === 0x02
-
-      const withinFrameLimit = frameIndex < maxFrames
-      const withinSizeLimit = length <= maxFrameBytes
-
-      let framePayload = frameData
-      let frameDecompressed = false
-      let preview = ''
-      let json = null
-      let note = null
-      let rawProtobufJson = null
-
-      if (withinFrameLimit && withinSizeLimit) {
-        if (isCompressed && connectCodec) {
-          try {
-            framePayload = connectCodec.decompress(frameData)
-            frameDecompressed = true
-          } catch (error) {
-            framePayload = frameData
-            frameDecompressed = false
-            note = 'compressed frame: decompression failed, payload left encoded'
-          }
-        } else if (isCompressed) {
-          note = 'compressed frame: no connect-content-encoding/grpc-encoding header, payload left encoded'
-        }
-
-        // A frame that is still compressed has no readable preview or JSON.
-        if (!isCompressed || frameDecompressed) {
-          preview = bufferToTextPreview(framePayload)
-          json = tryParseJsonString(preview)
-          if (json === null) {
-            rawProtobufJson = extractJsonFromProtobufBuffer(framePayload)
-            if (rawProtobufJson && typeof rawProtobufJson === 'object') {
-              json = stripTrivialBinaryBlobs(rawProtobufJson)
-            } else {
-              json = rawProtobufJson
-            }
-          }
-        }
-      } else {
-        if (!withinFrameLimit) {
-          note = 'skipped by CONNECT_MAX_FRAMES'
-        } else if (!withinSizeLimit) {
-          note = 'skipped by CONNECT_MAX_FRAME_BYTES'
-        }
-      }
-
-      frames.push({
-        index: frameIndex,
-        length,
-        compressed: isCompressed,
-        endStream,
-        frameDecompressed,
-        preview,
-        json,
-        note
-      })
-
-      const frameEntry = frames[frames.length - 1]
-      if (frameEntry && rawProtobufJson && typeof rawProtobufJson === 'object') {
-        Object.defineProperty(frameEntry, '_rawProtobufJson', {
-          value: rawProtobufJson,
-          writable: false,
-          enumerable: false,
-          configurable: false
-        })
-      }
-
-      // Cache the decoded frame payload on a non-enumerable property so that
-      // applyConnectFrameRewrites can reuse the Buffer directly instead of
-      // going through a base64 encode/decode round‑trip.
-      if (frameEntry && frameDecompressed && Buffer.isBuffer(framePayload)) {
-        try {
-          Object.defineProperty(frameEntry, '_decodedBuffer', {
-            value: framePayload,
-            writable: false,
-            enumerable: false,
-            configurable: false
-          })
-        } catch {}
-      }
-
-      frameIndex += 1
-    }
-
-    if (!envelopeValid || offset !== decodedBuffer.length || frames.length === 0) {
-      return null
-    }
-  } else {
-    // Unary Connect payload – treat the whole decoded buffer as a single frame
-    const payload = decodedBuffer
-    const withinSizeLimit = payload.length <= maxFrameBytes
-
-    let preview = ''
-    let json = null
-    let note = null
-    let rawProtobufJson = null
-
-    if (withinSizeLimit) {
-      preview = bufferToTextPreview(payload)
-      json = tryParseJsonString(preview)
-      if (json === null) {
-        rawProtobufJson = extractJsonFromProtobufBuffer(payload)
-        if (rawProtobufJson && typeof rawProtobufJson === 'object') {
-          json = stripTrivialBinaryBlobs(rawProtobufJson)
-        } else {
-          json = rawProtobufJson
-        }
-      }
-    } else {
-      note = 'skipped by CONNECT_MAX_FRAME_BYTES'
-    }
-
-    frames.push({
-      index: 0,
-      length: payload.length,
-      compressed: false,
-      endStream: true,
-      frameDecompressed: false,
-      preview,
-      json,
-      note
-    })
-
-    const frameEntry = frames[frames.length - 1]
-    if (frameEntry && rawProtobufJson && typeof rawProtobufJson === 'object') {
-      Object.defineProperty(frameEntry, '_rawProtobufJson', {
-        value: rawProtobufJson,
-        writable: false,
-        enumerable: false,
-        configurable: false
-      })
-    }
-  }
-
-  if (!frames.length) return null
-
-  const result = {
-    contentType,
-    envelope,
-    frameCount: frames.length,
-    frames,
-    httpDecompressed,
-    httpEncoding,
-    rawBase64
-  }
-
-  // Expose the HTTP-decompressed buffer on a non-enumerable property so that
-  // rewrite paths can reuse it without going through an expensive
-  // base64 encode/decode round-trip. This keeps existing JSON behaviour
-  // unchanged while avoiding redundant work on large Connect payloads.
-  Object.defineProperty(result, 'httpDecodedBuffer', {
-    value: decodedBuffer,
-    writable: false,
-    enumerable: false,
-    configurable: false
-  })
-
-  return result
 }
 
 /**
@@ -5348,19 +4678,6 @@ function createHttpFlowLogEntry ({ requestStart, method, url, fullUrl, headers, 
 }
 
 /**
- * Count frames in a Connect/gRPC payload structure.
- *
- * @param {object|null} connect
- * @returns {number}
- */
-function countConnectFrames (connect) {
-  if (!connect || typeof connect !== 'object') return 0
-  if (typeof connect.frameCount === 'number') return connect.frameCount
-  if (Array.isArray(connect.frames)) return connect.frames.length
-  return 0
-}
-
-/**
  * Compute lightweight per-request metrics for the audit panel.
  * Mutates the log entry in place.
  *
@@ -5803,95 +5120,6 @@ function getLogUrlString (log) {
   return ((log.fullUrl || log.url) || '').toString()
 }
 
-/**
- * Build a textual search snapshot for Connect/gRPC frame data stored in a
- * log entry. This is used only for search indexing; the full structured
- * frame data remains in connectRequest/connectResponse.
- *
- * To keep this affordable for long-lived streams with many frames, we:
- * - Apply a max-size guard based on SEARCH_SNAPSHOT_MAX_BYTES.
- * - Prefer human-readable fields (preview/note/error/json) and omit raw
- *   base64 data from the snapshot.
- *
- * @param {object|null} connectData
- * @returns {string}
- */
-function buildConnectSearchContentForLog (connectData) {
-  if (!connectData || typeof connectData !== 'object') return ''
-
-  const maxBytes = Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
-    ? SEARCH_SNAPSHOT_MAX_BYTES
-    : 0
-
-  const parts = []
-  let totalLength = 0
-  let truncated = false
-
-  const appendSegment = (value) => {
-    if (truncated || !value) return
-    const text = String(value)
-    if (!text) return
-
-    if (!maxBytes) {
-      parts.push(text)
-      return
-    }
-
-    const remaining = maxBytes - totalLength
-    if (remaining <= 0) {
-      truncated = true
-      return
-    }
-
-    if (text.length <= remaining) {
-      parts.push(text)
-      totalLength += text.length
-      return
-    }
-
-    parts.push(text.slice(0, remaining))
-    totalLength += remaining
-    truncated = true
-  }
-
-  const collectFromFrames = (frames) => {
-    if (!Array.isArray(frames) || !frames.length || truncated) return
-
-    for (const frame of frames) {
-      if (truncated) break
-      if (!frame || typeof frame !== 'object') continue
-
-      // Prefer human-readable fields for search.
-      if (frame.preview) appendSegment(frame.preview)
-      if (frame.note) appendSegment(frame.note)
-      if (frame.error) appendSegment(frame.error)
-
-      if (frame.json) {
-        try {
-          appendSegment(JSON.stringify(frame.json))
-        } catch {}
-      }
-
-      // Frame binary data is not included in the search index to keep
-      // the index lightweight. Only preview and JSON content are indexed.
-    }
-  }
-
-  // Prefer searching over the pre-rewrite (original) frames, but also include
-  // the final transformed frames so searches can hit both views.
-  if (Array.isArray(connectData.originalFrames) && connectData.originalFrames.length) {
-    collectFromFrames(connectData.originalFrames)
-  }
-
-  if (!truncated && Array.isArray(connectData.frames) && connectData.frames.length) {
-    collectFromFrames(connectData.frames)
-  }
-
-  if (!parts.length) return ''
-
-  return parts.join('\n')
-}
-
 // File types derived from the URL extension when the response carries no
 // content-type (or a generic octet-stream).
 const EXTENSION_FILE_TYPES = {
@@ -5971,41 +5199,6 @@ function getFileTypeFromLogEntry (log) {
   return 'other'
 }
 
-function buildConnectViewForClient (connectData) {
-  if (!connectData || typeof connectData !== 'object') return null
-
-  const mapFrames = (frames) => {
-    if (!Array.isArray(frames)) return []
-    return frames
-      .map((frame, idx) => {
-        if (!frame || typeof frame !== 'object') return null
-        const frameIndex = typeof frame.index === 'number' ? frame.index : idx
-
-        return {
-          index: frameIndex,
-          length: frame.length,
-          compressed: !!frame.compressed,
-          endStream: !!frame.endStream,
-          frameDecompressed: !!frame.frameDecompressed,
-          preview: safeString(frame.preview),
-          json: frame.json ?? null,
-          note: frame.note ?? null,
-          error: frame.error ?? null
-        }
-      })
-      .filter(Boolean)
-  }
-
-  return {
-    contentType: connectData.contentType || null,
-    envelope: !!connectData.envelope,
-    frameCount: typeof connectData.frameCount === 'number'
-      ? connectData.frameCount
-      : (Array.isArray(connectData.frames) ? connectData.frames.length : 0),
-    frames: mapFrames(connectData.frames),
-    originalFrames: mapFrames(connectData.originalFrames)
-  }
-}
 /**
  * Build the base client-facing log view shared by full and summary variants.
  *
