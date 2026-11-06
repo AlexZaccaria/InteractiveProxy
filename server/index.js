@@ -25,7 +25,6 @@ const {
   STRICT_TLS_ENABLED,
   STRICT_TLS_CA_FILE,
   BODY_LIMIT,
-  WS_MAX_TEXT_BYTES,
   UPSTREAM_HEADERS_TIMEOUT_MS,
   UPSTREAM_BODY_TIMEOUT_MS,
   STREAM_UNINSPECTED_RESPONSES,
@@ -39,7 +38,7 @@ const {
   decodeWebSocketFrame
 } = require('./src/proxy/websocket-codec')
 
-const { logDebug, logWarn } = require('./src/util/logger')
+const { logWarn } = require('./src/util/logger')
 
 /**
  * Escape a string for safe inclusion in a PowerShell double-quoted string.
@@ -142,36 +141,6 @@ const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
 
 const { getCA, generateCertForHost } = require('./src/tls/ca')
 
-/**
- * Recompute the hiddenByBlockedRules flag on all existing log entries after
- * the blocked rules change. This is called from
- * recomputeBlockedUrlSubstringsForFilter so that /api/logs can simply check a
- * boolean per log instead of scanning the blocked patterns list for every
- * entry on each request.
- */
-function recomputeBlockedVisibilityForLogs () {
-  if (!Array.isArray(requestLogs) || requestLogs.length === 0) return
-
-  const patterns = Array.isArray(blockedUrlSubstringsForFilter) ? blockedUrlSubstringsForFilter : []
-
-  if (!patterns.length) {
-    for (const log of requestLogs) {
-      if (log && typeof log === 'object' && 'hiddenByBlockedRules' in log) {
-        delete log.hiddenByBlockedRules
-      }
-    }
-    return
-  }
-
-  for (const log of requestLogs) {
-    if (!log || typeof log !== 'object') continue
-    const urlString = getLogUrlString(log)
-    log.hiddenByBlockedRules = urlString
-      ? patterns.some(pattern => urlString.includes(pattern))
-      : false
-  }
-}
-
 // Blocked/BYPASS URL lists
 let blockedUrls = [] // Array of URL strings (enabled only)
 let bypassUrls = [] // Array of URL strings (enabled only, current mode)
@@ -182,9 +151,6 @@ let bypassMatchers = []
 // blocked traffic from the log view without rebuilding the pattern list on
 // every /api/logs request.
 let blockedUrlSubstringsForFilter = []
-const bypassSuggestionStats = new Map()
-let logSuggestionMetadata = new WeakMap()
-
 const {
   normalizeEditRule,
   normalizeEditRulePreset,
@@ -245,86 +211,6 @@ function getAssumedProtocol (req) {
     req.protocol ||
     (req.socket?.encrypted ? 'https' : 'http')
   )
-}
-
-function sanitizePathForSuggestions (path) {
-  if (!path || typeof path !== 'string') return '/'
-  const base = path.split('?')[0] || '/'
-  const segments = base.split('/').filter(Boolean).slice(0, 2)
-  return segments.length ? `/${segments.join('/')}` : '/'
-}
-
-function updateSuggestionStatsOnAdd (logEntry) {
-  const hostInfo = extractHostInfoFromLog(logEntry)
-  if (!hostInfo?.host) return
-
-  const hostKey = hostInfo.host
-  let record = bypassSuggestionStats.get(hostKey)
-  if (!record) {
-    record = {
-      host: hostKey,
-      count: 0,
-      lastSeen: 0,
-      pathCounts: new Map()
-    }
-    bypassSuggestionStats.set(hostKey, record)
-  }
-
-  record.count += 1
-
-  if (logEntry.timestamp) {
-    const ts = Date.parse(logEntry.timestamp)
-    if (!Number.isNaN(ts)) {
-      record.lastSeen = Math.max(record.lastSeen, ts)
-    }
-  }
-
-  const pathKey = sanitizePathForSuggestions(hostInfo.path)
-  const prevPathCount = record.pathCounts.get(pathKey) || 0
-  record.pathCounts.set(pathKey, prevPathCount + 1)
-
-  logSuggestionMetadata.set(logEntry, {
-    host: hostKey,
-    pathKey,
-    timestamp: logEntry.timestamp ? Date.parse(logEntry.timestamp) : null
-  })
-}
-
-function updateSuggestionStatsOnRemove (logEntry) {
-  const meta = logSuggestionMetadata.get(logEntry)
-  if (!meta?.host) return
-
-  const record = bypassSuggestionStats.get(meta.host)
-  if (!record) {
-    logSuggestionMetadata.delete(logEntry)
-    return
-  }
-
-  record.count = Math.max(0, record.count - 1)
-
-  if (meta.pathKey && record.pathCounts.has(meta.pathKey)) {
-    const next = record.pathCounts.get(meta.pathKey) - 1
-    if (next > 0) {
-      record.pathCounts.set(meta.pathKey, next)
-    } else {
-      record.pathCounts.delete(meta.pathKey)
-    }
-  }
-
-  if (record.count === 0) {
-    bypassSuggestionStats.delete(meta.host)
-  } else if (meta.timestamp && record.lastSeen === meta.timestamp) {
-    let newLastSeen = 0
-    for (const log of requestLogs) {
-      const info = logSuggestionMetadata.get(log)
-      if (info?.host === meta.host && info.timestamp && info.timestamp > newLastSeen) {
-        newLastSeen = info.timestamp
-      }
-    }
-    record.lastSeen = newLastSeen
-  }
-
-  logSuggestionMetadata.delete(logEntry)
 }
 
 function buildBypassMatchers () {
@@ -533,12 +419,8 @@ const {
   getConnectEncodingHeader,
   looksLikeConnectEnvelope,
   rebuildConnectEnvelope,
-  decodeConnectPayload,
-  countConnectFrames,
-  buildConnectSearchContentForLog,
-  buildConnectViewForClient
+  decodeConnectPayload
 } = require('./src/codecs/connect')
-
 
 const {
   readVarint,
@@ -605,200 +487,6 @@ const {
   buildJsonSearchSnapshot
 } = require('./src/logs/preview')
 
-/**
- * Build and log a WebSocket message entry with consistent structure for both
- * directions. This centralises logging so that server->client and
- * client->server flows behave identically.
- *
- * In addition to the raw body string, this helper enriches the log entry
- * with:
- *   - rewrites: fully described rule metadata via attachRewriteMetadata
- *   - wsBodyJsonAfter: parsed JSON for the final (possibly rewritten) body
- *   - wsBodyJsonBefore: parsed JSON for the original body, when available
- *
- * @param {Object} params
- * @param {'server->client'|'client->server'} params.direction
- * @param {string} params.wsUrl
- * @param {number} params.connectionId
- * @param {Buffer} params.payloadBuffer
- * @param {boolean} params.isBinary
- * @param {string|null} [params.bodyText]
- * @param {string[]|null} [params.rewrites]
- * @param {boolean} [params.loggingDisabled]
- * @param {string} [params.originalBodyText]
- * @param {any} [params.bodyJson] Parsed JSON view of the final body when available.
- * @param {any} [params.originalBodyJson] Parsed JSON view of the original body when available.
- */
-function logWebSocketMessage ({
-  direction,
-  wsUrl,
-  connectionId,
-  payloadBuffer,
-  isBinary,
-  bodyText,
-  rewrites,
-  loggingDisabled = false,
-  originalBodyText,
-  bodyJson,
-  originalBodyJson
-}) {
-  if (!interactiveModeEnabled) return
-
-  const appliedRuleIds = Array.isArray(rewrites) && rewrites.length ? rewrites : null
-
-  let body = bodyText
-
-  if (!body) {
-    if (loggingDisabled) {
-      body = `[WS ${isBinary ? 'binary' : 'text'} message: ${payloadBuffer.length} bytes, body logging disabled]`
-    } else if (isBinary) {
-      body = `[Binary data: ${payloadBuffer.length} bytes]`
-    } else if (WS_MAX_TEXT_BYTES > 0 && payloadBuffer.length > WS_MAX_TEXT_BYTES) {
-      body = `[WebSocket text frame too large to log: ${payloadBuffer.length} bytes, limit=${WS_MAX_TEXT_BYTES}]`
-    } else {
-      try {
-        body = payloadBuffer.toString('utf8')
-      } catch {
-        body = `[WebSocket text frame decode error: ${payloadBuffer.length} bytes]`
-      }
-    }
-  }
-
-  const messageLog = {
-    id: Date.now() + Math.random(),
-    timestamp: new Date().toISOString(),
-    method: 'WS',
-    url: wsUrl,
-    fullUrl: wsUrl,
-    source: 'websocket',
-    direction,
-    connectionId,
-    headers: {},
-    body,
-    responseBody: null,
-    responseHeaders: null
-  }
-
-  if (appliedRuleIds) {
-    // WebSocket messages conceptually behave like "request"-side rewrites
-    // from the perspective of the originating endpoint.
-    attachRewriteMetadata(messageLog, appliedRuleIds, 'request')
-  }
-
-  if (typeof originalBodyText === 'string' && originalBodyText.length > 0) {
-    messageLog.originalBody = originalBodyText
-  }
-
-  // For text frames where we logged the actual payload string, attempt to
-  // derive structured JSON snapshots for before/after previews so the
-  // frontend can remain a pure rendering layer. Prefer any pre-parsed JSON
-  // provided by applyWebSocketRewritesAndDescribe to avoid reparsing.
-  if (!isBinary && !loggingDisabled && typeof body === 'string') {
-    const afterJson = bodyJson != null ? bodyJson : tryParseWebSocketJson(body)
-    if (afterJson !== null) {
-      messageLog.wsBodyJsonAfter = afterJson
-    }
-
-    if (typeof originalBodyText === 'string' && originalBodyText.length > 0) {
-      const beforeJson = originalBodyJson != null ? originalBodyJson : tryParseWebSocketJson(originalBodyText)
-      if (beforeJson !== null) {
-        messageLog.wsBodyJsonBefore = beforeJson
-      }
-    }
-  }
-
-  addLog(messageLog)
-}
-
-/**
- * Ensure request/response body and header search snapshots are populated on a
- * log entry. This centralises snapshot construction so that addLog and
- * filterLogsCore share the same logic.
- *
- * @param {object} log
- */
-function ensureLogSearchSnapshots (log) {
-  if (!log || typeof log !== 'object') return
-
-  // Early return if all snapshots are already populated
-  const hasAll = typeof log.requestSearchContent === 'string' &&
-                 typeof log.headersSearch === 'string' &&
-                 typeof log.responseSearchContent === 'string' &&
-                 typeof log.responseHeadersSearch === 'string'
-  if (hasAll) return
-
-  try {
-    // Request side snapshots
-    if (typeof log.requestSearchContent !== 'string') {
-      const requestBodyString = (() => {
-        if (!log.body) return ''
-        if (typeof log.body === 'string') return log.body
-        try {
-          return JSON.stringify(log.body, null, 2)
-        } catch {
-          return ''
-        }
-      })()
-
-      const requestConnectContent = buildConnectSearchContentForLog(log.connectRequest)
-      const requestRawPreview = safeString(log.rawRequestBodyPreview)
-
-      const requestSearchContent = buildSearchSnapshot([
-        requestBodyString,
-        requestConnectContent,
-        requestRawPreview
-      ])
-
-      if (requestSearchContent) {
-        log.requestSearchContent = requestSearchContent
-      }
-    }
-
-    if (typeof log.headersSearch !== 'string' && log.headers) {
-      const headersSnapshot = buildJsonSearchSnapshot(log.headers)
-      if (headersSnapshot) {
-        log.headersSearch = headersSnapshot
-      }
-    }
-
-    // Response side snapshots
-    if (typeof log.responseSearchContent !== 'string') {
-      const responseBodyString = (() => {
-        if (!log.responseBody) return ''
-        if (typeof log.responseBody === 'string') return log.responseBody
-        try {
-          return JSON.stringify(log.responseBody, null, 2)
-        } catch {
-          return ''
-        }
-      })()
-
-      const responseConnectContent = buildConnectSearchContentForLog(log.connectResponse)
-      const responseRawPreview = safeString(log.rawResponseBodyPreview)
-
-      const responseSearchContent = buildSearchSnapshot([
-        responseBodyString,
-        responseConnectContent,
-        responseRawPreview
-      ])
-
-      if (responseSearchContent) {
-        log.responseSearchContent = responseSearchContent
-      }
-    }
-
-    if (typeof log.responseHeadersSearch !== 'string' && log.responseHeaders) {
-      const responseHeadersSnapshot = buildJsonSearchSnapshot(log.responseHeaders)
-      if (responseHeadersSnapshot) {
-        log.responseHeadersSearch = responseHeadersSnapshot
-      }
-    }
-  } catch (error) {
-    // Defensive: never block logging if snapshot computation fails
-    logDebug('ensureLogSearchSnapshots', 'Failed to build search snapshots', error)
-  }
-}
-
 function captureRawBody (req, res, buf) {
   if (buf && buf.length) {
     req.rawBody = Buffer.from(buf)
@@ -816,262 +504,53 @@ try {
   console.error('[proxy] Error ensuring storage/log directories:', error)
 }
 
-// In-memory storage for request logs
-let requestLogs = []
+const { createLogStore } = require('./src/logs/store')
+const {
+  getFileTypeFromLogEntry,
+  ensureLogSearchSnapshots,
+  filterLogsCore: filterLogsCoreForStore
+} = require('./src/logs/search')
+const { buildClientLogView, filterLogsForApiRequest: filterLogsForApiRequestForStore } = require('./src/logs/views')
+const { createStats, computeLogEntryMetrics } = require('./src/logs/stats')
+const { createSuggestionTracker } = require('./src/logs/suggestions')
+const { createLogEntryFactory } = require('./src/logs/entries')
+
+// In-memory log window (ring buffer of MAX_LOG_ENTRIES entries) and the
+// trackers that follow it: dashboard/route statistics and filter-rule
+// suggestions. The getters read the routing state declared above lazily.
+const stats = createStats()
+const suggestions = createSuggestionTracker({ getBypassMatchers: () => bypassMatchers })
+const logStore = createLogStore({
+  maxEntries: MAX_LOG_ENTRIES,
+  ruleStore,
+  isInteractive,
+  getBlockedPatterns: () => blockedUrlSubstringsForFilter,
+  onAdd: entry => {
+    suggestions.onAdd(entry)
+    stats.applyDashboardStatsDelta(entry, 1)
+  },
+  onRemove: entry => {
+    suggestions.onRemove(entry, logStore)
+    stats.applyDashboardStatsDelta(entry, -1)
+  }
+})
+const addLog = entry => logStore.add(entry)
+const filterLogsCore = query => filterLogsCoreForStore(query, logStore)
+const filterLogsForApiRequest = req => filterLogsForApiRequestForStore(req, logStore)
+const computeBypassSuggestions = options => suggestions.compute(options)
+const recomputeBlockedVisibilityForLogs = () => logStore.recomputeBlockedVisibility()
+const {
+  createLogEntry,
+  createHttpFlowLogEntry,
+  createWebSocketConnectionLog,
+  logWebSocketDirectTunnel,
+  logWebSocketMessage,
+  recordUpstreamErrorOnLog
+} = createLogEntryFactory({ isInteractive, addLog, attachRewriteMetadata })
+
 let localResources = new Map()
 let bypassedRequestCount = 0
 let bypassMode = 'ignore' // bypass mode: 'ignore' (default) or 'focus'
-
-/**
- * Proxied sources considered "proxied" in dashboard statistics.
- * Kept in sync with the /api/dashboard logic.
- * @type {Set<string>}
- */
-const DASHBOARD_PROXIED_SOURCES = new Set(['proxied', 'tunnel', 'mitm', 'websocket', 'direct'])
-
-/**
- * Log sources that are always included in UI filters regardless of the
- * selectedSources query. This mirrors the legacy behaviour inside
- * filterLogsCore but is hoisted to avoid re-allocating the Set on each call.
- *
- * We intentionally *exclude* 'direct' and 'tunnel' here so that bypassed
- * traffic (DIRECT/TUNNEL) does not appear in the default Requests view or
- * audit log sample unless the client explicitly asks for those sources.
- * Their log entries still exist in memory and contribute to dashboard and
- * audit route statistics via applyDashboardStatsDelta/routeStats.
- * @type {Set<string>}
- */
-const ALWAYS_INCLUDED_SOURCES = new Set(['local', 'blocked', 'error'])
-
-/**
- * Aggregate statistics for the dashboard derived from request logs.
- * The values mirror what /api/dashboard previously computed by scanning
- * the entire requestLogs array.
- *
- * @typedef {Object} DashboardStats
- * @property {number} total
- * @property {number} served
- * @property {number} proxied
- * @property {number} blocked
- * @property {number} processed
- * @property {number} errors
- * @property {number} editedRequests
- */
-
-/**
- * Create an empty dashboard statistics object.
- *
- * @returns {DashboardStats} Fresh stats with all counters set to zero.
- */
-function createEmptyDashboardStats () {
-  return {
-    total: 0,
-    served: 0,
-    proxied: 0,
-    blocked: 0,
-    processed: 0,
-    errors: 0,
-    editedRequests: 0
-  }
-}
-
-/**
- * Aggregate performance statistics for the dashboard derived from request logs.
- *
- * @typedef {Object} DashboardPerformanceStats
- * @property {{count:number,totalMs:number,maxMs:number}} upstream
- * @property {{count:number,totalMs:number,maxMs:number}} total
- * @property {{count:number,totalMs:number,maxMs:number}} proxy
- * @property {{
- *   request: {count:number,totalBytes:number,maxBytes:number},
- *   response: {count:number,totalBytes:number,maxBytes:number}
- * }} payloads
- */
-
-/**
- * Create an empty performance statistics structure for the dashboard.
- *
- * @returns {DashboardPerformanceStats}
- */
-function createEmptyPerformanceStats () {
-  return {
-    upstream: { count: 0, totalMs: 0, maxMs: 0 },
-    total: { count: 0, totalMs: 0, maxMs: 0 },
-    proxy: { count: 0, totalMs: 0, maxMs: 0 },
-    payloads: {
-      request: { count: 0, totalBytes: 0, maxBytes: 0 },
-      response: { count: 0, totalBytes: 0, maxBytes: 0 }
-    }
-  }
-}
-
-/**
- * In-memory dashboard statistics derived from the current requestLogs contents.
- * Always updated incrementally when logs are added, removed, or cleared.
- *
- * @type {DashboardStats}
- */
-let dashboardStats = createEmptyDashboardStats()
-
-/**
- * In-memory performance statistics derived from the current requestLogs contents.
- * Always updated incrementally when logs are added, removed, or cleared.
- *
- * @type {DashboardPerformanceStats}
- */
-let performanceStats = createEmptyPerformanceStats()
-
-/**
- * Route-level statistics used for hotspot detection in the dashboard.
- * Key: `${host}${pathKey}` where `pathKey` is derived from sanitizePathForSuggestions.
- *
- * Each route aggregates timing/payload metrics plus lightweight source counts so
- * that the audit panel can infer whether a route is typically processed,
- * blocked, redirected (direct/tunnel) or served from a local resource based on
- * *observed* traffic rather than re-evaluating routing rules on a truncated
- * path.
- *
- * @type {Map<string, {
- *   host: string,
- *   path: string,
- *   count: number,
- *   totalMs: number,
- *   maxMs: number,
- *   totalResponseBytes: number,
- *   sourceCounts: Record<string, number>
- * }>}
- */
-let routeStats = new Map()
-
-/**
- * Apply the contribution of a log entry to the aggregated dashboard statistics.
- * Uses the same rules as the original /api/dashboard implementation.
- *
- * @param {object} logEntry - The log entry to apply.
- * @param {1|-1} direction - +1 when adding, -1 when removing.
- */
-function applyDashboardStatsDelta (logEntry, direction) {
-  if (!logEntry || typeof logEntry !== 'object') return
-  if (direction !== 1 && direction !== -1) return
-
-  const source = logEntry.source
-  dashboardStats.total += direction
-
-  if (source === 'local') dashboardStats.served += direction
-  if (DASHBOARD_PROXIED_SOURCES.has(source)) dashboardStats.proxied += direction
-  if (source === 'blocked') dashboardStats.blocked += direction
-  if (source === 'error') dashboardStats.errors += direction
-  // "processed" tracks traffic that flowed through the proxy internals and
-  // was neither blocked nor redirected via the direct/bypass engine. Raw
-  // CONNECT tunnels (source === 'tunnel') and explicit direct/bypass flows
-  // (source === 'direct') are excluded.
-  if (source !== 'blocked' && source !== 'direct' && source !== 'tunnel') {
-    dashboardStats.processed += direction
-  }
-
-  if (Array.isArray(logEntry.rewrites) && logEntry.rewrites.length > 0) {
-    dashboardStats.editedRequests += direction
-  }
-
-   // Aggregate lightweight performance metrics for the dashboard.
-  const dir = direction
-
-  if (typeof logEntry.upstreamDurationMs === 'number') {
-    const value = logEntry.upstreamDurationMs
-    performanceStats.upstream.count += dir
-    performanceStats.upstream.totalMs += dir * value
-    if (dir === 1) {
-      performanceStats.upstream.maxMs = Math.max(performanceStats.upstream.maxMs, value)
-    }
-  }
-
-  if (typeof logEntry.totalDurationMs === 'number') {
-    const value = logEntry.totalDurationMs
-    performanceStats.total.count += dir
-    performanceStats.total.totalMs += dir * value
-    if (dir === 1) {
-      performanceStats.total.maxMs = Math.max(performanceStats.total.maxMs, value)
-    }
-  }
-
-  if (typeof logEntry.proxyOverheadMs === 'number') {
-    const value = logEntry.proxyOverheadMs
-    performanceStats.proxy.count += dir
-    performanceStats.proxy.totalMs += dir * value
-    if (dir === 1) {
-      performanceStats.proxy.maxMs = Math.max(performanceStats.proxy.maxMs, value)
-    }
-  }
-
-  if (typeof logEntry.requestBytes === 'number') {
-    const value = logEntry.requestBytes
-    performanceStats.payloads.request.count += dir
-    performanceStats.payloads.request.totalBytes += dir * value
-    if (dir === 1) {
-      performanceStats.payloads.request.maxBytes = Math.max(performanceStats.payloads.request.maxBytes, value)
-    }
-  }
-
-  if (typeof logEntry.responseBytes === 'number') {
-    const value = logEntry.responseBytes
-    performanceStats.payloads.response.count += dir
-    performanceStats.payloads.response.totalBytes += dir * value
-    if (dir === 1) {
-      performanceStats.payloads.response.maxBytes = Math.max(performanceStats.payloads.response.maxBytes, value)
-    }
-  }
-
-  // Route-level hotspot detection statistics.
-  const hostInfo = extractHostInfoFromLog(logEntry)
-  if (hostInfo && hostInfo.host) {
-    const pathKey = sanitizePathForSuggestions(hostInfo.path)
-    const routeKey = `${hostInfo.host}${pathKey}`
-
-    let route = routeStats.get(routeKey)
-    if (!route) {
-      route = {
-        host: hostInfo.host,
-        path: pathKey,
-        count: 0,
-        totalMs: 0,
-        maxMs: 0,
-        totalResponseBytes: 0,
-        sourceCounts: Object.create(null)
-      }
-    }
-
-    const totalMs = typeof logEntry.totalDurationMs === 'number' ? logEntry.totalDurationMs : 0
-    const responseBytes = typeof logEntry.responseBytes === 'number' ? logEntry.responseBytes : 0
-
-    route.count += dir
-    route.totalMs += dir * totalMs
-    route.totalResponseBytes += dir * responseBytes
-
-    if (dir === 1 && totalMs > 0) {
-      route.maxMs = Math.max(route.maxMs, totalMs)
-    }
-
-    // Track per-source counts so audit handling can be derived from observed
-    // traffic for this host/path instead of re-running routing on a truncated
-    // path. Counts are adjusted symmetrically when logs roll out of the
-    // in-memory window.
-    const src = typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
-    const sourceCounts = route.sourceCounts || (route.sourceCounts = Object.create(null))
-    const prevSourceCount = sourceCounts[src] || 0
-    const nextSourceCount = prevSourceCount + dir
-    if (nextSourceCount <= 0) {
-      delete sourceCounts[src]
-    } else {
-      sourceCounts[src] = nextSourceCount
-    }
-
-    if (route.count <= 0 || route.totalMs <= 0) {
-      routeStats.delete(routeKey)
-    } else {
-      routeStats.set(routeKey, route)
-    }
-  }
-}
 
 function incrementBypassedCount (increment = 1) {
   const value = Number(increment)
@@ -1199,276 +678,6 @@ function isFocusMode () {
 }
 
 /**
- * Unified log entry factory for HTTP and WebSocket flows.
- * Consolidates createBaseLogEntry, createHttpFlowLogEntry and createWebSocketConnectionLog.
- *
- * @param {Object} params
- * @param {number} [params.requestStart] - Timestamp for HTTP flows.
- * @param {string} params.method - HTTP method or 'WS'.
- * @param {string} params.url
- * @param {string} params.fullUrl
- * @param {Object} [params.headers]
- * @param {string} params.source
- * @param {string} [params.clientIp]
- * @param {boolean} [params.sanitizeHeaders=false] - Strip identifying headers.
- * @param {Object} [params.wsOptions] - WebSocket-specific options.
- * @param {string} [params.wsOptions.direction]
- * @param {string} [params.wsOptions.message]
- * @param {number} [params.wsOptions.connectionId]
- * @returns {Object}
- */
-function createLogEntry ({ requestStart, method, url, fullUrl, headers, source, clientIp, sanitizeHeaders = false, wsOptions }) {
-  const ts = Number.isFinite(requestStart) ? requestStart : Date.now()
-  const processedHeaders = sanitizeHeaders
-    ? sanitizeAndStripIdentifyingHeaders(headers || {})
-    : (headers || {})
-
-  const base = {
-    id: ts + Math.random(),
-    timestamp: new Date(ts).toISOString(),
-    method,
-    url,
-    fullUrl,
-    source,
-    headers: processedHeaders
-  }
-
-  if (wsOptions) {
-    return {
-      ...base,
-      direction: wsOptions.direction || 'connected',
-      isConnectionLog: true,
-      body: wsOptions.message || 'WebSocket connection established',
-      responseBody: null,
-      responseHeaders: null,
-      statusCode: 101,
-      ...(typeof wsOptions.connectionId === 'number' && { connectionId: wsOptions.connectionId })
-    }
-  }
-
-  return {
-    ...base,
-    requestStartTs: ts,
-    body: null,
-    clientIp
-  }
-}
-
-/**
- * Create a base HTTP log entry for a proxied/bypass/MITM HTTP flow.
- * Wrapper around createLogEntry with header sanitisation enabled.
- */
-function createHttpFlowLogEntry ({ requestStart, method, url, fullUrl, headers, source, clientIp }) {
-  return createLogEntry({ requestStart, method, url, fullUrl, headers, source, clientIp, sanitizeHeaders: true })
-}
-
-/**
- * Compute lightweight per-request metrics for the audit panel.
- * Mutates the log entry in place.
- *
- * @param {object} logEntry
- */
-function computeLogEntryMetrics (logEntry) {
-  if (!logEntry || typeof logEntry !== 'object') return
-
-  try {
-    // Timing metrics
-    if (typeof logEntry.requestStartTs === 'number' && typeof logEntry.totalDurationMs !== 'number') {
-      logEntry.totalDurationMs = Date.now() - logEntry.requestStartTs
-    }
-
-    if (
-      typeof logEntry.totalDurationMs === 'number' &&
-      typeof logEntry.upstreamDurationMs === 'number' &&
-      typeof logEntry.proxyOverheadMs !== 'number'
-    ) {
-      logEntry.proxyOverheadMs = Math.max(0, logEntry.totalDurationMs - logEntry.upstreamDurationMs)
-    }
-
-    // Payload sizes
-    if (typeof logEntry.requestBytes !== 'number') {
-      let requestBytes = 0
-
-      if (typeof logEntry.rawRequestBodyBase64 === 'string' && logEntry.rawRequestBodyBase64) {
-        try {
-          requestBytes = Buffer.from(logEntry.rawRequestBodyBase64, 'base64').length
-        } catch {}
-      }
-
-      if (!requestBytes && logEntry.headers) {
-        const contentLength = getHeaderCaseInsensitive(logEntry.headers, 'content-length')
-        const parsed = contentLength && Number(contentLength)
-        if (Number.isFinite(parsed) && parsed > 0) {
-          requestBytes = parsed
-        }
-      }
-
-      if (requestBytes > 0) {
-        logEntry.requestBytes = requestBytes
-      }
-    }
-
-    if (typeof logEntry.responseBytes !== 'number') {
-      let responseBytes = 0
-
-      if (typeof logEntry.responseSize === 'number' && logEntry.responseSize >= 0) {
-        responseBytes = logEntry.responseSize
-      } else if (typeof logEntry.rawResponseBodyBase64 === 'string' && logEntry.rawResponseBodyBase64) {
-        try {
-          responseBytes = Buffer.from(logEntry.rawResponseBodyBase64, 'base64').length
-        } catch {}
-      }
-
-      if (responseBytes > 0) {
-        logEntry.responseBytes = responseBytes
-      }
-    }
-
-    // Rewrite summary
-    if (typeof logEntry.rewriteCount !== 'number' && Array.isArray(logEntry.rewrites)) {
-      logEntry.rewriteCount = logEntry.rewrites.length
-    }
-
-    // Connect/gRPC frame summary
-    if (!logEntry.connectSummary) {
-      const hasRequest = !!logEntry.connectRequest
-      const hasResponse = !!logEntry.connectResponse
-
-      if (hasRequest || hasResponse) {
-        logEntry.connectSummary = {
-          hasRequest,
-          hasResponse,
-          requestFrameCount: countConnectFrames(logEntry.connectRequest),
-          responseFrameCount: countConnectFrames(logEntry.connectResponse)
-        }
-      }
-    }
-  } catch (error) {
-    // Defensive: never block logging if metric computation fails
-    logDebug('computeLogEntryMetrics', 'Failed to compute per-request metrics', error)
-  }
-}
-
-// Helper to add log only if interactive mode is enabled
-function addLog (logEntry) {
-  if (!interactiveModeEnabled) return
-  if (logEntry && typeof logEntry === 'object') {
-    // Precompute whether this log should be hidden by blocked URL rules. This
-    // moves the cost of blocked URL matching to log insertion and rules
-    // updates instead of every /api/logs request.
-    try {
-      const patterns = Array.isArray(blockedUrlSubstringsForFilter) ? blockedUrlSubstringsForFilter : []
-      if (patterns.length > 0) {
-        const urlString = getLogUrlString(logEntry)
-        if (urlString) {
-          logEntry.hiddenByBlockedRules = patterns.some(pattern => urlString.includes(pattern))
-        }
-      }
-    } catch {}
-
-    // Precompute base search text for global search (URL, method, target/local info)
-    const parts = [
-      logEntry.url || '',
-      logEntry.method || '',
-      logEntry.targetUrl || '',
-      logEntry.localResource || ''
-    ]
-    logEntry.searchBase = parts.join(' ').toLowerCase()
-
-    // Precompute fileType once per log entry when it's first added
-    if (!logEntry.fileType) {
-      logEntry.fileType = getFileTypeFromLogEntry(logEntry)
-    }
-
-    // Precompute request/response search snapshots (body + Connect + raw preview)
-    ensureLogSearchSnapshots(logEntry)
-
-    // Compute lightweight per-request metrics used by the audit panel
-    computeLogEntryMetrics(logEntry)
-  }
-  requestLogs.unshift(logEntry)
-  updateSuggestionStatsOnAdd(logEntry)
-  applyDashboardStatsDelta(logEntry, 1)
-  if (requestLogs.length > MAX_LOG_ENTRIES) {
-    const removed = requestLogs.pop()
-    if (removed) {
-      updateSuggestionStatsOnRemove(removed)
-      applyDashboardStatsDelta(removed, -1)
-      // Keep edit rule usage counters aligned with the current in-memory
-      // requestLogs window by decrementing counts for any rules that were
-      // recorded on the evicted log entry.
-      if (Array.isArray(removed.rewrites)) {
-        ruleStore.releaseUsage(removed.rewrites.map(rewrite => rewrite && rewrite.id))
-      }
-    }
-  }
-}
-
-/**
- * Classify an upstream error into a coarse category for diagnostics.
- * This is intentionally conservative and based on the error's code/name/
- * message without depending on Undici internals.
- *
- * @param {Error & { code?: string, name?: string, type?: string }} error
- * @returns {string} One of: 'timeout', 'aborted', 'connection', 'protocol', 'upstream', 'unknown'.
- */
-function classifyUpstreamError (error) {
-  if (!error || typeof error !== 'object') return 'unknown'
-
-  const code = typeof error.code === 'string' ? error.code.toUpperCase() : ''
-  const name = typeof error.name === 'string' ? error.name.toUpperCase() : ''
-  const type = typeof error.type === 'string' ? error.type.toUpperCase() : ''
-  const message = typeof error.message === 'string' ? error.message.toUpperCase() : ''
-
-  const combined = `${code} ${name} ${type} ${message}`
-
-  if (combined.includes('TIMEOUT')) return 'timeout'
-  if (combined.includes('ABORT') || combined.includes('CANCEL')) return 'aborted'
-
-  if (code.startsWith('E') && (
-    code.includes('CONN') ||
-    code.includes('REFUSED') ||
-    code.includes('RESET') ||
-    code.includes('UNREACH') ||
-    code.includes('PIPE') ||
-    code.includes('ADDR')
-  )) {
-    return 'connection'
-  }
-
-  if (combined.includes('PROTOCOL') || combined.includes('HTTP_PARSER') || combined.includes('UND_ERR')) {
-    return 'protocol'
-  }
-
-  // Default bucket for other upstream failures.
-  return 'upstream'
-}
-
-/**
- * Record an upstream error on a log entry in a consistent way.
- *
- * @param {object|null} logEntry
- * @param {Error & { code?: string, name?: string, type?: string }} error
- */
-function recordUpstreamErrorOnLog (logEntry, error) {
-  if (!logEntry || typeof logEntry !== 'object') return
-
-  logEntry.source = 'error'
-  logEntry.error = error && error.message ? error.message : String(error)
-
-  if (typeof logEntry.upstreamDurationMs !== 'number') {
-    const startTs =
-      typeof logEntry.requestStartTs === 'number'
-        ? logEntry.requestStartTs
-        : (logEntry.timestamp ? Date.parse(logEntry.timestamp) || Date.now() : Date.now())
-    logEntry.upstreamDurationMs = Date.now() - startTs
-  }
-
-  logEntry.upstreamErrorCategory = classifyUpstreamError(error)
-  addLog(logEntry)
-}
-
-/**
  * Handle an upstream request error by logging it and sending an appropriate
  * error response to the client. Works with both Express responses and raw
  * HTTP ServerResponse objects.
@@ -1495,117 +704,6 @@ function handleUpstreamError ({ logEntry, error, res, message = 'Bad Gateway', u
   } else {
     try { res.end() } catch {}
   }
-}
-
-function extractHostInfoFromLog (logEntry) {
-  if (!logEntry || typeof logEntry !== 'object') return null
-
-  if (logEntry._hostInfo && logEntry._hostInfo.host) {
-    return logEntry._hostInfo
-  }
-
-  const headerHost = typeof logEntry.headers?.host === 'string'
-    ? logEntry.headers.host.toLowerCase()
-    : null
-
-  const tryParseUrl = (candidate) => {
-    if (!candidate || typeof candidate !== 'string') return null
-    const trimmed = candidate.trim()
-    if (!trimmed) return null
-
-    try {
-      const parsed = new URL(trimmed)
-      return {
-        host: normalizeHostValue(parsed.hostname),
-        path: parsed.pathname || '/'
-      }
-    } catch (error) {
-      if (headerHost && trimmed.startsWith('/')) {
-        try {
-          const parsed = new URL(`http://${headerHost}${trimmed}`)
-          return {
-            host: normalizeHostValue(parsed.hostname),
-            path: parsed.pathname || '/'
-          }
-        } catch (innerError) {
-          return null
-        }
-      } else if (!trimmed.includes('://')) {
-        try {
-          const parsed = new URL(`http://${trimmed}`)
-          return {
-            host: normalizeHostValue(parsed.hostname),
-            path: parsed.pathname || '/'
-          }
-        } catch (innerError) {
-          return null
-        }
-      }
-    }
-    return null
-  }
-
-  const candidates = [logEntry.fullUrl, logEntry.url]
-  for (const candidate of candidates) {
-    const parsed = tryParseUrl(candidate)
-    if (parsed?.host) {
-      try {
-        Object.defineProperty(logEntry, '_hostInfo', {
-          value: parsed,
-          writable: false,
-          configurable: false,
-          enumerable: false
-        })
-      } catch {}
-      return parsed
-    }
-  }
-
-  if (headerHost) {
-    const info = {
-      host: normalizeHostValue(headerHost),
-      path: '/'
-    }
-    try {
-      Object.defineProperty(logEntry, '_hostInfo', {
-        value: info,
-        writable: false,
-        configurable: false,
-        enumerable: false
-      })
-    } catch {}
-    return info
-  }
-
-  return null
-}
-
-function computeBypassSuggestions ({ limit = 10, _windowSize = 500 } = {}) {
-  const cappedLimit = Math.max(1, Math.min(50, limit))
-
-  const results = Array.from(bypassSuggestionStats.values())
-    .filter(record => !bypassMatchers.some(matcher => matcher.type === 'host' && hostPatternMatches(matcher.value, record.host)))
-    .map(record => {
-      const topPaths = Array.from(record.pathCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([path, count]) => ({ path, count }))
-
-      return {
-        pattern: record.host,
-        count: record.count,
-        lastSeen: record.lastSeen || null,
-        samplePaths: topPaths
-      }
-    })
-    .sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count
-      if (b.lastSeen !== a.lastSeen) return (b.lastSeen || 0) - (a.lastSeen || 0)
-      return a.pattern.localeCompare(b.pattern)
-    })
-    .slice(0, cappedLimit)
-
-  return results
 }
 
 /**
@@ -1655,395 +753,6 @@ function handleBooleanToggleEndpoint ({ req, res, assignValue, responseFieldName
   const payload = { success: true }
   payload[responseFieldName] = result.value
   return res.json(payload)
-}
-
-/**
- * Extract the URL string from a log entry, preferring fullUrl over url.
- * Returns an empty string if neither is available.
- *
- * @param {object|null} log
- * @returns {string}
- */
-function getLogUrlString (log) {
-  if (!log) return ''
-  return ((log.fullUrl || log.url) || '').toString()
-}
-
-// File types derived from the URL extension when the response carries no
-// content-type (or a generic octet-stream).
-const EXTENSION_FILE_TYPES = {
-  '.json': 'json',
-  '.html': 'html',
-  '.htm': 'html',
-  '.css': 'css',
-  '.js': 'js',
-  '.mjs': 'js',
-  '.png': 'image',
-  '.jpg': 'image',
-  '.jpeg': 'image',
-  '.gif': 'image',
-  '.webp': 'image',
-  '.svg': 'image',
-  '.ico': 'image',
-  '.mp4': 'video',
-  '.webm': 'video',
-  '.mp3': 'audio',
-  '.ogg': 'audio',
-  '.wav': 'audio',
-  '.woff': 'font',
-  '.woff2': 'font',
-  '.ttf': 'font',
-  '.otf': 'font',
-  '.eot': 'font'
-}
-
-function getFileTypeFromLogEntry (log) {
-  // Early return if already cached
-  if (log?.fileType) return log.fileType
-
-  const contentType = (log && log.responseHeaders)
-    ? getContentType(log.responseHeaders)
-    : ''
-  // Extension lookups ignore the query string and fragment.
-  const url = getLogUrlString(log).toLowerCase().split(/[?#]/, 1)[0]
-  const dot = url.lastIndexOf('.')
-  const extension = dot > url.lastIndexOf('/') ? url.slice(dot) : ''
-
-  if (contentType.includes('json')) return 'json'
-  if (contentType.includes('html')) return 'html'
-  if (contentType.includes('css')) return 'css'
-  if (contentType.includes('javascript')) return 'js'
-  if (contentType.includes('image/')) return 'image'
-  if (contentType.includes('video/')) return 'video'
-  if (contentType.includes('audio/')) return 'audio'
-  if (contentType.includes('font/') || EXTENSION_FILE_TYPES[extension] === 'font') return 'font'
-
-  if ((!contentType || contentType.includes('octet-stream')) && EXTENSION_FILE_TYPES[extension]) {
-    return EXTENSION_FILE_TYPES[extension]
-  }
-
-  // If bodies are structured objects, treat them as JSON for cosmetic purposes
-  if (log && (typeof log.responseBody === 'object' && log.responseBody !== null)) return 'json'
-  if (log && (typeof log.body === 'object' && log.body !== null)) return 'json'
-
-  // Best-effort JSON detection on string bodies when content-type is missing or generic
-  const tryLooksLikeJsonString = (value) => {
-    if (!value || typeof value !== 'string') return false
-    if (value.includes('[Binary')) return false
-    const trimmed = value.trim()
-    if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return false
-    try {
-      JSON.parse(trimmed)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  if (log) {
-    if (tryLooksLikeJsonString(log.responseBody)) return 'json'
-    if (tryLooksLikeJsonString(log.body)) return 'json'
-  }
-
-  return 'other'
-}
-
-/**
- * Build the base client-facing log view shared by full and summary variants.
- *
- * @param {object|null} log
- * @returns {object|null}
- */
-function buildBaseClientLogView (log) {
-  if (!log || typeof log !== 'object') return null
-
-  return {
-    id: log.id,
-    timestamp: log.timestamp,
-    method: log.method,
-    url: log.url,
-    fullUrl: log.fullUrl,
-    source: log.source,
-    statusCode: log.statusCode,
-    direction: log.direction,
-    responseSize: log.responseSize,
-    error: log.error,
-    localResource: log.localResource,
-    targetUrl: log.targetUrl,
-    fileType: getFileTypeFromLogEntry(log)
-  }
-}
-
-// Fields to copy if they have a truthy/defined value (common to both views)
-const LOG_VIEW_COMMON_FIELDS = [
-  'upstreamDurationMs', 'upstreamErrorCategory', 'requestStartTs', 'totalDurationMs',
-  'proxyOverheadMs', 'requestBytes', 'responseBytes', 'rewriteCount', 'connectionId',
-  'isConnectionLog', 'isWebSocketSummary', 'headers', 'responseHeaders',
-  'requestBodySummary', 'responseBodySummary', 'rewrites', 'connectSummary', 'wsSummary'
-]
-
-// Fields to copy only in full view (not summary)
-const LOG_VIEW_FULL_FIELDS = [
-  'body', 'responseBody', 'requestBodyJson', 'responseBodyJson',
-  'requestBodyJsonBefore', 'responseBodyJsonBefore',
-  'requestBodyTextBefore', 'requestBodyTextAfter',
-  'responseBodyTextBefore', 'responseBodyTextAfter',
-  'wsBodyJsonAfter', 'wsBodyJsonBefore', 'originalBody',
-  'rawRequestBodyPreview', 'rawResponseBodyPreview'
-]
-
-/**
- * Build client log view with optional body/preview fields.
- * When summary=true, omits heavy body/preview data for list endpoints.
- *
- * @param {object|null} log
- * @param {{summary?: boolean}} [options]
- * @returns {object|null}
- */
-function buildClientLogViewInternal (log, options = {}) {
-  const summary = options.summary === true
-  const view = buildBaseClientLogView(log)
-  if (!view) return null
-
-  // Copy common fields if they have a value
-  for (const field of LOG_VIEW_COMMON_FIELDS) {
-    const value = log[field]
-    if (value !== undefined && value !== null && value !== '') {
-      // Special handling for arrays (rewrites) - only include if non-empty
-      if (Array.isArray(value)) {
-        if (value.length > 0) view[field] = value
-      } else {
-        view[field] = value
-      }
-    }
-  }
-
-  // Full view only: bodies, previews, frame data
-  if (!summary) {
-    for (const field of LOG_VIEW_FULL_FIELDS) {
-      if (field in log) {
-        const value = log[field]
-        // Skip empty strings for preview fields
-        if (typeof value === 'string' && value.length === 0) continue
-        view[field] = value
-      }
-    }
-
-    // Connect views need special transformation
-    if (log.connectRequest) view.connectRequest = buildConnectViewForClient(log.connectRequest)
-    if (log.connectResponse) view.connectResponse = buildConnectViewForClient(log.connectResponse)
-  }
-
-  return view
-}
-
-const buildClientLogView = log => buildClientLogViewInternal(log, { summary: false })
-const buildClientLogSummaryView = log => buildClientLogViewInternal(log, { summary: true })
-
-/**
- * Core log filtering implementation used by /api/logs and /api/logs/export.
- *
- * Applies text search, body/header search snapshots, source/method/fileType
- * filters and respects ALWAYS_INCLUDED_SOURCES for local/blocked/error
- * entries.
- *
- * @param {object} [query]
- * @returns {{ ordered: any[], total: number }}
- */
-function filterLogsCore (query = {}) {
-  const searchTerm = safeString(query.search)
-  const requestBodySearch = safeString(query.requestSearch)
-  const responseSearchTerm = safeString(query.responseSearch)
-
-  const selectedSources = parseListQuery(query.sources, ['proxied', 'mitm', 'websocket'])
-  const selectedMethods = parseListQuery(query.methods, ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-  const selectedFileTypes = parseListQuery(query.fileTypes, ['json', 'html', 'css', 'js', 'image', 'video', 'audio', 'font', 'other'])
-
-  const showWsConnections = queryBool(query.showWsConnections)
-
-  const requestRewrittenOnly = queryBool(query.requestRewrittenOnly)
-  const responseRewrittenOnly = queryBool(query.responseRewrittenOnly)
-
-  const requestBodySearchLower = requestBodySearch.toLowerCase()
-  const responseSearchLower = responseSearchTerm.toLowerCase()
-
-  // Use the precomputed blockedUrlSubstringsForFilter list so we don't
-  // rebuild the pattern set on every /api/logs call. This is now primarily a
-  // fallback for legacy log entries that predate the hiddenByBlockedRules flag;
-  // new entries rely on that boolean for a cheap exclusion check.
-  const patterns = Array.isArray(blockedUrlSubstringsForFilter)
-    ? blockedUrlSubstringsForFilter
-    : []
-
-  // Precompute search OR-groups once per API call so we do not repeatedly
-  // split and trim the same search term for every log entry.
-  const searchOrGroups = searchTerm
-    ? searchTerm
-        .split('||')
-        .map(group => group.trim())
-        .filter(group => group)
-    : []
-
-  const filtered = requestLogs.filter(log => {
-    const urlString = getLogUrlString(log)
-
-    // Hide any entries whose URL matches a blocked rule pattern (enabled or
-    // disabled) so that the Requests view stays focused on traffic that has
-    // not already been handled by the user. The primary signal is the
-    // hiddenByBlockedRules flag computed at insertion time; we fall back to a
-    // direct pattern scan only when that flag is not present.
-    if (log && typeof log.hiddenByBlockedRules === 'boolean') {
-      if (log.hiddenByBlockedRules) return false
-    } else if (patterns.length > 0 && urlString && patterns.some(pattern => urlString.includes(pattern))) {
-      return false
-    }
-
-    if (!showWsConnections && log && log.isConnectionLog) {
-      return false
-    }
-
-    const matchesSearch = searchTerm === '' || (() => {
-      const searchableText =
-        (log && typeof log.searchBase === 'string' && log.searchBase.length)
-          ? log.searchBase
-          : [
-              log.url,
-              log.method,
-              log.targetUrl || '',
-              log.localResource || ''
-            ].join(' ').toLowerCase()
-
-      if (searchOrGroups.length === 0) return true
-
-      const groupMatches = (group) => {
-        const rawTerms = group.split(';').map(t => t.trim()).filter(t => t)
-        if (rawTerms.length === 0) return true
-
-        return rawTerms.every(term => {
-          if (!term) return true
-          if (term.startsWith('!')) {
-            const negatedTerm = term.substring(1).toLowerCase()
-            return !searchableText.includes(negatedTerm)
-          }
-          return searchableText.includes(term.toLowerCase())
-        })
-      }
-
-      return searchOrGroups.some(groupMatches)
-    })()
-
-    if (!matchesSearch) return false
-
-    let requestSearchContentLower = safeString(log?.requestSearchContent)
-    let headersSearchLower = safeString(log?.headersSearch)
-
-    const matchesRequestBodySearch = requestBodySearch === '' || (
-      (requestSearchContentLower && requestSearchContentLower.includes(requestBodySearchLower)) ||
-      (headersSearchLower && headersSearchLower.includes(requestBodySearchLower))
-    )
-
-    if (!matchesRequestBodySearch) return false
-
-    // Response body/headers search snapshot (cached when available)
-    let responseSearchContentLower = safeString(log?.responseSearchContent)
-    let responseHeadersSearchLower = safeString(log?.responseHeadersSearch)
-
-    const matchesResponseBodySearch = responseSearchTerm === '' || (
-      (responseSearchContentLower && responseSearchContentLower.includes(responseSearchLower)) ||
-      (responseHeadersSearchLower && responseHeadersSearchLower.includes(responseSearchLower))
-    )
-
-    if (!matchesResponseBodySearch) return false
-
-    // Optional filters: only include logs where rewrites touched the
-    // request and/or response side. We infer this from the enriched
-    // rewrite metadata attached to each log entry.
-    if (requestRewrittenOnly || responseRewrittenOnly) {
-      let hasRequestRewrite = false
-      let hasResponseRewrite = false
-
-      if (Array.isArray(log.rewrites) && log.rewrites.length > 0) {
-        for (const rewrite of log.rewrites) {
-          if (!rewrite) continue
-          const target = typeof rewrite.target === 'string' ? rewrite.target : 'request'
-          if (target === 'request' || target === 'both') hasRequestRewrite = true
-          if (target === 'response' || target === 'both') hasResponseRewrite = true
-          if (hasRequestRewrite && hasResponseRewrite) break
-        }
-      }
-
-      if (requestRewrittenOnly && !hasRequestRewrite) return false
-      if (responseRewrittenOnly && !hasResponseRewrite) return false
-    }
-
-    const source = log && log.source
-    const sourceSelected = ALWAYS_INCLUDED_SOURCES.has(source) || selectedSources.includes(source)
-    if (!sourceSelected) return false
-
-    const methodSelected = log && (log.method === 'WS' || selectedMethods.includes(log.method))
-    if (!methodSelected) return false
-
-    const fileType = (log && log.fileType) ? log.fileType : getFileTypeFromLogEntry(log)
-    const fileTypeSelected = selectedFileTypes.includes(fileType)
-    if (!fileTypeSelected) return false
-
-    return true
-  })
-
-  // Reverse without double allocation (avoid slice().reverse())
-  const total = filtered.length
-  const ordered = new Array(total)
-  for (let i = 0; i < total; i++) {
-    ordered[i] = filtered[total - 1 - i]
-  }
-
-  return { ordered, total }
-}
-
-/**
- * Helper used by /api/logs to apply filtering, pagination and view selection
- * in a single pass over the in-memory log window.
- *
- * @param {import('express').Request} req
- * @returns {{ items: any[], total: number, hasMore: boolean, offset: number, limit: number }}
- */
-function filterLogsForApiRequest (req) {
-  const query = req.query || {}
-
-  const { ordered, total } = filterLogsCore(query)
-
-  let offset = 0
-  if (typeof query.offset === 'string') {
-    const parsed = parseInt(query.offset, 10)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      offset = parsed
-    }
-  }
-
-  let limit = 50
-  if (typeof query.limit === 'string') {
-    const parsed = parseInt(query.limit, 10)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      limit = parsed
-    }
-  }
-
-  if (!Number.isFinite(limit) || limit <= 0) {
-    limit = 50
-  }
-
-  limit = Math.min(Math.max(limit, 1), MAX_LOG_ENTRIES)
-
-  const start = Math.min(offset, total)
-  const end = Math.min(start + limit, total)
-
-  const useSummaryView = safeString(query.view).toLowerCase() === 'summary'
-  const items = ordered
-    .slice(start, end)
-    .map(log => (useSummaryView ? buildClientLogSummaryView(log) : buildClientLogView(log)))
-  const hasMore = end < total
-
-  return { items, total, hasMore, offset, limit }
 }
 
 function resolveTargetFromRequest (req) {
@@ -3121,7 +1830,7 @@ app.get('/api/logs/export', (req, res) => {
 app.get('/api/logs/:id', (req, res) => {
   try {
     const { id } = req.params
-    const log = requestLogs.find(entry => entry && String(entry.id) === String(id))
+    const log = logStore.findById(id)
 
     if (!log) {
       return res.status(404).json({ error: 'Log not found' })
@@ -3353,13 +2062,10 @@ app.delete('/api/resources/:encodedUrl', async (req, res) => {
 })
 
 app.delete('/api/logs', (req, res) => {
-  requestLogs = []
+  logStore.clear()
   bypassedRequestCount = 0
-  bypassSuggestionStats.clear()
-  logSuggestionMetadata = new WeakMap()
-  dashboardStats = createEmptyDashboardStats()
-  performanceStats = createEmptyPerformanceStats()
-  routeStats = new Map()
+  suggestions.reset()
+  stats.reset()
   ruleStore.clearUsage()
   res.json({ success: true, message: 'Logs cleared' })
 })
@@ -3645,122 +2351,13 @@ app.delete('/api/edit-rules/:id', (req, res) => {
 })
 
 app.get('/api/dashboard', (req, res) => {
-  const { editedRequests, ...stats } = dashboardStats
-
-  const perf = performanceStats
-
-  const safeAverage = (total, count) => (count > 0 ? total / count : 0)
-
-  const performance = {
-    upstreamMs: {
-      avg: safeAverage(perf.upstream.totalMs, perf.upstream.count),
-      max: perf.upstream.maxMs
-    },
-    totalMs: {
-      avg: safeAverage(perf.total.totalMs, perf.total.count),
-      max: perf.total.maxMs
-    },
-    proxyOverheadMs: {
-      avg: safeAverage(perf.proxy.totalMs, perf.proxy.count),
-      max: perf.proxy.maxMs
-    }
-  }
-
-  const payloads = {
-    requestBytes: {
-      avg: safeAverage(perf.payloads.request.totalBytes, perf.payloads.request.count),
-      max: perf.payloads.request.maxBytes
-    },
-    responseBytes: {
-      avg: safeAverage(perf.payloads.response.totalBytes, perf.payloads.response.count),
-      max: perf.payloads.response.maxBytes
-    }
-  }
-  /**
-   * Build a serialisable snapshot of a single entry from routeStats with
-   * derived averages and an effective handling mode based on observed sources.
-   *
-   * @param {{ host?: string, path?: string, count: number, totalMs: number, maxMs: number, totalResponseBytes?: number, sourceCounts?: Record<string, number> }} route
-   * @returns {{ host: string, path: string, avgMs: number, maxMs: number, count: number, avgBytes: number, kbPerSecond: number, handling: string }}
-   */
-  const buildRouteSnapshot = route => {
-    const avgMs = route.totalMs / route.count
-    const totalBytes = typeof route.totalResponseBytes === 'number' ? route.totalResponseBytes : 0
-    const avgBytes = route.count > 0 ? totalBytes / route.count : 0
-    const kbPerSecond = route.totalMs > 0
-      ? (totalBytes * 1000) / (1024 * route.totalMs)
-      : 0
-
-    // Derive an effective handling mode for this route from the *observed*
-    // traffic sources recorded in routeStats. This powers the audit panel
-    // status icon column and keeps it aligned with what actually happened
-    // in the log window instead of re-running routing on a truncated path.
-    const path = route.path || '/'
-    const host = route.host || ''
-
-    const sourceCounts = route.sourceCounts || {}
-    const blockedCount = sourceCounts.blocked || 0
-    const directCount = (sourceCounts.direct || 0) + (sourceCounts.tunnel || 0)
-    const localCount = sourceCounts.local || 0
-
-    let handling = 'processed'
-    if (localCount > 0) {
-      handling = 'served'
-    } else if (blockedCount > 0) {
-      handling = 'blocked'
-    } else if (directCount > 0) {
-      handling = 'redirected'
-    }
-
-    return {
-      host,
-      path,
-      avgMs,
-      maxMs: route.maxMs,
-      count: route.count,
-      avgBytes,
-      kbPerSecond,
-      handling
-    }
-  }
-
-  /**
-   * Sort comparator for route snapshots, prioritising slower and higher-impact routes.
-   *
-   * @param {object} a
-   * @param {object} b
-   * @returns {number}
-   */
-  const sortRouteSnapshots = (a, b) => {
-    if (b.avgMs !== a.avgMs) return b.avgMs - a.avgMs
-    if (b.maxMs !== a.maxMs) return b.maxMs - a.maxMs
-    return b.count - a.count
-  }
-
-  const allRouteSnapshots = Array.from(routeStats.values())
-    .filter(route => route.count > 0)
-    .map(buildRouteSnapshot)
-
-  const slowestRoutes = allRouteSnapshots
-    .slice()
-    .sort(sortRouteSnapshots)
-    .slice(0, 10)
-
-  const routesByHandling = {
-    processed: allRouteSnapshots.filter(route => route.handling === 'processed').sort(sortRouteSnapshots).slice(0, 10),
-    redirected: allRouteSnapshots.filter(route => route.handling === 'redirected').sort(sortRouteSnapshots).slice(0, 10),
-    blocked: allRouteSnapshots.filter(route => route.handling === 'blocked').sort(sortRouteSnapshots).slice(0, 10),
-    served: allRouteSnapshots.filter(route => route.handling === 'served').sort(sortRouteSnapshots).slice(0, 10)
-  }
+  const { stats: dashboard, editedRequests, performance, payloads, routes } = stats.getDashboardSnapshot()
 
   res.json({
-    stats,
+    stats: dashboard,
     performance,
     payloads,
-    routes: {
-      slowest: slowestRoutes,
-      byHandling: routesByHandling
-    },
+    routes,
     resources: getLocalResourcesList(),
     blocked: blockedUrls,
     filterMetrics: {
@@ -3771,55 +2368,11 @@ app.get('/api/dashboard', (req, res) => {
   })
 })
 
-/**
- * Build a lightweight audit snapshot from the current in-memory log window.
- *
- * The snapshot focuses on upstream error distribution and per-host latency
- * aggregates, optimised for use by the secret Proxy Audit Panel.
- */
+// Lightweight audit snapshot of the current in-memory log window (upstream
+// error distribution and per-host latency) for the secret Proxy Audit Panel.
 app.get('/api/audit', (req, res) => {
   try {
-    const errorBuckets = Object.create(null)
-    const hostMap = new Map()
-
-    for (const log of requestLogs) {
-      if (typeof log.upstreamDurationMs === 'number' && log.upstreamDurationMs >= 0) {
-        const hostInfo = extractHostInfoFromLog(log)
-        const host = hostInfo && hostInfo.host ? hostInfo.host : null
-        if (host) {
-          let entry = hostMap.get(host)
-          if (!entry) {
-            entry = { host, count: 0, totalDuration: 0 }
-          }
-          entry.count += 1
-          entry.totalDuration += log.upstreamDurationMs
-          hostMap.set(host, entry)
-        }
-      }
-
-      const category = log.upstreamErrorCategory || (log.source === 'error' ? 'unknown' : null)
-      if (category) {
-        const key = String(category)
-        errorBuckets[key] = (errorBuckets[key] || 0) + 1
-      }
-    }
-
-    const hostStats = Array.from(hostMap.values())
-      .map(entry => ({
-        host: entry.host,
-        count: entry.count,
-        avgDuration: entry.totalDuration / Math.max(1, entry.count)
-      }))
-      .sort((a, b) => b.avgDuration - a.avgDuration)
-      .slice(0, 20)
-
-    const totalErrors = Object.values(errorBuckets).reduce((acc, v) => acc + v, 0)
-
-    res.json({
-      errorBuckets,
-      totalErrors,
-      hostStats
-    })
+    res.json(stats.buildAuditSnapshot(logStore))
   } catch (error) {
     console.error('[proxy] Error building audit snapshot:', error)
     res.status(500).json({ error: 'Failed to build audit snapshot' })
@@ -4408,48 +2961,6 @@ function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, targetPort
   } catch {
     clientSocket.end()
   }
-}
-
-/**
- * Build a standardised WebSocket connection log entry.
- * Delegates to createLogEntry with wsOptions.
- */
-function createWebSocketConnectionLog ({ wsUrl, source, headers, connectionId, message }) {
-  return createLogEntry({
-    method: 'WS',
-    url: wsUrl,
-    fullUrl: wsUrl,
-    headers,
-    source,
-    wsOptions: { direction: 'connected', message, connectionId }
-  })
-}
-
-/**
- * Log a WebSocket direct tunnel establishment when interactive mode is enabled.
- * Centralises the common pattern used by both HTTP upgrade and HTTPS MITM flows.
- *
- * @param {object} params
- * @param {string} params.targetUrl - Raw target URL (HTTP or WS).
- * @param {object} params.headers - Request headers to sanitize and log.
- * @param {string} [params.suffix=''] - Optional suffix for the log message.
- */
-function logWebSocketDirectTunnel ({ targetUrl, headers, suffix = '' }) {
-  if (!interactiveModeEnabled) return
-
-  const rawUrl = targetUrl || ''
-  const wsUrl = httpUrlToWebSocketUrl(rawUrl) || rawUrl
-  const message = suffix
-    ? `WebSocket direct tunnel established${suffix}`
-    : 'WebSocket direct tunnel established'
-
-  const logEntry = createWebSocketConnectionLog({
-    wsUrl,
-    source: 'direct',
-    headers: sanitizeAndStripIdentifyingHeaders(headers || {}),
-    message
-  })
-  addLog(logEntry)
 }
 
 server.on('connect', (req, clientSocket, head) => {
