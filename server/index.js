@@ -10,7 +10,6 @@ const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 const fsPromises = fs.promises
-const crypto = require('crypto')
 const { URL } = require('url')
 const WebSocket = require('ws')
 const { request, Agent } = require('undici')
@@ -186,108 +185,56 @@ let bypassMatchers = []
 let blockedUrlSubstringsForFilter = []
 const bypassSuggestionStats = new Map()
 let logSuggestionMetadata = new WeakMap()
-let editRules = []
-let editRulePresets = []
 
-/**
- * In-memory usage counters for live edit rules.
- *
- * Key: rule id, value: number of distinct log entries where the rule
- * was applied at least once within the current in-memory log set.
- *
- * Counters are updated incrementally by attachRewriteMetadata, decremented
- * when log entries are evicted from requestLogs, and cleared together with
- * requestLogs via DELETE /api/logs.
- *
- * This structure is intentionally kept as a Map to provide O(1) updates
- * and compact iteration when building usage snapshots for the frontend.
- *
- * @type {Map<string, number>}
- */
-const editRuleUsageCounters = new Map()
+const {
+  normalizeEditRule,
+  normalizeEditRulePreset,
+  deserializeEditRuleFromDisk,
+  serializeEditRuleForDisk,
+  splitLongStringIntoSegments,
+  parseJsonPath,
+  compileEditRule,
+  replaceTextLiteral,
+  coerceJsonPathScalarFromText
+} = require('./src/rules/schema')
+const { createRuleStore } = require('./src/rules/store')
+const { createTextRewriter } = require('./src/rules/text-rules')
+const { createJsonPathRewriter } = require('./src/rules/jsonpath')
+const {
+  attachRewriteMetadata: attachRewriteMetadataToStore,
+  hasAppliedRules
+} = require('./src/rules/metadata')
 
-/**
- * Normalize a user-supplied file reference for JSONPath rule values.
- *
- * @param {any} source
- * @returns {{ type: 'file', filename?: string, path?: string, originalName?: string } | null}
- */
-function normalizeJsonPathValueSource (source) {
-  if (!source || typeof source !== 'object') return null
-  if (source.type !== 'file') return null
-  const filename = safeString(source.filename)
-  const filePath = safeString(source.path)
-  if (!filename && !filePath) return null
-  const originalName = safeString(source.originalName)
-  return {
-    type: 'file',
-    ...(filename ? { filename } : {}),
-    ...(filePath ? { path: filePath } : {}),
-    ...(originalName ? { originalName } : {})
-  }
-}
+// Live edit rules: rules, presets, compiled caches, the enabled flag and the
+// usage counters live in the store; the rewriters close over it.
+const ruleStore = createRuleStore({
+  rulesFile: EDIT_RULES_FILE,
+  presetsFile: EDIT_RULE_PRESETS_FILE,
+  storageDir: STORAGE_DIR
+})
+const textRules = createTextRewriter(ruleStore)
+const jsonPathRules = createJsonPathRewriter(ruleStore)
 
-/**
- * Resolve a JSONPath rule value from a referenced file on disk.
- *
- * @param {{ type: 'file', filename?: string, path?: string }} source
- * @returns {string | null}
- */
-function resolveJsonPathValueFromSource (source) {
-  if (!source || source.type !== 'file') return null
-  const explicitPath = safeString(source.path)
-  const filename = safeString(source.filename)
-  if (!explicitPath && !filename) return null
-  const filePath = explicitPath
-    ? (path.isAbsolute(explicitPath) ? explicitPath : path.join(STORAGE_DIR, explicitPath))
-    : path.join(STORAGE_DIR, filename)
-  try {
-    if (!fs.existsSync(filePath)) return null
-    return fs.readFileSync(filePath, 'utf8')
-  } catch {
-    return null
-  }
-}
-
-/**
- * Coerce a JSONPath text value into boolean, number, JSON, or string.
- *
- * @param {string} rawText
- * @returns {{ value: any, valueType: 'boolean' | 'number' | 'json' | 'string' }}
- */
-function coerceJsonPathScalarFromText (rawText) {
-  const text = rawText == null ? '' : String(rawText)
-  const trimmed = text.trim()
-  const lower = trimmed.toLowerCase()
-
-  if (lower === 'true') {
-    return { value: true, valueType: 'boolean' }
-  }
-
-  if (lower === 'false') {
-    return { value: false, valueType: 'boolean' }
-  }
-
-  if (trimmed.length > 0) {
-    const parsed = Number(trimmed)
-    if (Number.isFinite(parsed)) {
-      return { value: parsed, valueType: 'number' }
-    }
-  }
-
-  if (trimmed.length > 0) {
-    try {
-      const parsedJson = JSON.parse(trimmed)
-      if (parsedJson !== null && typeof parsedJson === 'object') {
-        return { value: parsedJson, valueType: 'json' }
-      }
-    } catch {
-      // Ignore invalid JSON and fall back to string.
-    }
-  }
-
-  return { value: text, valueType: 'string' }
-}
+const loadEditRules = () => ruleStore.load()
+const loadEditRulePresets = () => ruleStore.loadPresets()
+const rebuildEditRuleCache = () => ruleStore.rebuildCache()
+const {
+  getCompiledRules,
+  getCompiledRulesForContext,
+  getCompiledJsonPathRules,
+  hasCompiledTextRules,
+  hasCompiledJsonPathRules,
+  hasAnyEditOrJsonPathRules
+} = ruleStore
+const {
+  applyCompiledRuleToText,
+  applyEditRulesToText,
+  applyEditRulesToHeaders,
+  applyEditRulesToBuffer
+} = textRules
+const { applyJsonPathRulesToObject, applyJsonPathRulesToProtobufBuffer } = jsonPathRules
+const attachRewriteMetadata = (logEntry, appliedRuleIds, phase) =>
+  attachRewriteMetadataToStore(logEntry, appliedRuleIds, phase, ruleStore)
 
 const { safeTrim, queryBool, safeString, parseListQuery, isValidId } = require('./src/util/strings')
 
@@ -589,454 +536,6 @@ function rebuildBypassUrlsForCurrentMode () {
   buildBypassMatchers()
 }
 
-/**
- * Normalise a raw edit-rule entry loaded from disk into the in-memory format.
- *
- * In particolare consente di rappresentare su disco i campi stringa molto
- * lunghi (per qualsiasi tipo di regola) come array di segmenti, mantenendo
- * però sempre stringhe piatte in memoria durante l'applicazione delle regole.
- * Qualsiasi proprietà che risulta essere un array di stringhe viene
- * ricomposta in una singola stringa.
- *
- * @param {object} [rule]
- * @returns {object}
- */
-function deserializeEditRuleFromDisk (rule = {}) {
-  const normalized = { ...rule }
-
-  // Convert any multi-segment on-disk representation back into flat strings so
-  // that the rest of the code can treat these fields uniformly. This applies
-  // to generic string fields shared by both jsonPath and text rules; marker
-  // lists for text rules are always represented via startVariants/endVariants.
-  const STRING_FIELDS = ['value', 'replacement', 'name', 'path', 'url']
-
-  for (const key of STRING_FIELDS) {
-    const current = normalized[key]
-    if (Array.isArray(current) && current.every(segment => typeof segment === 'string')) {
-      normalized[key] = current.join(' ')
-    }
-  }
-
-  return normalized
-}
-
-/**
- * Normalise a raw edit rule (either jsonPath or text) into the canonical
- * in-memory format used by the proxy.
- *
- * For `jsonPath` rules the structure is kept close to the on-disk
- * representation, with light validation of valueType/target.
- *
- * For `text` rules the canonical model is entirely based on
- * `startVariants` / `endVariants`, which are treated as OR-lists of markers
- * for the start and end boundaries.
- *
- * @param {object} [rule]
- * @returns {object}
- */
-function normalizeEditRule (rule = {}) {
-  const kind = rule.kind === 'jsonPath' ? 'jsonPath' : 'text'
-
-  if (kind === 'jsonPath') {
-    let valueType = 'string'
-    if (
-      rule.valueType === 'number' ||
-      rule.valueType === 'boolean' ||
-      rule.valueType === 'null' ||
-      rule.valueType === 'json'
-    ) {
-      valueType = rule.valueType
-    }
-
-    const valueSource = normalizeJsonPathValueSource(rule.valueSource)
-
-    const normalizedTarget =
-      rule.target === 'response' || rule.target === 'both'
-        ? rule.target
-        : 'request'
-
-    return {
-      id: rule.id || crypto.randomUUID(),
-      enabled: rule.enabled !== false,
-      kind,
-      name: rule.name || '',
-      path: safeString(rule.path),
-      value: valueSource ? '' : (Object.hasOwn(rule, 'value') ? rule.value : ''),
-      valueType,
-      valueSource,
-      // URL pattern su cui applicare la regola jsonPath; se vuoto la regola
-      // non verrà inclusa nella cache compilata.
-      url: safeString(rule.url),
-      // Bersaglio della regola: 'request', 'response' oppure 'both'. Per
-      // compatibilità all'indietro, le regole esistenti senza target esplicito
-      // vengono trattate come 'request'.
-      target: normalizedTarget
-    }
-  }
-
-  // Default text rule. Text rules now support optional URL scoping and
-  // request/response/both targeting, but for backwards compatibility existing
-  // rules without an explicit target continue to apply to both directions.
-  let normalizedTarget = 'both'
-  if (rule.target === 'request' || rule.target === 'response' || rule.target === 'both') {
-    normalizedTarget = rule.target
-  }
-
-  /**
-   * Normalise an optional array of string variants, trimming each entry and
-   * rimuovendo le stringhe vuote. Restituisce sempre un nuovo array (anche
-   * quando non sono presenti varianti valide).
-   *
-   * @param {any} value
-   * @returns {string[]}
-   */
-  function normaliseVariantArray (value) {
-    if (!Array.isArray(value)) return []
-    return value
-      .map(entry => safeString(entry).trim())
-      .filter(entry => entry.length > 0)
-  }
-
-  // Rules written by older versions (and the documented on-disk format) carry
-  // a single `start`/`end` pair; fold it into the variant lists so that they
-  // keep applying after an upgrade.
-  const legacyStart = safeString(rule.start).trim()
-  const legacyEnd = safeString(rule.end).trim()
-  const startVariants = normaliseVariantArray(
-    Array.isArray(rule.startVariants) && rule.startVariants.length
-      ? rule.startVariants
-      : (legacyStart ? [legacyStart] : [])
-  )
-  const endVariants = normaliseVariantArray(
-    Array.isArray(rule.endVariants) && rule.endVariants.length
-      ? rule.endVariants
-      : (legacyEnd ? [legacyEnd] : [])
-  )
-
-  return {
-    id: rule.id || crypto.randomUUID(),
-    enabled: rule.enabled !== false,
-    kind: 'text',
-    name: rule.name || '',
-    replacement: rule.replacement || '',
-    useRegex: rule.useRegex === true,
-    caseSensitive: rule.caseSensitive === true,
-    // Optional URL pattern; when non-empty, the rule will only be applied
-    // when the current URL context matches it (see textRuleMatchesUrl).
-    url: safeString(rule.url),
-    // Optional arrays of additional start/end variants used for OR matching.
-    // Questi non influenzano il formato legacy su disco e vengono espansi in
-    // più regole compilate all'interno di rebuildEditRuleCache.
-    startVariants,
-    endVariants,
-    // Optional phase target; defaults to 'both' for text rules so that legacy
-    // rules keep affecting both requests and responses unless narrowed.
-    target: normalizedTarget
-  }
-}
-
-/**
- * Strip runtime-only fields from a normalized edit rule before storing it
- * inside a preset.
- *
- * @param {object} rule
- * @returns {object}
- */
-function stripPresetRuntimeFields (rule = {}) {
-  const { id, enabled, ...rest } = rule
-  return rest
-}
-
-/**
- * Normalize an edit-rule preset payload into a canonical stored shape.
- *
- * @param {object} [preset]
- * @returns {{ id: string, name: string, kind: 'text' | 'jsonPath', rule: object, createdAt: string }}
- */
-function normalizeEditRulePreset (preset = {}) {
-  const kind = preset.kind === 'jsonPath' ? 'jsonPath' : 'text'
-  const name = safeTrim(preset.name) || 'Untitled preset'
-  const id = safeString(preset.id) || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  const rawRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
-  const normalizedRule = normalizeEditRule({ ...rawRule, kind })
-
-  return {
-    id,
-    name,
-    kind,
-    rule: stripPresetRuntimeFields(normalizedRule),
-    createdAt: typeof preset.createdAt === 'string' && preset.createdAt ? preset.createdAt : new Date().toISOString()
-  }
-}
-
-/**
- * Load edit-rule presets from disk into memory.
- */
-function loadEditRulePresets () {
-  try {
-    if (fs.existsSync(EDIT_RULE_PRESETS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(EDIT_RULE_PRESETS_FILE, 'utf8'))
-      if (Array.isArray(data)) {
-        editRulePresets = data.map(normalizeEditRulePreset)
-      }
-    }
-  } catch (error) {
-    console.error('[proxy] Error loading edit rule presets:', error)
-    editRulePresets = []
-  }
-}
-
-/**
- * Persist edit-rule presets to disk.
- *
- * @returns {Promise<void>}
- */
-async function saveEditRulePresets () {
-  try {
-    const payload = JSON.stringify(editRulePresets, null, 2)
-    await fsPromises.writeFile(EDIT_RULE_PRESETS_FILE, payload)
-  } catch (error) {
-    console.error('[proxy] Error saving edit rule presets:', error)
-  }
-}
-
-/**
- * Split a long string into whitespace-delimited segments, each with a maximum
- * length. This is used purely for on-disk formatting of very long JSONPath
- * rule values so that the JSON file remains readable/editable by humans.
- *
- * @param {string} text
- * @param {number} maxLen
- * @returns {string[]}
- */
-function splitLongStringIntoSegments (text, maxLen) {
-  const segments = []
-  const words = String(text).split(/\s+/).filter(Boolean)
-
-  let current = ''
-  for (const word of words) {
-    if (!current) {
-      current = word
-    } else if ((current + ' ' + word).length <= maxLen) {
-      current += ' ' + word
-    } else {
-      segments.push(current)
-      current = word
-    }
-  }
-
-  if (current) {
-    segments.push(current)
-  }
-
-  return segments
-}
-
-/**
- * Prepare an edit-rule entry for JSON serialization to disk.
- *
- * Very long string values in edit rules are emitted as arrays of shorter
- * string segments so that the resulting edit-rules.json is easier to read and
- * edit manually.
- *
- * @param {object} rule
- * @returns {object}
- */
-function serializeEditRuleForDisk (rule = {}) {
-  const out = { ...rule }
-
-  const MAX_SEGMENT_LENGTH = 160
-
-  const splitIfLong = key => {
-    const current = out[key]
-    if (typeof current !== 'string') return
-    const trimmed = current.trim()
-    if (!trimmed) {
-      out[key] = ''
-      return
-    }
-    if (trimmed.length > MAX_SEGMENT_LENGTH) {
-      out[key] = splitLongStringIntoSegments(trimmed, MAX_SEGMENT_LENGTH)
-    } else {
-      out[key] = trimmed
-    }
-  }
-
-  if (out && out.kind === 'jsonPath') {
-    splitIfLong('value')
-  }
-
-  if (out && out.kind === 'text') {
-    splitIfLong('replacement')
-
-    // The canonical model for text rules uses only startVariants/endVariants
-    // as marker lists; drop any legacy positional markers from the on-disk
-    // representation to keep the JSON clean and avoid confusion.
-    delete out.start
-    delete out.end
-  }
-
-  return out
-}
-
-/**
- * Load edit rules from disk into memory, normalising their structure.
- *
- * This transparently converts any on-disk multi-segment representation of
- * long string fields back into single strings before normalisation, so that
- * the rest of the code always works with flat string values.
- */
-function loadEditRules () {
-  try {
-    if (fs.existsSync(EDIT_RULES_FILE)) {
-      const data = JSON.parse(fs.readFileSync(EDIT_RULES_FILE, 'utf8'))
-      if (Array.isArray(data)) {
-        editRules = data
-          .map(deserializeEditRuleFromDisk)
-          .map(normalizeEditRule)
-      }
-    }
-  } catch (error) {
-    console.error('[proxy] Error loading edit rules:', error)
-    editRules = []
-  }
-}
-
-/**
- * Persist the current in-memory edit rules to disk.
- *
- * Uses serializeEditRuleForDisk so that very long JSONPath rule values (like
- * the Jarvis Persona prompt) are written in a multi-segment form that is
- * easier to inspect and edit by hand.
- *
- * @returns {Promise<void>}
- */
-async function saveEditRules () {
-  try {
-    const diskRules = editRules.map(serializeEditRuleForDisk)
-    const payload = JSON.stringify(diskRules, null, 2)
-    await fsPromises.writeFile(EDIT_RULES_FILE, payload)
-  } catch (error) {
-    console.error('[proxy] Error saving edit rules:', error)
-  }
-}
-
-let compiledEditRules = []
-let compiledJsonPathRules = []
-
-function parseJsonPath (path) {
-  if (!path || typeof path !== 'string') return []
-
-  const trimmed = path.trim()
-  if (!trimmed) return []
-
-  let s = trimmed
-
-  // Support optional leading symbols like "root" or "$" (e.g. "root.f1.f2" or "$.f1[0]")
-  if (s === 'root' || s === '$') {
-    return []
-  }
-
-  if (s.startsWith('root.')) {
-    s = s.slice(5)
-  } else if (s.startsWith('root[')) {
-    s = s.slice(4)
-  } else if (s.startsWith('$.')) {
-    s = s.slice(2)
-  } else if (s.startsWith('$[')) {
-    s = s.slice(1)
-  }
-
-  const segments = []
-  let i = 0
-
-  while (i < s.length) {
-    const ch = s[i]
-
-    if (ch === '.') {
-      i += 1
-      continue
-    }
-
-    if (ch === '[') {
-      const end = s.indexOf(']', i + 1)
-      if (end === -1) return []
-
-      const inside = s.slice(i + 1, end).trim()
-      if (!inside) return []
-
-      // Support numeric indices: root.items[3].name
-      if (/^\d+$/.test(inside)) {
-        const index = Number.parseInt(inside, 10)
-        if (!Number.isFinite(index) || index < 0) return []
-        segments.push({ type: 'index', index })
-      } else if (inside.startsWith('?')) {
-        // Support filter expressions: [?(@.field=='value')] or [?(@.field=="value")]
-        // Pattern: ?(@.key=='value') or ?(@.key=="value")
-        const filterMatch = inside.match(/^\?\s*\(\s*@\.(\w+)\s*==\s*['"]([^'"]+)['"]\s*\)$/)
-        if (!filterMatch) return []
-        const filterKey = filterMatch[1]
-        const filterValue = filterMatch[2]
-        segments.push({ type: 'filter', key: filterKey, value: filterValue })
-      } else {
-        return []
-      }
-      i = end + 1
-      continue
-    }
-
-    // Parse identifier segment until next '.', '[' or ']' (dot-notation key)
-    let j = i
-    while (j < s.length && s[j] !== '.' && s[j] !== '[' && s[j] !== ']') {
-      j += 1
-    }
-
-    const key = s.slice(i, j).trim()
-    if (!key) return []
-
-    segments.push({ type: 'key', key })
-    i = j
-  }
-
-  return segments
-}
-
-function getCompiledJsonPathRules () {
-  if (!editRulesEnabled) return []
-  return compiledJsonPathRules
-}
-
-/**
- * Check if there are any active compiled text edit rules.
- * @returns {boolean}
- */
-function hasCompiledTextRules () {
-  const rules = getCompiledRules()
-  return Array.isArray(rules) && rules.length > 0
-}
-
-/**
- * Check if there are any active compiled JSONPath rules.
- * @returns {boolean}
- */
-function hasCompiledJsonPathRules () {
-  const rules = getCompiledJsonPathRules()
-  return Array.isArray(rules) && rules.length > 0
-}
-
-/**
- * Determine whether there are any active text edit or JSONPath rules.
- *
- * This is a lightweight helper used by hot paths to decide whether it is
- * worth invoking expensive Connect/protobuf or HTTP body rewriting logic
- * when interactive logging is disabled.
- *
- * @returns {boolean}
- */
-function hasAnyEditOrJsonPathRules () {
-  return hasCompiledTextRules() || hasCompiledJsonPathRules()
-}
-
 const {
   CONNECT_MAX_FRAMES_LIMIT,
   CONNECT_MAX_FRAME_BYTES_LIMIT,
@@ -1049,476 +548,6 @@ const {
   buildConnectViewForClient
 } = require('./src/codecs/connect')
 
-function replaceTextLiteral (text, start, end, replacement, caseSensitive) {
-  if (!start && !end) return { text, count: 0 }
-  
-  const normalize = s => caseSensitive ? s : s.toLowerCase()
-  const haystack = normalize(text)
-  const parts = []
-  let lastIndex = 0
-  let count = 0
-
-  if (start && end) {
-    // between mode
-    const startSearch = normalize(start)
-    const endSearch = normalize(end)
-    let startIdx = haystack.indexOf(startSearch, lastIndex)
-    while (startIdx !== -1) {
-      const endIdx = haystack.indexOf(endSearch, startIdx + start.length)
-      if (endIdx === -1) break
-      parts.push(text.slice(lastIndex, startIdx), replacement)
-      lastIndex = endIdx + end.length
-      count++
-      startIdx = haystack.indexOf(startSearch, lastIndex)
-    }
-  } else {
-    // simple replace mode
-    const needle = start || end
-    const searchNeedle = normalize(needle)
-    let idx = haystack.indexOf(searchNeedle, lastIndex)
-    while (idx !== -1) {
-      parts.push(text.slice(lastIndex, idx), replacement)
-      lastIndex = idx + needle.length
-      count++
-      idx = haystack.indexOf(searchNeedle, lastIndex)
-    }
-  }
-
-  if (count === 0) return { text, count }
-  parts.push(text.slice(lastIndex))
-  return { text: parts.join(''), count }
-}
-
-
-function compileEditRule (rule) {
-  if (!rule || !rule.enabled) return null
-
-  const startRaw = safeString(rule.start)
-  const endRaw = safeString(rule.end)
-
-  if (!startRaw && !endRaw) {
-    return null
-  }
-
-  const useRegex = !!rule.useRegex
-  const caseSensitive = !!rule.caseSensitive
-  const flags = `g${caseSensitive ? '' : 'i'}`
-
-  const compiled = {
-    rule,
-    mode: null,
-    useRegex,
-    caseSensitive,
-    start: startRaw,
-    end: endRaw
-  }
-
-  if (useRegex) {
-    if (startRaw && endRaw) {
-      compiled.mode = 'between'
-      compiled.regex = new RegExp(`${startRaw}[\\s\\S]*?${endRaw}`, flags)
-    } else if (startRaw) {
-      compiled.mode = 'prefix'
-      compiled.regex = new RegExp(startRaw, flags)
-    } else {
-      compiled.mode = 'suffix'
-      compiled.regex = new RegExp(endRaw, flags)
-    }
-    return compiled
-  }
-
-  if (startRaw && endRaw) {
-    compiled.mode = 'between'
-  } else if (startRaw) {
-    compiled.mode = 'prefix'
-  } else {
-    compiled.mode = 'suffix'
-  }
-
-  return compiled
-}
-
-/**
- * Rebuild the in-memory caches for edit rules (text + JSONPath).
- *
- * Behaviour:
- * - JSONPath rules are validated and parsed into segments, and only rules with
- *   a non-empty URL pattern are included.
- * - Text rules support optional OR-variants via `startVariants` and
- *   `endVariants`. All possible marker combinations are expanded into
- *   individual compiled rules which share the same logical rule id.
- *
- * This keeps the on-disk/editable representation compact while allowing the
- * runtime matcher to operate on simple start/end pairs.
- */
-function rebuildEditRuleCache () {
-  compiledEditRules = []
-  compiledJsonPathRules = []
-
-  for (const rule of editRules) {
-    if (!rule || rule.enabled === false) continue
-
-    if (rule.kind === 'jsonPath') {
-      // Pre-parse the path into structured segments for fast traversal at runtime.
-      // Le regole jsonPath richiedono anche un URL non vuoto per essere attive.
-      const urlPatternRaw = safeString(rule.url)
-      const urlPattern = urlPatternRaw.trim()
-      if (!urlPattern) continue
-
-      const segments = parseJsonPath(rule.path)
-      if (!segments || !segments.length) continue
-
-      let valueType = 'string'
-      if (
-        rule.valueType === 'number' ||
-        rule.valueType === 'boolean' ||
-        rule.valueType === 'null' ||
-        rule.valueType === 'json'
-      ) {
-        valueType = rule.valueType
-      }
-
-      const normalizedTarget =
-        rule.target === 'response' || rule.target === 'both'
-          ? rule.target
-          : 'request'
-
-      compiledJsonPathRules.push({
-        id: rule.id,
-        kind: 'jsonPath',
-        name: rule.name || '',
-        path: rule.path,
-        segments,
-        value: rule.value,
-        valueType,
-        valueSource: rule.valueSource || null,
-        url: urlPattern,
-        target: normalizedTarget
-      })
-      continue
-    }
-
-    // Text rules: expand the OR-variant marker lists into a set of simple
-    // start/end combinations. All variant combinations share the same logical
-    // rule id so that logging and usage reporting remain grouped. The
-    // canonical configuration surface for text rules is
-    // startVariants/endVariants only.
-    const variantStarts = Array.isArray(rule.startVariants)
-      ? rule.startVariants.map(entry => safeString(entry)).filter(s => s.length > 0)
-      : []
-    const variantEnds = Array.isArray(rule.endVariants)
-      ? rule.endVariants.map(entry => safeString(entry)).filter(s => s.length > 0)
-      : []
-
-    const allStarts = []
-    const allEnds = []
-
-    for (const s of variantStarts) {
-      if (!allStarts.includes(s)) allStarts.push(s)
-    }
-
-    for (const e of variantEnds) {
-      if (!allEnds.includes(e)) allEnds.push(e)
-    }
-
-    // If there are no usable markers at all, skip this text rule.
-    if (!allStarts.length && !allEnds.length) {
-      continue
-    }
-
-    const combinations = []
-
-    if (allStarts.length && allEnds.length) {
-      // Full cartesian product of start/end markers.
-      for (const start of allStarts) {
-        for (const end of allEnds) {
-          combinations.push({ start, end })
-        }
-      }
-    } else if (allStarts.length) {
-      // Only prefix markers: each start becomes an independent prefix rule.
-      for (const start of allStarts) {
-        combinations.push({ start, end: '' })
-      }
-    } else {
-      // Only suffix markers: each end becomes an independent suffix rule.
-      for (const end of allEnds) {
-        combinations.push({ start: '', end })
-      }
-    }
-
-    for (const combo of combinations) {
-      const variantRule = {
-        ...rule,
-        start: combo.start,
-        end: combo.end
-      }
-      let compiled = null
-      try {
-        compiled = compileEditRule(variantRule)
-      } catch (error) {
-        // An invalid regular expression in one rule must not take the whole
-        // rule set down with it: skip that combination and keep going.
-        logWarn('edit-rules', `Skipping rule ${rule.id || '(no id)'} "${rule.name || ''}": ${error.message}`)
-        continue
-      }
-      if (compiled) {
-        compiledEditRules.push(compiled)
-      }
-    }
-  }
-}
-
-function getCompiledRules () {
-  if (!editRulesEnabled) return []
-  return compiledEditRules
-}
-
-/**
- * Return the subset of compiled edit rules that are applicable to the given
- * URL/phase context. This performs per-rule phase/URL checks once per
- * call-site so that hot paths (headers/body rewrites) can iterate a smaller
- * ruleset.
- *
- * The function is intentionally conservative: in the absence of a valid
- * context object it returns the full compiled rules array to preserve legacy
- * behaviour.
- *
- * @param {{requestUrl?: string, fullUrl?: string, phase?: string, candidates?: { raw: string, host: (string|null), path: (string|null) }[]}|null} context
- * @returns {Array<{ rule: any }>} Filtered compiled rules.
- */
-function getCompiledRulesForContext (context) {
-  const all = getCompiledRules()
-  if (!all.length || !context || typeof context !== 'object') return all
-
-  const matchContext = context.candidates ? context : buildUrlMatchContext(context)
-  const phase = matchContext.phase === 'response' ? 'response' : 'request'
-
-  return all.filter(compiled => {
-    const rule = compiled && compiled.rule
-    if (!rule || typeof rule !== 'object') return false
-
-    let target = 'both'
-    if (rule.target === 'request' || rule.target === 'response' || rule.target === 'both') {
-      target = rule.target
-    }
-
-    if (target === 'request' && phase === 'response') return false
-    if (target === 'response' && phase === 'request') return false
-
-    return textRuleMatchesUrl(rule, matchContext)
-  })
-}
-
-function applyJsonPathRulesToObject (root, context = {}) {
-  if (!root || typeof root !== 'object') {
-    return { object: root, appliedRuleIds: [], changed: false }
-  }
-
-  const rules = getCompiledJsonPathRules()
-  if (!Array.isArray(rules) || rules.length === 0) {
-    return { object: root, appliedRuleIds: [], changed: false }
-  }
-
-  const baseContext = context && typeof context === 'object' ? context : {}
-  const matchContext = baseContext.candidates ? baseContext : buildUrlMatchContext(baseContext)
-
-  const phase = matchContext && matchContext.phase === 'response' ? 'response' : 'request'
-
-  const appliedSet = new Set()
-  let changed = false
-
-  for (const rule of rules) {
-    if (!rule || !Array.isArray(rule.segments) || rule.segments.length === 0) continue
-
-    const target = rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
-
-    if (target === 'request' && phase !== 'request') continue
-    if (target === 'response' && phase !== 'response') continue
-
-    // Le regole jsonPath vengono applicate solo se l'URL corrente matcha il
-    // pattern associato alla regola.
-    if (!jsonPathRuleMatchesUrl(rule, matchContext)) continue
-
-    let effectiveValue = rule.value
-    let effectiveValueType = rule.valueType
-    if (rule.valueSource && rule.valueSource.type === 'file') {
-      const fileText = resolveJsonPathValueFromSource(rule.valueSource)
-      if (fileText === null) continue
-      const coerced = coerceJsonPathScalarFromText(fileText)
-      effectiveValue = coerced.value
-      effectiveValueType = coerced.valueType
-    }
-
-    const segments = rule.segments
-    let parent = root
-    let validPath = true
-
-    // Traverse all but the last segment to find the parent container
-    for (let i = 0; i < segments.length - 1; i++) {
-      const seg = segments[i]
-      if (!parent || typeof parent !== 'object') {
-        validPath = false
-        break
-      }
-
-      if (seg.type === 'key') {
-        if (!Object.hasOwn(parent, seg.key)) {
-          validPath = false
-          break
-        }
-        parent = parent[seg.key]
-      } else if (seg.type === 'index') {
-        if (!Array.isArray(parent)) {
-          validPath = false
-          break
-        }
-        const idx = seg.index
-        if (idx < 0 || idx >= parent.length) {
-          validPath = false
-          break
-        }
-        parent = parent[idx]
-      } else if (seg.type === 'filter') {
-        // Filter segment: find the first array element where element[key] === value
-        if (!Array.isArray(parent)) {
-          validPath = false
-          break
-        }
-        const found = parent.find(item =>
-          item && typeof item === 'object' && item[seg.key] === seg.value
-        )
-        if (!found) {
-          validPath = false
-          break
-        }
-        parent = found
-      } else {
-        validPath = false
-        break
-      }
-    }
-
-    if (!validPath) continue
-
-    const lastSeg = segments[segments.length - 1]
-    let container = parent
-    let keyOrIndex
-    let currentValue
-
-    if (lastSeg.type === 'key') {
-      if (!container || typeof container !== 'object' || !Object.hasOwn(container, lastSeg.key)) {
-        continue
-      }
-      keyOrIndex = lastSeg.key
-      currentValue = container[lastSeg.key]
-    } else if (lastSeg.type === 'index') {
-      if (!Array.isArray(container)) continue
-      const idx = lastSeg.index
-      if (idx < 0 || idx >= container.length) continue
-      keyOrIndex = idx
-      currentValue = container[idx]
-    } else if (lastSeg.type === 'filter') {
-      // Filter as last segment: find the matching element in the array and replace it
-      if (!Array.isArray(container)) continue
-      const foundIndex = container.findIndex(item =>
-        item && typeof item === 'object' && item[lastSeg.key] === lastSeg.value
-      )
-      if (foundIndex === -1) continue
-      keyOrIndex = foundIndex
-      currentValue = container[foundIndex]
-    } else {
-      continue
-    }
-
-    // Compute the new value based on valueType
-    let newValue
-    if (effectiveValueType === 'number') {
-      if (typeof effectiveValue === 'number') {
-        newValue = effectiveValue
-      } else if (typeof effectiveValue === 'string') {
-        const parsed = Number(effectiveValue.trim())
-        if (!Number.isFinite(parsed)) continue
-        newValue = parsed
-      } else {
-        continue
-      }
-    } else if (effectiveValueType === 'boolean') {
-      if (typeof effectiveValue === 'boolean') {
-        newValue = effectiveValue
-      } else if (typeof effectiveValue === 'string') {
-        const lower = effectiveValue.trim().toLowerCase()
-        if (lower === 'true') newValue = true
-        else if (lower === 'false') newValue = false
-        else continue
-      } else {
-        continue
-      }
-    } else if (effectiveValueType === 'null') {
-      newValue = null
-    } else if (effectiveValueType === 'json') {
-      // Explicit JSON value type: treat the rule value as JSON and replace the
-      // target with the parsed object/array. This is primarily for advanced
-      // callers using the HTTP API directly.
-      if (effectiveValue && typeof effectiveValue === 'object') {
-        newValue = effectiveValue
-      } else if (typeof effectiveValue === 'string') {
-        try {
-          newValue = JSON.parse(effectiveValue)
-        } catch {
-          // Invalid JSON payload for this rule; skip instead of inserting a
-          // malformed value into the object tree.
-          continue
-        }
-      } else {
-        // Unsupported representation for a JSON value; ignore the rule.
-        continue
-      }
-    } else {
-      // Default branch: treat the rule value as a string, but when the current
-      // JSON value at the target path is an object/array we optimistically
-      // attempt to parse the rule value as JSON so that whole objects can be
-      // replaced even when the UI only exposes a "string" value type.
-      if (
-        currentValue &&
-        typeof currentValue === 'object' &&
-        typeof effectiveValue === 'string'
-      ) {
-        const text = effectiveValue.trim()
-        if (text) {
-          try {
-            newValue = JSON.parse(text)
-          } catch {
-            // If parsing fails, fall back to the raw string representation.
-            newValue = effectiveValue
-          }
-        } else {
-          newValue = effectiveValue
-        }
-      } else {
-        newValue = effectiveValue != null ? String(effectiveValue) : ''
-      }
-    }
-
-    const isSame =
-      (newValue === currentValue) ||
-      (typeof newValue === 'number' && Number.isNaN(newValue) && typeof currentValue === 'number' && Number.isNaN(currentValue))
-
-    if (isSame) continue
-
-    container[keyOrIndex] = newValue
-    changed = true
-    if (rule.id) {
-      appliedSet.add(rule.id)
-    }
-  }
-
-  return {
-    object: root,
-    appliedRuleIds: Array.from(appliedSet),
-    changed
-  }
-}
 
 const {
   readVarint,
@@ -1538,281 +567,6 @@ const {
 
 
 /**
- * Apply JSONPath rules directly to a protobuf message buffer when possible,
- *
- * The helper:
- * - quickly checks whether there are any JSONPath rules that could match the
- *   current URL context before attempting protobuf/JSON decoding;
- * - extracts a lightweight JSON view from the protobuf buffer only when such
- *   rules are present;
- * - re-encodes the protobuf message when top-level string fields are changed.
- *
- * This keeps behaviour identical while avoiding expensive protobuf parsing
- * when no JSONPath rules are applicable to the current Connect payload.
- *
- * @param {Buffer} buffer - Protobuf message buffer for a single Connect frame.
- * @param {object|null} initialJson - Optional pre-extracted JSON view.
- * @param {object} [context] - URL/phase context used for JSONPath rule matching.
- * @returns {{buffer: Buffer, json: any, appliedRuleIds: string[], changed: boolean}}
- */
-function applyJsonPathRulesToProtobufBuffer (buffer, initialJson, context = {}) {
-  if (isEmptyBuffer(buffer)) {
-    return { buffer, json: initialJson, appliedRuleIds: [], changed: false }
-  }
-
-  const rules = getCompiledJsonPathRules()
-  if (!Array.isArray(rules) || rules.length === 0) {
-    return { buffer, json: initialJson, appliedRuleIds: [], changed: false }
-  }
-
-  // Cheap URL-based prefilter: if no rule matches the current URL/phase
-  // context, skip protobuf/JSON work entirely for this frame.
-  const baseContext = context && typeof context === 'object' ? context : {}
-  const matchContext = baseContext.candidates ? baseContext : buildUrlMatchContext(baseContext)
-  const hasMatchingRule = rules.some(rule => jsonPathRuleMatchesUrl(rule, matchContext))
-  if (!hasMatchingRule) {
-    return { buffer, json: initialJson, appliedRuleIds: [], changed: false }
-  }
-
-  let json = initialJson
-  if (!json || typeof json !== 'object') {
-    json = extractJsonFromProtobufBuffer(buffer)
-    if (!json || typeof json !== 'object') {
-      return { buffer, json: initialJson || json, appliedRuleIds: [], changed: false }
-    }
-  }
-
-  const normalizedJson = normalizeNestedJsonStrings(json)
-  const result = applyJsonPathRulesToObject(normalizedJson, matchContext)
-  if (!result || !result.changed) {
-    return {
-      buffer,
-      json: result ? result.object : json,
-      appliedRuleIds: result ? (result.appliedRuleIds || []) : [],
-      changed: false
-    }
-  }
-
-  const after = result.object || {}
-  let nextBuffer = buffer
-  let mutated = false
-
-  // Always re-encode the entire object from the modified JSON.
-  try {
-    nextBuffer = encodeJsonToProtobuf(after)
-    mutated = true
-  } catch {
-    // Re-encoding failed; return original buffer but keep the JSON view
-    // changes for logging purposes.
-    return {
-      buffer,
-      json: after,
-      appliedRuleIds: result.appliedRuleIds || [],
-      changed: false
-    }
-  }
-
-  return {
-    buffer: nextBuffer,
-    json: after,
-    appliedRuleIds: result.appliedRuleIds || [],
-    changed: mutated
-  }
-}
-
-/**
- * Apply a single compiled text edit rule to the provided string.
- *
- * Honours per-rule target (request/response/both) e l'eventuale URL scoping
- * prima di tentare la sostituzione. In caso di match aggiunge l'id della
- * regola a `appliedSet` e restituisce il testo aggiornato.
- *
- * @param {{ rule: object, mode: string|null, useRegex: boolean, caseSensitive: boolean, start: string, end: string, regex?: RegExp }} compiled
- * @param {string} text
- * @param {Set<string>} appliedSet
- * @param {{ requestUrl?: string, fullUrl?: string, phase?: string }|null} [context]
- * @returns {{ text: string, changed: boolean }}
- */
-function applyCompiledRuleToText (compiled, text, appliedSet, context) {
-  const { rule, mode, useRegex, caseSensitive } = compiled
-
-  // When a context is provided, honour per-rule target (request/response/both)
-  // and optional URL scoping before attempting any text replacement.
-  if (context && typeof context === 'object' && rule && typeof rule === 'object') {
-    const phase = context.phase === 'response' ? 'response' : 'request'
-
-    let target = 'both'
-    if (rule.target === 'request' || rule.target === 'response' || rule.target === 'both') {
-      target = rule.target
-    }
-
-    if (target === 'request' && phase === 'response') {
-      return { text, changed: false }
-    }
-    if (target === 'response' && phase === 'request') {
-      return { text, changed: false }
-    }
-
-    if (!textRuleMatchesUrl(rule, context)) {
-      return { text, changed: false }
-    }
-  }
-
-  if (useRegex) {
-    if (!compiled.regex) {
-      return { text, changed: false }
-    }
-
-    compiled.regex.lastIndex = 0
-    let changed = false
-    const next = text.replace(compiled.regex, () => {
-      appliedSet.add(rule.id)
-      changed = true
-      return rule.replacement
-    })
-
-    return {
-      text: next,
-      changed
-    }
-  }
-
-  let result
-  if (mode === 'between') {
-    result = replaceTextLiteral(text, compiled.start, compiled.end, rule.replacement, caseSensitive)
-  } else if (mode === 'prefix') {
-    result = replaceTextLiteral(text, compiled.start, null, rule.replacement, caseSensitive)
-  } else {
-    result = replaceTextLiteral(text, compiled.end, null, rule.replacement, caseSensitive)
-  }
-
-  if (result.count > 0) {
-    appliedSet.add(rule.id)
-    return {
-      text: result.text,
-      changed: true
-    }
-  }
-
-  return {
-    text,
-    changed: false
-  }
-}
-
-function applyEditRulesToText (text) {
-  if (typeof text !== 'string' || text.length === 0) {
-    return { text, appliedRuleIds: [], changed: false }
-  }
-
-  // Optional URL/phase context is forwarded to individual rules so they can
-  // implement scoping similar to JSONPath-based rules. When a context is
-  // present, we pre-filter the compiled rules once per call to avoid
-  // repeating phase/URL checks for every header/body value.
-  const rawContext = arguments[1] && typeof arguments[1] === 'object' ? arguments[1] : null
-  const matchContext = rawContext ? buildUrlMatchContext(rawContext) : null
-
-  const compiledRules = matchContext ? getCompiledRulesForContext(matchContext) : getCompiledRules()
-  if (!compiledRules.length) {
-    return { text, appliedRuleIds: [], changed: false }
-  }
-
-  const appliedSet = new Set()
-  let current = text
-  let changed = false
-
-  for (const compiled of compiledRules) {
-    const result = applyCompiledRuleToText(compiled, current, appliedSet, matchContext || rawContext)
-    if (result.changed) {
-      current = result.text
-      changed = true
-    }
-  }
-
-  return {
-    text: current,
-    appliedRuleIds: Array.from(appliedSet),
-    changed
-  }
-}
-
-/**
- * Apply edit rules to HTTP headers.
- *
- * Contract:
- * - Call this before sending any upstream request to allow header rewrites.
- * - Call this before sending upstream response headers back to the client.
- *
- * This keeps header rewrite behaviour consistent across proxy/MITM/bypass
- * flows without duplicating inline header-munging logic.
- */
-function applyEditRulesToHeaders (headers = {}, context) {
-  const rawContext = context && typeof context === 'object' ? context : null
-  const matchContext = rawContext
-    ? (Array.isArray(rawContext.candidates) ? rawContext : buildUrlMatchContext(rawContext))
-    : null
-
-  const compiledRules = matchContext ? getCompiledRulesForContext(matchContext) : getCompiledRules()
-  if (!compiledRules.length) {
-    return { headers, appliedRuleIds: [], changed: false }
-  }
-
-  const appliedSet = new Set()
-  const resultHeaders = {}
-  let changed = false
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (Array.isArray(value)) {
-      const updatedValues = value.map(entry => {
-        if (typeof entry !== 'string') return entry
-        let current = entry
-        let entryChanged = false
-        for (const compiled of compiledRules) {
-          const result = applyCompiledRuleToText(
-            compiled,
-            current,
-            appliedSet,
-            matchContext || rawContext
-          )
-          if (result.changed) {
-            current = result.text
-            entryChanged = true
-          }
-        }
-        if (entryChanged) changed = true
-        return current
-      })
-      resultHeaders[key] = updatedValues
-    } else if (typeof value === 'string') {
-      let current = value
-      let entryChanged = false
-      for (const compiled of compiledRules) {
-        const result = applyCompiledRuleToText(
-          compiled,
-          current,
-          appliedSet,
-          matchContext || rawContext
-        )
-        if (result.changed) {
-          current = result.text
-          entryChanged = true
-        }
-      }
-      if (entryChanged) changed = true
-      resultHeaders[key] = current
-    } else {
-      resultHeaders[key] = value
-    }
-  }
-
-  return {
-    headers: resultHeaders,
-    appliedRuleIds: Array.from(appliedSet),
-    changed
-  }
-}
-
-/**
  * Apply header rewrites and attach metadata to log entry in one step.
  * Returns the (possibly modified) headers object.
  *
@@ -1827,150 +581,6 @@ function applyHeaderRewrites (headers, context, logEntry) {
     attachRewriteMetadata(logEntry, result.appliedRuleIds, context.phase)
   }
   return result.changed ? result.headers : headers
-}
-
-function applyEditRulesToBuffer (buffer, context) {
-  if (isEmptyBuffer(buffer)) {
-    return { buffer, appliedRuleIds: [], changed: false }
-  }
-
-  // Skip clearly binary payloads to avoid wasted UTF-8 decoding and regex work.
-  // This reuses the same printable heuristics used in protobuf paths.
-  const ratio = printableRatio(buffer)
-  if (ratio < 0.3) {
-    return { buffer, appliedRuleIds: [], changed: false }
-  }
-
-  let text
-  try {
-    text = buffer.toString('utf8')
-  } catch (error) {
-    logDebug('applyEditRulesToBuffer', 'Failed to decode buffer as UTF‑8', error)
-    return { buffer, appliedRuleIds: [], changed: false }
-  }
-
-  const { text: nextText, appliedRuleIds, changed } = applyEditRulesToText(text, context)
-  if (!changed) {
-    return { buffer, appliedRuleIds, changed: false }
-  }
-
-  return {
-    buffer: Buffer.from(nextText, 'utf8'),
-    appliedRuleIds,
-    changed: true,
-    // Structured text snapshots for before/after views when pure text rules
-    // are applied outside of JSONPath contexts.
-    beforeText: text,
-    afterText: nextText
-  }
-}
-
-/**
- * Attach per-rule rewrite metadata to a log entry and update global
- * edit-rule usage counters.
- *
- * For each rule id in appliedRuleIds this function ensures that at most
- * one metadata entry is stored on the log entry, and increments the
- * in-memory usage counter the first time the rule is seen for that log
- * entry. This keeps aggregation O(1) per rule id without rescanning
- * requestLogs when building reports.
- *
- * @param {object|null} logEntry - Mutable log entry to enrich.
- * @param {string[]} appliedRuleIds - Rule identifiers that matched for this operation.
- * @param {string|undefined} phase - Phase hint ('request' | 'response' | 'both').
- * @returns {void}
- */
-function attachRewriteMetadata (logEntry, appliedRuleIds, phase) {
-  if (!logEntry || !Array.isArray(appliedRuleIds) || appliedRuleIds.length === 0) return
-  if (!logEntry.rewrites) {
-    logEntry.rewrites = []
-  }
-
-  // Normalise the phase hint to one of 'request' | 'response' | 'both' | null.
-  const normalizedPhase =
-    phase === 'request' || phase === 'response'
-      ? phase
-      : phase === 'both'
-        ? 'both'
-        : null
-
-  for (const id of appliedRuleIds) {
-    if (!id) continue
-
-    // Reuse or create a single metadata entry per rule id, and accumulate
-    // the phases in which it actually applied for this log entry.
-    let entry = logEntry.rewrites.find(e => e && e.id === id)
-
-    const isNewEntry = !entry
-    if (!entry) {
-      entry = { id }
-
-      const rule = Array.isArray(editRules)
-        ? editRules.find(r => r && r.id === id)
-        : null
-
-      if (rule) {
-        if (typeof rule.name === 'string' && rule.name.trim()) {
-          entry.name = rule.name.trim()
-        }
-
-        if (typeof rule.kind === 'string' && rule.kind.trim()) {
-          entry.kind = rule.kind.trim()
-        }
-
-        if (typeof rule.url === 'string' && rule.url.trim()) {
-          entry.url = rule.url.trim()
-        }
-
-        // Normalise configured target so the frontend can still surface how
-        // the rule is *defined* in the UI when no applied phase metadata is
-        // available.
-        const rawTarget = safeTrim(rule.target)
-        if (rawTarget === 'request' || rawTarget === 'response' || rawTarget === 'both') {
-          entry.target = rawTarget
-        } else if (rule.kind === 'text') {
-          // Text rules historically applied to both phases when target was omitted.
-          entry.target = 'both'
-        } else if (rule.kind === 'jsonPath') {
-          // JSONPath rules default to request when not explicitly set.
-          entry.target = 'request'
-        }
-      } else {
-        // Rule has been deleted or is otherwise missing; keep a minimal stub
-        // so the UI can still surface that a rewrite occurred.
-        entry.kind = 'unknown'
-      }
-    }
-
-    if (isNewEntry) {
-      const prev = editRuleUsageCounters.get(id) || 0
-      editRuleUsageCounters.set(id, prev + 1)
-    }
-
-    // Track where the rule actually applied for this specific log entry.
-    if (normalizedPhase) {
-      if (normalizedPhase === 'both') {
-        entry.appliedPhases = ['request', 'response']
-        entry.appliedScope = 'both'
-      } else {
-        const phases = Array.isArray(entry.appliedPhases) ? entry.appliedPhases.slice() : []
-        if (!phases.includes(normalizedPhase)) {
-          phases.push(normalizedPhase)
-        }
-        entry.appliedPhases = phases
-
-        if (phases.length === 2) {
-          entry.appliedScope = 'both'
-        } else if (phases.length === 1) {
-          entry.appliedScope = phases[0]
-        }
-      }
-    }
-
-    if (isNewEntry) {
-      logEntry.rewrites.push(entry)
-    }
-  }
 }
 
 const {
@@ -4095,7 +2705,6 @@ function findMatchingLocalResource (requestUrl, fullUrl) {
 // Load interactive mode, filter mode, and global feature modes from disk
 const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
 let interactiveModeEnabled = true // interactive mode flag
-let editRulesEnabled = true // global live edit rules flag
 let localResourcesEnabled = true // global local resources flag
 let filterRulesEnabled = true // global filter rules flag
 let blockedRulesEnabled = true // global blocked rules flag
@@ -4106,7 +2715,7 @@ try {
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
     interactiveModeEnabled = config.interactiveModeEnabled !== false
     if (typeof config.editRulesEnabled === 'boolean') {
-      editRulesEnabled = config.editRulesEnabled
+      ruleStore.setEnabled(config.editRulesEnabled)
     }
     if (typeof config.localResourcesEnabled === 'boolean') {
       localResourcesEnabled = config.localResourcesEnabled
@@ -4163,7 +2772,7 @@ function persistConfig () {
       const updated = {
         ...existing,
         interactiveModeEnabled,
-        editRulesEnabled,
+        editRulesEnabled: ruleStore.isEnabled(),
         localResourcesEnabled,
         filterRulesEnabled,
         blockedRulesEnabled,
@@ -4396,20 +3005,7 @@ function addLog (logEntry) {
       // requestLogs window by decrementing counts for any rules that were
       // recorded on the evicted log entry.
       if (Array.isArray(removed.rewrites)) {
-        for (const rewrite of removed.rewrites) {
-          const id = rewrite && rewrite.id
-          if (!id) continue
-
-          const current = editRuleUsageCounters.get(id)
-          if (typeof current === 'number' && current > 0) {
-            const next = current - 1
-            if (next > 0) {
-              editRuleUsageCounters.set(id, next)
-            } else {
-              editRuleUsageCounters.delete(id)
-            }
-          }
-        }
+        ruleStore.releaseUsage(removed.rewrites.map(rewrite => rewrite && rewrite.id))
       }
     }
   }
@@ -4678,17 +3274,6 @@ function handleBooleanToggleEndpoint ({ req, res, assignValue, responseFieldName
  */
 function wantsInteractiveLogging (logEntry) {
   return interactiveModeEnabled && !!logEntry
-}
-
-/**
- * Check if an appliedRuleIds array is non-empty.
- * Centralises the common guard pattern for rewrite metadata attachment.
- *
- * @param {any} appliedRuleIds
- * @returns {boolean}
- */
-function hasAppliedRules (appliedRuleIds) {
-  return Array.isArray(appliedRuleIds) && appliedRuleIds.length > 0
 }
 
 /**
@@ -6176,7 +4761,7 @@ app.get('/api/logs/:id', (req, res) => {
 app.get('/api/config', (req, res) => {
   res.json({
     interactiveModeEnabled,
-    editRulesEnabled,
+    editRulesEnabled: ruleStore.isEnabled(),
     localResourcesEnabled,
     filterRulesEnabled,
     blockedRulesEnabled,
@@ -6188,7 +4773,7 @@ app.get('/api/config', (req, res) => {
 // Toggle endpoints for boolean config flags
 ;[
   { path: '/api/interactive-mode', field: 'interactiveModeEnabled', set: v => { interactiveModeEnabled = v } },
-  { path: '/api/edit-rules-mode', field: 'editRulesEnabled', set: v => { editRulesEnabled = v } },
+  { path: '/api/edit-rules-mode', field: 'editRulesEnabled', set: v => { ruleStore.setEnabled(v) } },
   { path: '/api/local-resources-mode', field: 'localResourcesEnabled', set: v => { localResourcesEnabled = v } },
   { path: '/api/filter-rules-mode', field: 'filterRulesEnabled', set: v => { filterRulesEnabled = v } },
   { path: '/api/blocked-rules-mode', field: 'blockedRulesEnabled', set: v => { blockedRulesEnabled = v } }
@@ -6295,7 +4880,7 @@ app.post('/api/resources', upload.single('file'), async (req, res) => {
 })
 
 app.get('/api/edit-rule-presets', (req, res) => {
-  res.json({ presets: editRulePresets })
+  res.json({ presets: ruleStore.getPresets() })
 })
 
 app.post('/api/edit-rule-presets', async (req, res) => {
@@ -6305,23 +4890,20 @@ app.post('/api/edit-rule-presets', async (req, res) => {
     return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
   }
 
-  const preset = normalizeEditRulePreset(raw)
-  editRulePresets.push(preset)
-  await saveEditRulePresets()
+  const preset = ruleStore.addPreset(raw)
+  await ruleStore.savePresets()
 
   res.status(201).json({ preset })
 })
 
 app.delete('/api/edit-rule-presets/:id', async (req, res) => {
   const { id } = req.params
-  const before = editRulePresets.length
-  editRulePresets = editRulePresets.filter(preset => preset && preset.id !== id)
 
-  if (editRulePresets.length === before) {
+  if (!ruleStore.removePreset(id)) {
     return res.status(404).json({ error: 'Preset not found' })
   }
 
-  await saveEditRulePresets()
+  await ruleStore.savePresets()
   res.status(204).end()
 })
 
@@ -6397,7 +4979,7 @@ app.delete('/api/logs', (req, res) => {
   dashboardStats = createEmptyDashboardStats()
   performanceStats = createEmptyPerformanceStats()
   routeStats = new Map()
-  editRuleUsageCounters.clear()
+  ruleStore.clearUsage()
   res.json({ success: true, message: 'Logs cleared' })
 })
 
@@ -6596,7 +5178,7 @@ app.get('/api/filters/metrics', (req, res) => {
 })
 
 app.get('/api/edit-rules', (req, res) => {
-  res.json({ rules: editRules })
+  res.json({ rules: ruleStore.getRules() })
 })
 
 /**
@@ -6607,16 +5189,7 @@ app.get('/api/edit-rules', (req, res) => {
  * rule configuration on the wire.
  */
 app.get('/api/edit-rules/usage', (req, res) => {
-  const usage = Object.create(null)
-
-  for (const [id, count] of editRuleUsageCounters.entries()) {
-    usage[id] = count
-  }
-
-  res.json({
-    usage,
-    totalRulesWithUsage: editRuleUsageCounters.size
-  })
+  res.json(ruleStore.getUsageSnapshot())
 })
 
 app.post('/api/edit-rules/value-file', upload.single('file'), async (req, res) => {
@@ -6654,57 +5227,38 @@ app.post('/api/edit-rules', (req, res) => {
     return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
   }
 
-  const rule = normalizeEditRule({
-    ...raw,
-    id: undefined // ensure normalizeEditRule generates/uses the new id
-  })
-
-  editRules.push(rule)
-  saveEditRules()
-  rebuildEditRuleCache()
+  const rule = ruleStore.addRule(raw)
+  ruleStore.save()
 
   res.status(201).json({ rule })
 })
 
 app.put('/api/edit-rules/:id', (req, res) => {
   const { id } = req.params
-  const idx = editRules.findIndex(rule => rule.id === id)
-  if (idx === -1) {
+  if (!ruleStore.findRule(id)) {
     return res.status(404).json({ error: 'Rule not found' })
   }
 
-  const existing = editRules[idx]
   const patch = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
 
   if (!patch) {
     return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
   }
 
-  const updated = normalizeEditRule({
-    ...existing,
-    ...patch,
-    id: existing.id
-  })
-
-  editRules[idx] = updated
-  saveEditRules()
-  rebuildEditRuleCache()
+  const updated = ruleStore.updateRule(id, patch)
+  ruleStore.save()
 
   res.json({ rule: updated })
 })
 
 app.delete('/api/edit-rules/:id', (req, res) => {
   const { id } = req.params
-  const before = editRules.length
-  editRules = editRules.filter(rule => rule.id !== id)
 
-  if (editRules.length === before) {
+  if (!ruleStore.removeRule(id)) {
     return res.status(404).json({ error: 'Rule not found' })
   }
 
-  editRuleUsageCounters.delete(id)
-  saveEditRules()
-  rebuildEditRuleCache()
+  ruleStore.save()
 
   res.status(204).end()
 })
