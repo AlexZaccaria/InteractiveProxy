@@ -158,6 +158,10 @@ function createMitmHandler ({
           }
         }
       }, handleDecryptedRequest)
+      // With an `upgrade` listener in place Node hands WebSocket upgrades
+      // over with their socket detached from the HTTP parser, which the `ws`
+      // handshake needs.
+      httpsServer.on('upgrade', handleDecryptedUpgrade)
       // A client that aborts its handshake is not an error of the proxy.
       httpsServer.on('tlsClientError', () => {})
     }
@@ -299,8 +303,69 @@ function createMitmHandler ({
   }
 
   /**
-   * One decrypted request of a tunnel: WebSocket upgrades, then the same
-   * blocked / direct / local resource / forward pipeline as plain HTTP.
+   * One decrypted WebSocket upgrade of a tunnel (the `upgrade` event of the
+   * shared HTTPS server): block (204), relay without rewrites or logging
+   * (filter rules say direct) or proxy with rewrites and logging.
+   *
+   * @param {import('http').IncomingMessage} clientReq
+   * @param {import('stream').Duplex} socket The decrypted (TLS) socket.
+   * @param {Buffer} head
+   * @returns {void}
+   */
+  function handleDecryptedUpgrade (clientReq, socket, head) {
+    // The upgrade socket is the TLS socket of the tunnel, which shares its
+    // remote endpoint with the raw socket the target was recorded for.
+    const target = tunnelTargets.get(socketKey(/** @type {import('net').Socket} */ (socket)))
+    if (!target) {
+      socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    const { host: targetHost, port: targetPort, authority: targetAuthority } = target
+    const requestUrl = /** @type {string} */ (clientReq.url)
+    const fullUrl = `https://${targetAuthority}${requestUrl}`
+    const method = /** @type {string} */ (clientReq.method)
+    const parsedFullUrl = new URL(fullUrl)
+
+    const wsRoutingContext = router.buildRoutingContext({
+      requestUrl,
+      fullUrl,
+      host: targetHost,
+      path: parsedFullUrl.pathname,
+      targetUrl: fullUrl,
+      method
+    })
+    const wsDecision = router.decideWebSocketHandling(wsRoutingContext)
+
+    if (wsDecision.action === 'block') {
+      socket.write('HTTP/1.1 204 No Content\r\n\r\n')
+      socket.destroy()
+      return
+    }
+
+    // Attach header so WebSocket handler can reuse resolved info
+    clientReq.headers['x-target-url'] = clientReq.headers['x-target-url'] ||
+      `${parsedFullUrl.protocol}//${parsedFullUrl.host}${parsedFullUrl.pathname || ''}`
+
+    if (wsDecision.action === 'direct') {
+      // In HTTPS MITM we cannot create a true raw tunnel here because TLS has
+      // already been terminated. Approximate "direct" by disabling rewrites
+      // and logging (bypass=true) while still using the MITM TLS tunnel.
+      bypassCounter.increment()
+      logWebSocketDirectTunnel({ targetUrl: fullUrl, headers: clientReq.headers, suffix: ' (MITM bypass)' })
+
+      handleWebSocketUpgrade(clientReq, socket, targetHost, targetPort, fullUrl, { bypass: true, head })
+      return
+    }
+
+    // WebSocket upgrade with full MITM (rewrites + logging)
+    handleWebSocketUpgrade(clientReq, socket, targetHost, targetPort, fullUrl, { bypass: false, head })
+  }
+
+  /**
+   * One decrypted request of a tunnel: the same blocked / direct / local
+   * resource / forward pipeline as plain HTTP (WebSocket upgrades arrive
+   * through handleDecryptedUpgrade instead).
    *
    * @param {import('http').IncomingMessage} clientReq
    * @param {import('http').ServerResponse} clientRes
@@ -314,51 +379,13 @@ function createMitmHandler ({
       clientRes.end('Unknown tunnel')
       return
     }
-    const { host: targetHost, port: targetPort, authority: targetAuthority } = target
+    const { host: targetHost, authority: targetAuthority } = target
     const requestUrl = /** @type {string} */ (clientReq.url)
     const fullUrl = `https://${targetAuthority}${requestUrl}`
     const method = /** @type {string} */ (clientReq.method)
     const requestStart = Date.now()
     const clientIp = clientReq.socket?.remoteAddress || clientReq.connection?.remoteAddress || 'unknown'
     const parsedFullUrl = new URL(fullUrl)
-
-    // Check if this is a WebSocket upgrade request
-    if (clientReq.headers.upgrade && clientReq.headers.upgrade.toLowerCase() === 'websocket') {
-      const wsRoutingContext = router.buildRoutingContext({
-        requestUrl,
-        fullUrl,
-        host: targetHost,
-        path: parsedFullUrl.pathname,
-        targetUrl: fullUrl,
-        method
-      })
-      const wsDecision = router.decideWebSocketHandling(wsRoutingContext)
-
-      if (wsDecision.action === 'block') {
-        clientReq.socket.write('HTTP/1.1 204 No Content\r\n\r\n')
-        clientReq.socket.destroy()
-        return
-      }
-
-      // Attach header so WebSocket handler can reuse resolved info
-      clientReq.headers['x-target-url'] = clientReq.headers['x-target-url'] ||
-        `${parsedFullUrl.protocol}//${parsedFullUrl.host}${parsedFullUrl.pathname || ''}`
-
-      if (wsDecision.action === 'direct') {
-        // In HTTPS MITM we cannot create a true raw tunnel here because TLS has
-        // already been terminated. Approximate "direct" by disabling rewrites
-        // and logging (bypass=true) while still using the MITM TLS tunnel.
-        bypassCounter.increment()
-        logWebSocketDirectTunnel({ targetUrl: fullUrl, headers: clientReq.headers, suffix: ' (MITM bypass)' })
-
-        handleWebSocketUpgrade(clientReq, clientReq.socket, targetHost, targetPort, fullUrl, { bypass: true })
-        return
-      }
-
-      // WebSocket upgrade with full MITM (rewrites + logging)
-      handleWebSocketUpgrade(clientReq, clientReq.socket, targetHost, targetPort, fullUrl, { bypass: false })
-      return
-    }
 
     // Collect request body
     /** @type {Buffer[]} */

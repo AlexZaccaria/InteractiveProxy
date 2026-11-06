@@ -11,7 +11,7 @@
 
 const { WS_MAX_TEXT_BYTES } = require('../../config')
 const { sanitizeAndStripIdentifyingHeaders } = require('../proxy/headers')
-const { httpUrlToWebSocketUrl } = require('../proxy/websocket-codec')
+const { httpUrlToWebSocketUrl } = require('../proxy/websocket-url')
 const { tryParseWebSocketJson } = require('./preview')
 const { classifyUpstreamError } = require('./stats')
 

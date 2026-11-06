@@ -3,8 +3,10 @@
 const { test, before, after } = require('node:test')
 const assert = require('node:assert/strict')
 const http = require('http')
+const https = require('https')
 const WebSocket = require('ws')
 const { loadServer, getFreePort } = require('../helpers/load-server')
+const { createSelfSignedCert, openTunnel, secureTunnel } = require('../helpers/mitm')
 
 let proxy
 let proxyPort
@@ -25,9 +27,9 @@ function api (method, apiPath) {
 }
 
 /** WebSocket client that goes through the proxy to the echo upstream. */
-function connectThroughProxy (targetUrl = `http://127.0.0.1:${upstreamPort}/socket`) {
+function connectThroughProxy (targetUrl = `http://127.0.0.1:${upstreamPort}/socket`, protocols) {
   return new Promise((resolve, reject) => {
-    const client = new WebSocket(`ws://127.0.0.1:${proxyPort}/socket`, {
+    const client = new WebSocket(`ws://127.0.0.1:${proxyPort}/socket`, protocols, {
       headers: { 'x-target-url': targetUrl },
       perMessageDeflate: false
     })
@@ -59,10 +61,6 @@ function closed (client) {
   })
 }
 
-function sleep (ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 function waitFor (condition, timeoutMs = 2000) {
   return new Promise((resolve, reject) => {
     const started = Date.now()
@@ -79,6 +77,34 @@ function lastUpstreamConnection () {
   return upstreamConnections[upstreamConnections.length - 1]
 }
 
+/** Echo server bookkeeping shared by every upstream of this file. */
+function trackEcho (server) {
+  server.on('connection', ws => {
+    const record = { ws, closed: false, closeCode: null, closeReason: null, received: [], pings: [] }
+    upstreamConnections.push(record)
+    ws.on('message', (data, isBinary) => {
+      record.received.push({ data: Buffer.from(data), isBinary })
+      ws.send(data, { binary: isBinary })
+    })
+    ws.on('ping', data => record.pings.push(Buffer.from(data)))
+    ws.on('close', (code, reason) => {
+      record.closed = true
+      record.closeCode = code
+      record.closeReason = reason.toString()
+    })
+  })
+}
+
+async function summariesFor (connectionId) {
+  const logs = await api('GET', '/api/logs?showWsConnections=true&limit=200')
+  return logs.json.items.filter(item => item.isWebSocketSummary && item.connectionId === connectionId)
+}
+
+async function connectionLogFor (wsUrl) {
+  const logs = await api('GET', '/api/logs?showWsConnections=true&limit=200')
+  return logs.json.items.find(item => item.isConnectionLog && item.direction === 'connected' && item.url === wsUrl)
+}
+
 before(async () => {
   const loaded = await loadServer()
   proxy = loaded.proxy
@@ -87,15 +113,7 @@ before(async () => {
 
   upstreamPort = await getFreePort()
   upstream = new WebSocket.WebSocketServer({ host: '127.0.0.1', port: upstreamPort, perMessageDeflate: false })
-  upstream.on('connection', ws => {
-    const record = { ws, closed: false, received: [] }
-    upstreamConnections.push(record)
-    ws.on('message', (data, isBinary) => {
-      record.received.push({ data: Buffer.from(data), isBinary })
-      ws.send(data, { binary: isBinary })
-    })
-    ws.on('close', () => { record.closed = true })
-  })
+  trackEcho(upstream)
   await new Promise(resolve => upstream.once('listening', resolve))
 })
 
@@ -117,9 +135,8 @@ test('an X-Target-URL with the ws:// scheme is accepted like the http:// form', 
   assert.equal(echo.data.toString('utf8'), 'via ws target')
   assert.equal(upstreamSide.received.length, 1)
 
-  client.terminate()
+  client.close(1000)
   await closed(client)
-  upstreamSide.ws.terminate()
   await waitFor(() => upstreamSide.closed)
 })
 
@@ -152,13 +169,11 @@ test('text, binary and JSON messages are relayed in both directions and logged',
   assert.equal(upstreamSide.received[1].isBinary, true)
   assert.deepEqual(upstreamSide.received[1].data, bytes)
 
-  // Close from the upstream side: the proxy ends the client socket and logs
-  // the summary. (A client-initiated close is covered by its own test.)
+  // Close from the upstream side: the close frame (code and reason) is relayed
+  // to the client and the summary is logged.
   upstreamSide.ws.close(1000, 'bye')
   const closeInfo = await closed(client)
-  // current behavior: the proxy ends the TCP connection without relaying the
-  // close frame, so the client sees an abnormal closure.
-  assert.equal(closeInfo.code, 1006)
+  assert.deepEqual(closeInfo, { code: 1000, reason: 'bye' })
   await waitFor(() => upstreamSide.closed)
 
   const logs = await api('GET', '/api/logs?showWsConnections=true&limit=100')
@@ -202,7 +217,8 @@ test('connection logs are hidden from /api/logs unless showWsConnections is set'
   assert.equal(shown.json.items.some(item => item.isConnectionLog), true)
 })
 
-test('a client-initiated close is relayed as a text message and leaves the upstream open', async () => {
+test('a client-initiated close is relayed as a close frame with its code and reason', async () => {
+  await api('DELETE', '/api/logs')
   const client = await connectThroughProxy()
   const upstreamSide = lastUpstreamConnection()
   client.send('bye')
@@ -210,53 +226,186 @@ test('a client-initiated close is relayed as a text message and leaves the upstr
   assert.equal(upstreamSide.received.length, 1)
 
   client.close(1000, 'done')
+  const closeInfo = await closed(client)
+  assert.deepEqual(closeInfo, { code: 1000, reason: 'done' }, 'the client completes a clean close handshake')
 
-  // current behavior: the hand-written frame decoder does not look at the
-  // opcode, so the close frame (status 1000 = 0x03 0xE8, then "done") is
-  // forwarded to the upstream as a text message and echoed back; the 0xE8
-  // byte is not valid UTF-8 and becomes U+FFFD on the way.
-  await waitFor(() => upstreamSide.received.length === 2)
-  const relayed = upstreamSide.received[1]
-  assert.equal(relayed.isBinary, false)
-  assert.deepEqual(relayed.data, Buffer.concat([Buffer.from([0x03]), Buffer.from('�'), Buffer.from('done')]))
-  assert.equal(upstreamSide.ws.readyState, WebSocket.OPEN)
+  await waitFor(() => upstreamSide.closed)
+  assert.equal(upstreamSide.received.length, 1, 'no message was relayed for the close frame')
+  assert.equal(upstreamSide.closeCode, 1000)
+  assert.equal(upstreamSide.closeReason, 'done')
 
-  // current behavior: the close handshake never completes; the ws client
-  // gives up after its 30 s timeout. terminate() ends the TCP side instead.
+  const connection = await connectionLogFor(`ws://127.0.0.1:${upstreamPort}/socket`)
+  const summaries = await summariesFor(connection.connectionId)
+  assert.equal(summaries.length, 1)
+  assert.equal(summaries[0].wsSummary.closeReason, 'client-closed')
+  assert.equal(summaries[0].wsSummary.messagesClientToServer, 1)
+})
+
+test('a client that drops the connection makes the proxy terminate the upstream side', async () => {
+  await api('DELETE', '/api/logs')
+  const client = await connectThroughProxy()
+  const upstreamSide = lastUpstreamConnection()
+
   client.terminate()
   const closeInfo = await closed(client)
   assert.equal(closeInfo.code, 1006)
 
-  // current behavior: the proxy only listens for 'close' on the client
-  // socket, which an HTTP server keeps half-open after the peer's FIN, so the
-  // upstream connection is never closed and its summary is never logged.
-  await sleep(500)
-  assert.equal(upstreamSide.closed, false)
-  assert.equal(upstreamSide.ws.readyState, WebSocket.OPEN)
-  const logs = await api('GET', '/api/logs?showWsConnections=true&limit=100')
-  const summaries = logs.json.items.filter(item => item.isWebSocketSummary)
-  assert.equal(summaries.length, 1, 'only the upstream-closed connection of the previous test has a summary')
+  await waitFor(() => upstreamSide.closed)
+  assert.equal(upstreamSide.closeCode, 1006, 'the upstream sees an abnormal closure, like the client produced')
 
-  upstreamSide.ws.terminate()
+  const connection = await connectionLogFor(`ws://127.0.0.1:${upstreamPort}/socket`)
+  const summaries = await summariesFor(connection.connectionId)
+  assert.equal(summaries.length, 1)
+  assert.equal(summaries[0].wsSummary.closeReason, 'client-closed')
+})
+
+test('messages larger than one socket read are relayed intact in both directions', async () => {
+  const client = await connectThroughProxy()
+  const upstreamSide = lastUpstreamConnection()
+
+  const text = 'x'.repeat(70_000)
+  client.send(text)
+  const textEcho = await nextMessage(client, 5000)
+  assert.ok(textEcho, 'large text echo received')
+  assert.equal(textEcho.isBinary, false)
+  assert.equal(textEcho.data.length, text.length)
+  assert.equal(textEcho.data.toString('utf8'), text)
+
+  const binary = Buffer.alloc(1024 * 1024)
+  for (let i = 0; i < binary.length; i++) binary[i] = i & 0xff
+  client.send(binary)
+  const binaryEcho = await nextMessage(client, 5000)
+  assert.ok(binaryEcho, 'large binary echo received')
+  assert.equal(binaryEcho.isBinary, true)
+  assert.equal(binaryEcho.data.length, binary.length)
+  assert.ok(binaryEcho.data.equals(binary))
+
+  assert.equal(upstreamSide.received.length, 2)
+  assert.equal(upstreamSide.received[0].data.length, text.length)
+  assert.equal(upstreamSide.received[1].data.length, binary.length)
+
+  client.close(1000)
+  await closed(client)
   await waitFor(() => upstreamSide.closed)
 })
 
-test('a message larger than one TCP read (> 65535 bytes) is not relayed intact', async () => {
+test('pings are relayed to the upstream and its pongs come back; the connection stays open', async () => {
   const client = await connectThroughProxy()
   const upstreamSide = lastUpstreamConnection()
-  const payload = 'x'.repeat(70_000)
-  client.send(payload)
 
-  // current behavior: the client-side frame decoder expects a whole frame in a
-  // single socket chunk; a 70 000-byte frame arrives in several reads, so the
-  // echo never comes back intact.
-  const reply = await nextMessage(client, 1500)
-  if (reply) {
-    assert.notEqual(reply.data.toString('utf8'), payload)
-  }
-  assert.equal(upstreamSide.received.some(message => message.data.length === payload.length), false)
+  const pong = new Promise(resolve => client.once('pong', data => resolve(Buffer.from(data))))
+  client.ping('are-you-there')
+  assert.equal((await pong).toString('utf8'), 'are-you-there')
+  await waitFor(() => upstreamSide.pings.length === 1)
+  assert.equal(upstreamSide.pings[0].toString('utf8'), 'are-you-there')
 
-  client.terminate()
+  client.send('still here')
+  const echo = await nextMessage(client)
+  assert.equal(echo.data.toString('utf8'), 'still here')
+  assert.equal(client.readyState, WebSocket.OPEN)
+  assert.equal(upstreamSide.ws.readyState, WebSocket.OPEN)
+
+  client.close(1000)
   await closed(client)
-  upstreamSide.ws.terminate()
+  await waitFor(() => upstreamSide.closed)
+})
+
+test('an upstream close with an application code and reason reaches the client unchanged', async () => {
+  const client = await connectThroughProxy()
+  const upstreamSide = lastUpstreamConnection()
+
+  upstreamSide.ws.close(4000, 'maintenance')
+  const closeInfo = await closed(client)
+  assert.deepEqual(closeInfo, { code: 4000, reason: 'maintenance' })
+  await waitFor(() => upstreamSide.closed)
+})
+
+test('the subprotocol selected by the upstream is the one announced to the client', async () => {
+  const chatPort = await getFreePort()
+  const chatUpstream = new WebSocket.WebSocketServer({
+    host: '127.0.0.1',
+    port: chatPort,
+    perMessageDeflate: false,
+    handleProtocols: () => 'chat'
+  })
+  trackEcho(chatUpstream)
+  await new Promise(resolve => chatUpstream.once('listening', resolve))
+
+  try {
+    const client = await connectThroughProxy(`http://127.0.0.1:${chatPort}/socket`, ['other', 'chat'])
+    const upstreamSide = lastUpstreamConnection()
+    assert.equal(client.protocol, 'chat')
+    assert.equal(upstreamSide.ws.protocol, 'chat')
+
+    client.send('negotiated')
+    const echo = await nextMessage(client)
+    assert.equal(echo.data.toString('utf8'), 'negotiated')
+
+    client.close(1000)
+    await closed(client)
+    await waitFor(() => upstreamSide.closed)
+  } finally {
+    await new Promise(resolve => chatUpstream.close(resolve))
+  }
+})
+
+test('a wss:// upgrade through a CONNECT tunnel is relayed to a TLS upstream and logged', async () => {
+  await api('DELETE', '/api/logs')
+
+  const tlsPort = await getFreePort()
+  const tlsUpstream = https.createServer(createSelfSignedCert('ws-upstream.test'))
+  const tlsEcho = new WebSocket.WebSocketServer({ server: tlsUpstream, perMessageDeflate: false })
+  trackEcho(tlsEcho)
+  await new Promise(resolve => tlsUpstream.listen(tlsPort, '127.0.0.1', resolve))
+
+  try {
+    const { socket, statusLine } = await openTunnel(proxyPort, `127.0.0.1:${tlsPort}`)
+    assert.equal(statusLine, 'HTTP/1.1 200 Connection Established')
+    const secure = await secureTunnel(socket)
+    assert.equal(secure.getPeerCertificate().issuer.CN, 'Cascade Proxy CA')
+
+    const client = await new Promise((resolve, reject) => {
+      const ws = new WebSocket(`wss://127.0.0.1:${tlsPort}/secure-socket`, {
+        createConnection: () => secure,
+        perMessageDeflate: false
+      })
+      ws.once('open', () => resolve(ws))
+      ws.once('error', reject)
+    })
+    const upstreamSide = lastUpstreamConnection()
+    assert.ok(upstreamSide, 'the proxy opened a TLS connection to the upstream')
+
+    client.send('over tls')
+    const text = await nextMessage(client)
+    assert.equal(text.isBinary, false)
+    assert.equal(text.data.toString('utf8'), 'over tls')
+
+    const bytes = Buffer.from([9, 8, 7, 6])
+    client.send(bytes)
+    const binary = await nextMessage(client)
+    assert.equal(binary.isBinary, true)
+    assert.deepEqual(binary.data, bytes)
+    assert.equal(upstreamSide.received.length, 2)
+
+    client.close(1000, 'done')
+    const closeInfo = await closed(client)
+    assert.deepEqual(closeInfo, { code: 1000, reason: 'done' })
+    await waitFor(() => upstreamSide.closed)
+    assert.equal(upstreamSide.closeCode, 1000)
+
+    const wsUrl = `wss://127.0.0.1:${tlsPort}/secure-socket`
+    const connection = await connectionLogFor(wsUrl)
+    assert.ok(connection, 'connection log for the TLS WebSocket')
+    assert.equal(connection.source, 'websocket')
+    const logs = await api('GET', '/api/logs?showWsConnections=true&limit=100')
+    const messages = logs.json.items.filter(item => item.source === 'websocket' && item.connectionId === connection.connectionId && !item.isConnectionLog)
+    assert.equal(messages.filter(item => item.direction === 'client->server').length, 2)
+    assert.equal(messages.filter(item => item.direction === 'server->client').length, 2)
+    const summaries = await summariesFor(connection.connectionId)
+    assert.equal(summaries.length, 1)
+    assert.equal(summaries[0].wsSummary.closeReason, 'client-closed')
+  } finally {
+    await new Promise(resolve => tlsEcho.close(resolve))
+    await new Promise(resolve => tlsUpstream.close(resolve))
+  }
 })

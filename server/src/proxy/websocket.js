@@ -2,24 +2,24 @@
 
 /**
  * WebSocket proxying: the `upgrade` handler of the HTTP server (block /
- * direct tunnel / full proxy decision), the client-facing handshake, the
- * connection to the target through `ws`, and the per-frame relay with
- * logging and rewrites.
+ * direct tunnel / full proxy decision), the client-facing handshake and
+ * framing through `ws` (a `WebSocketServer` in `noServer` mode), the
+ * connection to the target through the `ws` client, and the per-message relay
+ * with logging and rewrites.
  *
- * Frames from the client are decoded with the hand-written codec of
- * `websocket-codec.js`, whose limits are listed there (one frame per socket
- * read, no fragment reassembly, control frames relayed as data).
+ * Both ends are terminated by `ws`, so fragmentation, control frames and
+ * masking are handled by the library: pings, pongs and close frames (code and
+ * reason) are relayed to the other side, an abnormal closure on one side
+ * terminates the other, the subprotocol selected by the target is the one
+ * announced to the client, and compression is never negotiated so that every
+ * message is seen (and rewritten) uncompressed.
  */
 
 const WebSocket = require('ws')
+const { WebSocketServer } = WebSocket
 const { URL } = require('url')
 const { STRICT_TLS_ENABLED, WS_LOG_BODY_ENABLED } = require('../../config')
-const {
-  generateWebSocketAccept,
-  httpUrlToWebSocketUrl,
-  createWebSocketFrame,
-  decodeWebSocketFrame
-} = require('./websocket-codec')
+const { httpUrlToWebSocketUrl } = require('./websocket-url')
 const { normalizeWebSocketPayload } = require('../logs/preview')
 const { createRawWebSocketTunnel } = require('./tunnel')
 
@@ -28,6 +28,13 @@ const { createRawWebSocketTunnel } = require('./tunnel')
 /** @typedef {import('../logs/search').LogEntry} LogEntry */
 /** @typedef {import('../api').BypassCounter} BypassCounter */
 /** @typedef {ReturnType<typeof import('../rewrite/websocket').createWebSocketRewriter>} WebSocketRewriter */
+
+/**
+ * Client handshake headers copied to the target handshake. The
+ * `Sec-WebSocket-*` headers are produced by `ws` itself (key, version,
+ * extensions) or passed through the subprotocol list.
+ */
+const FORWARDED_HANDSHAKE_HEADERS = ['user-agent', 'origin', 'cookie', 'authorization']
 
 /**
  * @typedef {object} WebSocketProxyDeps
@@ -55,15 +62,67 @@ const { createRawWebSocketTunnel } = require('./tunnel')
 
 /**
  * @typedef {object} WebSocketFrameParams
- * @property {unknown} data Raw frame data (server->client) or decoded payload (client->server).
+ * @property {unknown} data Message payload as delivered by `ws` (Buffer, Buffer[] or ArrayBuffer).
  * @property {boolean} isBinary
  * @property {'server->client' | 'client->server'} direction
  * @property {string} wsUrl
  * @property {number} connectionId
  * @property {WebSocketMetrics} wsMetrics Mutable metrics object.
- * @property {(payload: Buffer, binary: boolean) => void} sendToTarget Function to send data to target.
+ * @property {(payload: Buffer, binary: boolean) => void} sendToTarget Function to send data to the other side.
  * @property {boolean} bypass
  */
+
+/**
+ * Subprotocols offered by the client, in order and without duplicates (the
+ * `ws` client rejects a duplicated entry).
+ *
+ * @param {import('http').IncomingMessage} req
+ * @returns {string[]}
+ */
+function offeredProtocols (req) {
+  const raw = req.headers['sec-websocket-protocol']
+  const header = Array.isArray(raw) ? raw.join(',') : (raw || '')
+  const seen = new Set()
+  /** @type {string[]} */
+  const list = []
+  for (const entry of header.split(',')) {
+    const name = entry.trim()
+    if (name && !seen.has(name)) {
+      seen.add(name)
+      list.push(name)
+    }
+  }
+  return list
+}
+
+/**
+ * Close one side the way the other side closed: a close frame is relayed
+ * with its code and reason (a close frame without status stays without
+ * status), an abnormal closure (no close frame, code 1006) terminates the
+ * socket. Codes that cannot be sent in a close frame fall back to 1000.
+ *
+ * @param {WebSocket} ws
+ * @param {number} code
+ * @param {Buffer} reason
+ * @returns {void}
+ */
+function mirrorClose (ws, code, reason) {
+  if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) return
+  if (code === 1006) {
+    ws.terminate()
+    return
+  }
+  if (code === 1005) {
+    ws.close()
+    return
+  }
+  const sendable = (code >= 1000 && code <= 1014 && code !== 1004) || (code >= 3000 && code <= 4999)
+  try {
+    ws.close(sendable ? code : 1000, reason)
+  } catch {
+    ws.terminate()
+  }
+}
 
 /**
  * Create the WebSocket proxy bound to its collaborators.
@@ -75,7 +134,7 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
   const { applyWebSocketRewritesAndDescribe } = webSocketRewriter
 
   /**
-   * Unified WebSocket frame handler for both directions.
+   * Unified WebSocket message handler for both directions.
    * Handles bypass mode, light logging mode, and full rewrite mode.
    *
    * @param {WebSocketFrameParams} params
@@ -157,19 +216,20 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
 
   /**
    * Complete a WebSocket upgrade: open the connection to the target, answer
-   * the client handshake once the target accepted, then relay frames in both
-   * directions (through handleWebSocketFrame) and log the connection summary
-   * when either side closes.
+   * the client handshake once the target accepted (announcing the subprotocol
+   * the target selected), then relay messages, pings, pongs and close frames
+   * in both directions (messages through handleWebSocketFrame) and log the
+   * connection summary when either side closes.
    *
    * @param {import('http').IncomingMessage} clientReq
    * @param {import('stream').Duplex} clientSocket
    * @param {string} targetHost Host header sent to the target.
-   * @param {number} targetPort
+   * @param {number} _targetPort Unused: the port travels inside `fullUrl`.
    * @param {string} fullUrl Target URL (http(s) or ws(s) scheme).
-   * @param {{ bypass?: boolean }} [options] `bypass` relays without rewrites or logging.
+   * @param {{ bypass?: boolean, head?: Buffer }} [options] `bypass` relays without rewrites or logging; `head` is the first packet of the upgraded socket.
    * @returns {void}
    */
-  function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, targetPort, fullUrl, { bypass = false } = {}) {
+  function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, _targetPort, fullUrl, { bypass = false, head = Buffer.alloc(0) } = {}) {
     const rawUrl = fullUrl || ''
     const wsUrl = httpUrlToWebSocketUrl(rawUrl) || rawUrl
     const connectionId = Date.now() + Math.random()
@@ -220,142 +280,170 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
       addLog(summaryLog)
     }
 
-    try {
-      // Prepare headers for target WebSocket connection
-      /** @type {Record<string, string>} */
-      const wsHeaders = {}
-
-      // Copy important headers
-      const headersToForward = [
-        'user-agent',
-        'origin',
-        'sec-websocket-version',
-        'sec-websocket-key',
-        'sec-websocket-extensions',
-        'sec-websocket-protocol',
-        'cookie',
-        'authorization'
-      ]
-
-      headersToForward.forEach(header => {
-        if (clientReq.headers[header]) {
-          // None of the listed headers is ever an array in Node's parser.
-          wsHeaders[header] = /** @type {string} */ (clientReq.headers[header])
-        }
-      })
-
-      // Override host
-      wsHeaders.host = targetHost
-
-      // Create WebSocket connection to target server
-      /** @type {{ rejectUnauthorized?: boolean, ca?: string }} */
-      const wsTlsOptions = {}
-      if (STRICT_TLS_ENABLED) {
-        wsTlsOptions.rejectUnauthorized = true
-        if (caBundle) {
-          wsTlsOptions.ca = caBundle
-        }
-      } else {
-        wsTlsOptions.rejectUnauthorized = false // Accept self-signed certs (dev default)
+    /** Refuse the upgrade while the raw socket is still ours. */
+    const rejectUpgrade = () => {
+      if (clientSocket.writable) {
+        clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n')
       }
+      clientSocket.destroy()
+    }
 
-      const targetWs = new WebSocket(wsUrl, {
+    // Prepare headers for target WebSocket connection
+    /** @type {Record<string, string>} */
+    const wsHeaders = {}
+    for (const header of FORWARDED_HANDSHAKE_HEADERS) {
+      const value = clientReq.headers[header]
+      if (typeof value === 'string' && value) {
+        wsHeaders[header] = value
+      }
+    }
+
+    // Override host
+    wsHeaders.host = targetHost
+
+    // Create WebSocket connection to target server
+    /** @type {{ rejectUnauthorized?: boolean, ca?: string }} */
+    const wsTlsOptions = {}
+    if (STRICT_TLS_ENABLED) {
+      wsTlsOptions.rejectUnauthorized = true
+      if (caBundle) {
+        wsTlsOptions.ca = caBundle
+      }
+    } else {
+      wsTlsOptions.rejectUnauthorized = false // Accept self-signed certs (dev default)
+    }
+
+    /** @type {WebSocket} */
+    let targetWs
+    try {
+      targetWs = new WebSocket(wsUrl, offeredProtocols(clientReq), {
         headers: wsHeaders,
+        perMessageDeflate: false,
+        autoPong: false,
         ...wsTlsOptions
       })
-
-      targetWs.on('open', () => {
-        if (!bypass) {
-          const connectionLog = createWebSocketConnectionLog({
-            wsUrl,
-            source: 'websocket',
-            headers: clientReq.headers,
-            connectionId,
-            message: 'WebSocket connection established'
-          })
-          addLog(connectionLog)
-        }
-
-        // Send upgrade response to client
-        const upgradeHeaders = [
-          'HTTP/1.1 101 Switching Protocols',
-          'Upgrade: websocket',
-          'Connection: Upgrade',
-          `Sec-WebSocket-Accept: ${generateWebSocketAccept(String(clientReq.headers['sec-websocket-key']))}`
-        ]
-
-        if (clientReq.headers['sec-websocket-protocol']) {
-          upgradeHeaders.push(`Sec-WebSocket-Protocol: ${clientReq.headers['sec-websocket-protocol']}`)
-        }
-
-        clientSocket.write(upgradeHeaders.join('\r\n') + '\r\n\r\n')
-
-        // Pipe data bidirectionally with logging
-        targetWs.on('message', (data, isBinary) => {
-          if (!clientSocket.writable) return
-
-          handleWebSocketFrame({
-            data,
-            isBinary,
-            direction: 'server->client',
-            wsUrl,
-            connectionId,
-            wsMetrics,
-            sendToTarget: (payload, binary) => {
-              const frame = createWebSocketFrame(payload, binary)
-              clientSocket.write(frame)
-            },
-            bypass
-          })
-        })
-
-        clientSocket.on('data', (data) => {
-          try {
-            const decoded = decodeWebSocketFrame(data)
-            if (!decoded || targetWs.readyState !== WebSocket.OPEN) return
-
-            handleWebSocketFrame({
-              data: decoded.payload,
-              isBinary: decoded.isBinary,
-              direction: 'client->server',
-              wsUrl,
-              connectionId,
-              wsMetrics,
-              sendToTarget: (payload, binary) => {
-                if (binary) {
-                  targetWs.send(payload, { binary: true })
-                } else {
-                  targetWs.send(payload.toString('utf8'), { binary: false })
-                }
-              },
-              bypass
-            })
-          } catch (e) {
-          }
-        })
-      })
-
-      targetWs.on('error', () => {
-        logWebSocketSummary('target-error')
-        clientSocket.end()
-      })
-
-      targetWs.on('close', () => {
-        logWebSocketSummary('target-closed')
-        clientSocket.end()
-      })
-
-      clientSocket.on('error', () => {
-        logWebSocketSummary('client-error')
-        targetWs.close()
-      })
-
-      clientSocket.on('close', () => {
-        logWebSocketSummary('client-closed')
-        targetWs.close()
-      })
     } catch {
-      clientSocket.end()
+      rejectUpgrade()
+      return
+    }
+
+    /** The client side once the handshake has been answered. */
+    /** @type {WebSocket|null} */
+    let clientWs = null
+
+    // Until the handshake is answered the raw socket is ours: a client that
+    // gives up meanwhile must not leave the target connection open.
+    const onEarlyClose = () => targetWs.terminate()
+    clientSocket.once('close', onEarlyClose)
+
+    targetWs.on('error', () => {
+      logWebSocketSummary('target-error')
+      if (clientWs) {
+        clientWs.terminate()
+      } else {
+        rejectUpgrade()
+      }
+    })
+
+    targetWs.on('close', (code, reason) => {
+      logWebSocketSummary('target-closed')
+      if (clientWs) {
+        mirrorClose(clientWs, code, reason)
+      } else {
+        clientSocket.destroy()
+      }
+    })
+
+    targetWs.on('open', () => {
+      if (!bypass) {
+        const connectionLog = createWebSocketConnectionLog({
+          wsUrl,
+          source: 'websocket',
+          headers: clientReq.headers,
+          connectionId,
+          message: 'WebSocket connection established'
+        })
+        addLog(connectionLog)
+      }
+
+      const wss = new WebSocketServer({
+        noServer: true,
+        perMessageDeflate: false,
+        autoPong: false,
+        clientTracking: false,
+        // The client gets the subprotocol the target selected, none otherwise.
+        handleProtocols: () => targetWs.protocol || false
+      })
+
+      // Answers the handshake (or refuses it with 400 and destroys the socket,
+      // in which case the early-close listener ends the target side).
+      wss.handleUpgrade(clientReq, clientSocket, head, accepted => {
+        clientSocket.removeListener('close', onEarlyClose)
+        clientWs = accepted
+        relay(accepted)
+      })
+    })
+
+    /**
+     * Wire both `ws` endpoints together.
+     *
+     * @param {WebSocket} client
+     */
+    function relay (client) {
+      client.on('message', (data, isBinary) => {
+        if (targetWs.readyState !== WebSocket.OPEN) return
+
+        handleWebSocketFrame({
+          data,
+          isBinary,
+          direction: 'client->server',
+          wsUrl,
+          connectionId,
+          wsMetrics,
+          sendToTarget: (payload, binary) => targetWs.send(payload, { binary }),
+          bypass
+        })
+      })
+
+      targetWs.on('message', (data, isBinary) => {
+        if (client.readyState !== WebSocket.OPEN) return
+
+        handleWebSocketFrame({
+          data,
+          isBinary,
+          direction: 'server->client',
+          wsUrl,
+          connectionId,
+          wsMetrics,
+          sendToTarget: (payload, binary) => client.send(payload, { binary }),
+          bypass
+        })
+      })
+
+      // Control frames are relayed as they are (neither side answers pings
+      // on its own, see autoPong above).
+      client.on('ping', data => {
+        if (targetWs.readyState === WebSocket.OPEN) targetWs.ping(data)
+      })
+      client.on('pong', data => {
+        if (targetWs.readyState === WebSocket.OPEN) targetWs.pong(data)
+      })
+      targetWs.on('ping', data => {
+        if (client.readyState === WebSocket.OPEN) client.ping(data)
+      })
+      targetWs.on('pong', data => {
+        if (client.readyState === WebSocket.OPEN) client.pong(data)
+      })
+
+      client.on('close', (code, reason) => {
+        logWebSocketSummary('client-closed')
+        mirrorClose(targetWs, code, reason)
+      })
+
+      client.on('error', () => {
+        logWebSocketSummary('client-error')
+        targetWs.terminate()
+      })
     }
   }
 
@@ -414,7 +502,7 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
     const targetHost = parsed.hostname
     const targetPort = parsed.port ? Number(parsed.port) : ((parsed.protocol === 'https:' || parsed.protocol === 'wss:') ? 443 : 80)
 
-    handleWebSocketUpgrade(req, socket, targetHost, targetPort, targetUrl, { bypass: false })
+    handleWebSocketUpgrade(req, socket, targetHost, targetPort, targetUrl, { bypass: false, head })
   }
 
   return {

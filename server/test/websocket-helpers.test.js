@@ -1,10 +1,9 @@
 'use strict'
 
-// Characterization tests for the hand-written WebSocket frame codec and the
-// Socket.IO / JSON helpers in server/index.js. They assert the behaviour
-// observed on the current implementation, including its known limitations
-// (marked "current behavior"), so that a rewrite on top of `ws` can be
-// checked against it.
+// Characterization tests for the WebSocket helpers exposed by the server:
+// URL conversion, payload normalisation, the Socket.IO / JSON helpers and the
+// rewrite entry point. Framing is handled by `ws` and is covered by the
+// integration tests.
 
 const { describe, test, before } = require('node:test')
 const assert = require('node:assert/strict')
@@ -17,107 +16,7 @@ before(async () => {
   I = proxy.internals
 })
 
-// Build a client-style masked frame by hand (RFC 6455 §5.3).
-function maskedFrame (payload, { opcode = 0x1, fin = true, mask = [0x37, 0xfa, 0x21, 0x3d] } = {}) {
-  const data = Buffer.from(payload)
-  const frame = Buffer.alloc(2 + 4 + data.length)
-  frame[0] = (fin ? 0x80 : 0x00) | opcode
-  frame[1] = 0x80 | data.length
-  Buffer.from(mask).copy(frame, 2)
-  for (let i = 0; i < data.length; i++) frame[6 + i] = data[i] ^ mask[i % 4]
-  return frame
-}
-
-describe('createWebSocketFrame', () => {
-  test('payloads shorter than 126 bytes use the 7-bit length and the text opcode', () => {
-    assert.deepEqual([...I.createWebSocketFrame('hi', false)], [0x81, 0x02, 0x68, 0x69])
-  })
-
-  test('binary frames use opcode 2', () => {
-    assert.deepEqual([...I.createWebSocketFrame(Buffer.from([1, 2]), true)], [0x82, 0x02, 0x01, 0x02])
-  })
-
-  test('126..65535 bytes use the 16-bit extended length', () => {
-    const frame126 = I.createWebSocketFrame(Buffer.alloc(126, 0x61), false)
-    assert.deepEqual([...frame126.subarray(0, 4)], [0x81, 126, 0x00, 0x7e])
-    assert.equal(frame126.length, 4 + 126)
-
-    const frameMax = I.createWebSocketFrame(Buffer.alloc(65535, 0x61), false)
-    assert.deepEqual([...frameMax.subarray(0, 4)], [0x81, 126, 0xff, 0xff])
-  })
-
-  test('65536 bytes and above use the 64-bit length with the high 32 bits always zero', () => {
-    const frame = I.createWebSocketFrame(Buffer.alloc(65536, 0x61), false)
-    assert.deepEqual([...frame.subarray(0, 10)], [0x81, 127, 0, 0, 0, 0, 0x00, 0x01, 0x00, 0x00])
-    assert.equal(frame.length, 10 + 65536)
-  })
-
-  test('current behavior: outgoing frames are never masked (server-to-client direction only)', () => {
-    const frame = I.createWebSocketFrame('x', false)
-    assert.equal(frame[1] & 0x80, 0)
-  })
-})
-
-describe('decodeWebSocketFrame', () => {
-  test('round-trips frames produced by createWebSocketFrame', () => {
-    assert.deepEqual(I.decodeWebSocketFrame(I.createWebSocketFrame('hi', false)), {
-      isFinal: true, opcode: 1, isBinary: false, payload: Buffer.from('hi')
-    })
-    assert.deepEqual(I.decodeWebSocketFrame(I.createWebSocketFrame(Buffer.from([1, 2]), true)), {
-      isFinal: true, opcode: 2, isBinary: true, payload: Buffer.from([1, 2])
-    })
-    const big = I.decodeWebSocketFrame(I.createWebSocketFrame(Buffer.alloc(65536, 0x61), false))
-    assert.equal(big.payload.length, 65536)
-  })
-
-  test('unmasks a client frame with the 4-byte masking key', () => {
-    const frame = maskedFrame('Hello')
-    assert.deepEqual([...frame], [0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58])
-    const decoded = I.decodeWebSocketFrame(frame)
-    assert.equal(decoded.payload.toString(), 'Hello')
-    assert.equal(decoded.isBinary, false)
-    assert.equal(decoded.isFinal, true)
-  })
-
-  test('returns null for truncated buffers', () => {
-    assert.equal(I.decodeWebSocketFrame(Buffer.from([0x81])), null)
-    assert.equal(I.decodeWebSocketFrame(Buffer.from([0x81, 0x05, 0x48, 0x65])), null)
-    assert.equal(I.decodeWebSocketFrame(Buffer.from([0x81, 126, 0x00])), null)
-    assert.equal(I.decodeWebSocketFrame(Buffer.from([0x81, 127, 0, 0, 0, 0, 0, 0, 0])), null)
-    assert.equal(I.decodeWebSocketFrame(Buffer.from([0x81, 0x85, 0x37, 0xfa])), null)
-  })
-
-  test('current behavior: a buffer holding two frames yields only the first one', () => {
-    const two = Buffer.concat([I.createWebSocketFrame('one', false), I.createWebSocketFrame('two', false)])
-    const decoded = I.decodeWebSocketFrame(two)
-    assert.equal(decoded.payload.toString(), 'one')
-    assert.equal('consumed' in decoded, false)
-  })
-
-  test('current behavior: control frames decode as non-binary data frames (opcode is reported, not acted on)', () => {
-    assert.deepEqual(I.decodeWebSocketFrame(Buffer.from([0x89, 0x02, 0x68, 0x69])), {
-      isFinal: true, opcode: 9, isBinary: false, payload: Buffer.from('hi')
-    })
-    assert.deepEqual(I.decodeWebSocketFrame(Buffer.from([0x88, 0x02, 0x03, 0xe8])), {
-      isFinal: true, opcode: 8, isBinary: false, payload: Buffer.from([0x03, 0xe8])
-    })
-  })
-
-  test('current behavior: fragments are reported through isFinal/opcode 0 but not reassembled', () => {
-    assert.deepEqual(I.decodeWebSocketFrame(Buffer.from([0x01, 0x01, 0x61])), {
-      isFinal: false, opcode: 1, isBinary: false, payload: Buffer.from('a')
-    })
-    assert.deepEqual(I.decodeWebSocketFrame(Buffer.from([0x00, 0x01, 0x61])), {
-      isFinal: false, opcode: 0, isBinary: false, payload: Buffer.from('a')
-    })
-  })
-})
-
-describe('handshake and URL helpers', () => {
-  test('generateWebSocketAccept matches the RFC 6455 example', () => {
-    assert.equal(I.generateWebSocketAccept('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=')
-  })
-
+describe('URL helpers', () => {
   test('httpUrlToWebSocketUrl maps http(s) to ws(s) and leaves ws(s) and empty values alone', () => {
     assert.equal(I.httpUrlToWebSocketUrl('https://a.example/x'), 'wss://a.example/x')
     assert.equal(I.httpUrlToWebSocketUrl('http://a.example/x'), 'ws://a.example/x')

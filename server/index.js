@@ -118,12 +118,7 @@ const {
   sanitizeHeaders,
   sanitizeAndStripIdentifyingHeaders
 } = require('./src/proxy/headers')
-const {
-  generateWebSocketAccept,
-  httpUrlToWebSocketUrl,
-  createWebSocketFrame,
-  decodeWebSocketFrame
-} = require('./src/proxy/websocket-codec')
+const { httpUrlToWebSocketUrl } = require('./src/proxy/websocket-url')
 const { createHttpFlow } = require('./src/proxy/http-flow')
 const { createWebSocketProxy } = require('./src/proxy/websocket')
 const { createMitmHandler } = require('./src/proxy/mitm')
@@ -414,9 +409,6 @@ module.exports = {
     deriveDisplayNameFromUrlPattern,
     hostPatternMatches,
     // websocket
-    createWebSocketFrame,
-    decodeWebSocketFrame,
-    generateWebSocketAccept,
     httpUrlToWebSocketUrl,
     normalizeWebSocketPayload,
     stripSocketIoPrefix,
