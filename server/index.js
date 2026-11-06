@@ -13,7 +13,6 @@ const fsPromises = fs.promises
 const crypto = require('crypto')
 const { URL } = require('url')
 const WebSocket = require('ws')
-const zlib = require('zlib')
 const forge = require('node-forge')
 const { request, Agent } = require('undici')
 const {
@@ -25,14 +24,10 @@ const {
   CERTS_DIR,
   MAX_LOG_ENTRIES,
   LOG_PREVIEW_MAX_BYTES,
-  LOG_DECOMPRESS_MAX_BYTES,
   MITM_BYPASS_REWRITES_ENABLED,
-  DEBUG_LOG_ENABLED,
   STRICT_TLS_ENABLED,
   STRICT_TLS_CA_FILE,
   BODY_LIMIT,
-  PROTOBUF_MAX_FIELDS,
-  PROTOBUF_MAX_BYTES,
   CONNECT_MAX_FRAMES,
   CONNECT_MAX_FRAME_BYTES,
   WS_MAX_TEXT_BYTES,
@@ -42,16 +37,8 @@ const {
   WS_LOG_BODY_ENABLED
 } = require('./config')
 
-// Normalised protobuf/Connect limits computed once at startup to avoid
-// repeated ternaries and allocations on hot paths.
-const PROTOBUF_MAX_FIELDS_LIMIT = PROTOBUF_MAX_FIELDS > 0
-  ? PROTOBUF_MAX_FIELDS
-  : Number.POSITIVE_INFINITY
-
-const PROTOBUF_MAX_BYTES_LIMIT = PROTOBUF_MAX_BYTES > 0
-  ? PROTOBUF_MAX_BYTES
-  : Number.POSITIVE_INFINITY
-
+// Normalised Connect limits computed once at startup to avoid repeated
+// ternaries and allocations on hot paths.
 const CONNECT_MAX_FRAMES_LIMIT = CONNECT_MAX_FRAMES > 0
   ? CONNECT_MAX_FRAMES
   : Number.POSITIVE_INFINITY
@@ -63,29 +50,7 @@ const CONNECT_MAX_FRAME_BYTES_LIMIT = CONNECT_MAX_FRAME_BYTES > 0
 // Constant GUID used for WebSocket Sec-WebSocket-Accept computation
 const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
-// Zstandard support comes from Node's built-in zlib (Node >= 22.15 / 23.8).
-const ZSTD_SUPPORTED =
-  typeof zlib.zstdCompressSync === 'function' &&
-  typeof zlib.zstdDecompressSync === 'function'
-
-if (!ZSTD_SUPPORTED) {
-  console.warn('[proxy] zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched')
-}
-
-/**
- * Structured logging helpers used for internal diagnostics.
- *
- * - logDebug: gated by DEBUG_LOG_ENABLED so it can be safely enabled in
- *   development without impacting production noise levels.
- * - logWarn: always logged (console.warn) for misconfigurations and
- *   unexpected but non-fatal conditions.
- */
-const logInternal = (level, gated, scope, message, error) => {
-  if (gated && !DEBUG_LOG_ENABLED) return
-  console[level](`[proxy][${scope}] ${message}`, ...(error ? [error] : []))
-}
-const logDebug = (scope, msg, err) => logInternal('debug', true, scope, msg, err)
-const logWarn = (scope, msg, err) => logInternal('warn', false, scope, msg, err)
+const { logDebug, logWarn } = require('./src/util/logger')
 
 /**
  * Escape a string for safe inclusion in a PowerShell double-quoted string.
@@ -485,37 +450,7 @@ function coerceJsonPathScalarFromText (rawText) {
   return { value: text, valueType: 'string' }
 }
 
-/**
- * Safely trim a value that may not be a string.
- *
- * @param {any} value
- * @returns {string}
- */
-function safeTrim (value) {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-/**
- * Parse a query parameter as a boolean. Returns true if the value is 'true'
- * (case-insensitive), false otherwise.
- *
- * @param {any} value
- * @returns {boolean}
- */
-function queryBool (value) {
-  return String(value || '').toLowerCase() === 'true'
-}
-
-/**
- * Safely extract a string value, returning empty string for non-strings.
- * Unlike safeTrim, this preserves whitespace.
- *
- * @param {any} value
- * @returns {string}
- */
-function safeString (value) {
-  return typeof value === 'string' ? value : ''
-}
+const { safeTrim, queryBool, safeString, parseListQuery, isValidId } = require('./src/util/strings')
 
 /**
  * Determine the assumed protocol (http or https) from a request object.
@@ -2030,408 +1965,22 @@ function applyJsonPathRulesToObject (root, context = {}) {
   }
 }
 
-// Protobuf helpers (inlined from protobuf-rewriter.js)
-function readVarint (buffer, offset) {
-  // Accumulate with multiplication instead of 32-bit shifts so that int64
-  // values (timestamps, ids) are read correctly; exact up to 2^53.
-  let result = 0
-  let multiplier = 1
-  let length = 0
+const {
+  readVarint,
+  parseMessageDetailed,
+  parseProtobuf,
+  encodeVarint32,
+  encodeProtobufKey,
+  encodeLengthDelimitedField,
+  printableRatio,
+  rewriteMessage,
+  rewriteProtobufFields,
+  encodeProtobufFromFields,
+  encodeJsonToProtobuf,
+  extractJsonFromProtobufBuffer,
+  stripTrivialBinaryBlobs
+} = require('./src/codecs/protobuf')
 
-  while (offset < buffer.length && length < 10) {
-    const byte = buffer[offset++]
-    result += (byte & 0x7F) * multiplier
-    length++
-    if ((byte & 0x80) === 0) {
-      return { value: result, length }
-    }
-    multiplier *= 128
-  }
-
-  throw new Error('Invalid varint encoding')
-}
-
-
-function parseMessageDetailed (buffer) {
-  if (!Buffer.isBuffer(buffer)) {
-    throw new TypeError('Expected Buffer')
-  }
-
-  const fields = []
-  let offset = 0
-  const len = buffer.length
-
-  while (offset < len) {
-    const start = offset
-    const keyInfo = readVarint(buffer, offset)
-    const key = keyInfo.value
-    const keyLen = keyInfo.length
-    offset += keyLen
-
-    const fieldNumber = key >>> 3
-    const wireType = key & 0x07
-    if (fieldNumber <= 0) {
-      throw new Error('Invalid field number')
-    }
-
-    const field = {
-      fieldNumber,
-      wireType,
-      value: null,
-      data: null,
-      raw: null
-    }
-
-    if (wireType === 0) {
-      const vInfo = readVarint(buffer, offset)
-      field.value = vInfo.value
-      offset += vInfo.length
-    } else if (wireType === 1) {
-      if (offset + 8 > len) {
-        throw new Error('Truncated 64-bit field')
-      }
-      field.data = buffer.slice(offset, offset + 8)
-      offset += 8
-    } else if (wireType === 2) {
-      const lInfo = readVarint(buffer, offset)
-      const n = lInfo.value >>> 0
-      offset += lInfo.length
-      if (offset + n > len) {
-        throw new Error('Truncated length-delimited field')
-      }
-      field.data = buffer.slice(offset, offset + n)
-      offset += n
-    } else if (wireType === 5) {
-      if (offset + 4 > len) {
-        throw new Error('Truncated 32-bit field')
-      }
-      field.data = buffer.slice(offset, offset + 4)
-      offset += 4
-    } else {
-      throw new Error('Unsupported wire type ' + wireType)
-    }
-
-    field.raw = buffer.slice(start, offset)
-    fields.push(field)
-  }
-
-  return { fields }
-}
-
-function parseProtobuf (buffer) {
-  const { fields } = parseMessageDetailed(buffer)
-  return {
-    fields: fields.map(field => ({
-      fieldNumber: field.fieldNumber,
-      wireType: field.wireType,
-      value: field.value,
-      data: field.data
-    }))
-  }
-}
-
-function encodeLengthDelimitedField (fieldNumber, dataBuffer) {
-  const key = encodeProtobufKey(fieldNumber, 2)
-  const lenBuf = encodeVarint32(dataBuffer.length >>> 0)
-  return Buffer.concat([key, lenBuf, dataBuffer])
-}
-
-function printableRatio (buffer) {
-  if (!buffer || buffer.length === 0) return 0
-  let printable = 0
-  for (let i = 0; i < buffer.length; i++) {
-    const b = buffer[i]
-    if (b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e)) {
-      printable++
-    }
-  }
-  return printable / buffer.length
-}
-
-/**
- * Recursively rewrite printable text segments inside a protobuf message using
- * the provided textRewriter. Size/field limits are enforced via the
- * PROTOBUF_MAX_*_LIMIT constants to keep CPU usage bounded on large payloads.
- *
- * @param {Buffer} buffer - Raw protobuf message buffer.
- * @param {(text: string) => { text: string, changed: boolean, appliedRuleIds?: string[] }} textRewriter
- * @param {number} depth - Current recursion depth.
- * @param {number} maxDepth - Maximum allowed recursion depth.
- * @returns {{ buffer: Buffer, appliedRuleIds: string[], changed: boolean }}
- */
-function rewriteMessage (buffer, textRewriter, depth, maxDepth) {
-  const maxFields = PROTOBUF_MAX_FIELDS_LIMIT
-  const maxBytes = PROTOBUF_MAX_BYTES_LIMIT
-
-  if (buffer && Buffer.isBuffer(buffer) && buffer.length > maxBytes) {
-    return {
-      buffer,
-      appliedRuleIds: [],
-      changed: false
-    }
-  }
-
-  const { fields } = parseMessageDetailed(buffer)
-  const chunks = []
-  const applied = new Set()
-  let changed = false
-
-  // Split fields into processable and passthrough to avoid per-iteration limit check
-  const fieldsToProcess = fields.slice(0, maxFields)
-  const fieldsToPassthrough = fields.slice(maxFields)
-
-  for (const field of fieldsToProcess) {
-    let fieldBuffer = field.raw
-    let fieldChanged = false
-
-    if (field.wireType === 2 && Buffer.isBuffer(field.data) && field.data.length > 0) {
-      let newData = field.data
-
-      if (depth < maxDepth) {
-        try {
-          const nested = rewriteMessage(field.data, textRewriter, depth + 1, maxDepth)
-          if (nested.changed && Buffer.isBuffer(nested.buffer)) {
-            newData = nested.buffer
-            fieldChanged = true
-            nested.appliedRuleIds.forEach(id => applied.add(id))
-          }
-        } catch (error) {
-          logDebug('rewriteMessage', 'Failed to rewrite nested protobuf field', error)
-        }
-      }
-
-      if (!fieldChanged) {
-        const ratio = printableRatio(field.data)
-        if (ratio >= 0.7) {
-          let text = null
-          try {
-            text = field.data.toString('utf8')
-          } catch (error) {
-            text = null
-          }
-          if (text && text.length > 0) {
-            const result = textRewriter(text)
-            if (result && result.changed && typeof result.text === 'string') {
-              newData = Buffer.from(result.text, 'utf8')
-              fieldChanged = true
-              if (Array.isArray(result.appliedRuleIds)) {
-                for (const id of result.appliedRuleIds) {
-                  if (id) applied.add(id)
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (fieldChanged) {
-        fieldBuffer = encodeLengthDelimitedField(field.fieldNumber, newData)
-      }
-    }
-
-    if (fieldChanged) {
-      changed = true
-    }
-
-    chunks.push(fieldBuffer)
-  }
-
-  // Passthrough fields beyond the limit without processing
-  for (const field of fieldsToPassthrough) {
-    chunks.push(field.raw)
-  }
-
-  if (!changed) {
-    return {
-      buffer,
-      appliedRuleIds: [],
-      changed: false
-    }
-  }
-
-  const outBuffer = Buffer.concat(chunks)
-  return {
-    buffer: outBuffer,
-    appliedRuleIds: Array.from(applied),
-    changed: true
-  }
-}
-
-function rewriteProtobufFields (buffer, textRewriter) {
-  if (!Buffer.isBuffer(buffer) || typeof textRewriter !== 'function') {
-    return { buffer, appliedRuleIds: [], changed: false }
-  }
-
-  try {
-    const result = rewriteMessage(buffer, textRewriter, 0, 4)
-    if (!result || !Buffer.isBuffer(result.buffer)) {
-      return { buffer, appliedRuleIds: [], changed: false }
-    }
-    return {
-      buffer: result.buffer,
-      appliedRuleIds: result.appliedRuleIds || [],
-      changed: !!result.changed
-    }
-  } catch (error) {
-    logDebug('rewriteProtobufFields', 'Failed to rewrite protobuf fields', error)
-    return { buffer, appliedRuleIds: [], changed: false }
-  }
-}
-
-// Encode a 32-bit unsigned integer as protobuf varint.
-// Encode a varint of any width. Negative numbers become their 64-bit two's
-// complement (10 bytes), as protobuf encodes negative int32/int64 values.
-function encodeVarint32 (value) {
-  let v = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value) || 0))
-  v = BigInt.asUintN(64, v)
-  const bytes = []
-  while (v > 127n) {
-    bytes.push(Number(v & 0x7Fn) | 0x80)
-    v >>= 7n
-  }
-  bytes.push(Number(v))
-  return Buffer.from(bytes)
-}
-
-// Encode protobuf key (field number + wire type) as varint.
-function encodeProtobufKey (fieldNumber, wireType) {
-  if (!Number.isInteger(fieldNumber) || fieldNumber <= 0) {
-    throw new Error('Invalid field number')
-  }
-  return encodeVarint32((fieldNumber << 3) | (wireType & 0x07))
-}
-
-// Re-encode a protobuf message from the simplified field representation
-// returned by parseProtobuf.
-function encodeProtobufFromFields (fields) {
-  if (!Array.isArray(fields) || fields.length === 0) {
-    return Buffer.alloc(0)
-  }
-
-  const chunks = []
-
-  for (const field of fields) {
-    if (!field || typeof field.fieldNumber !== 'number' || typeof field.wireType !== 'number') {
-      continue
-    }
-
-    const fieldNumber = field.fieldNumber
-    const wireType = field.wireType
-
-    try {
-      chunks.push(encodeProtobufKey(fieldNumber, wireType))
-    } catch {
-      continue
-    }
-
-    if (wireType === 0) {
-      // Varint
-      const value = typeof field.value === 'number' ? field.value : 0
-      chunks.push(encodeVarint32(value))
-    } else if (wireType === 2) {
-      // Length-delimited
-      const data = Buffer.isBuffer(field.data) ? field.data : Buffer.alloc(0)
-      const lenBuf = encodeVarint32(data.length >>> 0)
-      chunks.push(lenBuf, data)
-    } else if (wireType === 1 || wireType === 5) {
-      // Fixed 64/32-bit
-      const data = Buffer.isBuffer(field.data)
-        ? field.data
-        : Buffer.alloc(wireType === 1 ? 8 : 4)
-      chunks.push(data)
-    } else {
-      // Unsupported wire type; drop the field entirely.
-      chunks.pop()
-      continue
-    }
-  }
-
-  return Buffer.concat(chunks)
-}
-
-/**
- * Heuristically re-encode a JSON object back into a Protobuf buffer.
- *
- * This is the inverse of extractJsonFromProtobufBuffer and supports:
- * - Nested messages (keys like "f1", "f2"...)
- * - JSON strings (non-protobuf objects encoded as JSON)
- * - Varints (numbers/booleans)
- * - Top-level strings
- *
- * @param {object} json - The JSON object to encode.
- * @returns {Buffer} - The encoded Protobuf message.
- */
-function encodeJsonToProtobuf (json) {
-  if (!json || typeof json !== 'object') {
-    return Buffer.alloc(0)
-  }
-
-  const fields = []
-
-  // Helper to check if an object looks like a Protobuf message (keys are f1, f2...)
-  const isProtobufObject = (obj) => {
-    if (!obj || typeof obj !== 'object') return false
-    const keys = Object.keys(obj)
-    if (keys.length === 0) return false
-    return keys.every(k => /^f\d+$/.test(k))
-  }
-
-  // Preserve field order from extraction (JavaScript objects maintain insertion order)
-  for (const [key, val] of Object.entries(json)) {
-    if (!/^f\d+$/.test(key)) continue
-    const fieldNumber = parseInt(key.slice(1), 10)
-    if (isNaN(fieldNumber) || fieldNumber <= 0) continue
-
-    const values = Array.isArray(val) ? val : [val]
-
-    for (const value of values) {
-      if (value === null || value === undefined) continue
-
-      if (typeof value === 'number') {
-        // Assume Varint (WireType 0)
-        fields.push({ fieldNumber, wireType: 0, value })
-      } else if (typeof value === 'boolean') {
-        // Varint (WireType 0)
-        fields.push({ fieldNumber, wireType: 0, value: value ? 1 : 0 })
-      } else if (typeof value === 'string') {
-        // String (WireType 2)
-        fields.push({ fieldNumber, wireType: 2, data: Buffer.from(value, 'utf8') })
-      } else if (typeof value === 'object') {
-        // Complex object: either nested message, JSON-stringified object, or special blob
-        if (value.bytesHex && typeof value.bytesHex === 'string') {
-          // Fixed 32/64 handling (from extractJson heuristic)
-          try {
-            const buf = Buffer.from(value.bytesHex, 'hex')
-            const wireType = buf.length === 8 ? 1 : 5
-            fields.push({ fieldNumber, wireType, data: buf })
-          } catch {
-            // Ignore invalid hex
-          }
-        } else if (value.base64 && typeof value.base64 === 'string') {
-          // Fallback blob
-          try {
-            fields.push({ fieldNumber, wireType: 2, data: Buffer.from(value.base64, 'base64') })
-          } catch {
-            // Ignore invalid base64
-          }
-        } else {
-          // Heuristic: Nested Message vs JSON String
-          if (isProtobufObject(value)) {
-            // Recursively encode as nested message
-            const nestedBuf = encodeJsonToProtobuf(value)
-            fields.push({ fieldNumber, wireType: 2, data: nestedBuf })
-          } else {
-            // Encode as JSON string
-            const jsonStr = JSON.stringify(value)
-            fields.push({ fieldNumber, wireType: 2, data: Buffer.from(jsonStr, 'utf8') })
-          }
-        }
-      }
-    }
-  }
-
-  return encodeProtobufFromFields(fields)
-}
 
 /**
  * Apply JSONPath rules directly to a protobuf message buffer when possible,
@@ -2869,54 +2418,19 @@ function attachRewriteMetadata (logEntry, appliedRuleIds, phase) {
   }
 }
 
-// Cache for case-insensitive header lookups to avoid repeated full scans
-const headerLookupCache = new WeakMap()
-
-function getHeaderCaseInsensitive (headers, name) {
-  if (!headers || typeof headers !== 'object') return undefined
-  const keys = Object.keys(headers)
-  let cache = headerLookupCache.get(headers)
-
-  // The cache is keyed by object identity; rebuild it when keys were added
-  // or removed since it was built (header rewrites mutate the same object).
-  if (!cache || cache.count !== keys.length) {
-    const map = {}
-    for (const key of keys) {
-      const lower = key.toLowerCase()
-      // Preserve the first occurrence for a given lower-cased key
-      if (!Object.hasOwn(map, lower)) {
-        const value = headers[key]
-        map[lower] = Array.isArray(value) ? value[0] : value
-      }
-    }
-    cache = { count: keys.length, map }
-    headerLookupCache.set(headers, cache)
-  }
-
-  return cache.map[name.toLowerCase()]
-}
-
-/**
- * Get the Content-Type header value from a headers object.
- * Returns empty string if not found.
- *
- * @param {object} headers
- * @returns {string}
- */
-function getContentType (headers) {
-  return getHeaderCaseInsensitive(headers, 'content-type') || ''
-}
-
-/**
- * Get the Content-Encoding header value from a headers object.
- * Returns empty string if not found.
- *
- * @param {object} headers
- * @returns {string}
- */
-function getContentEncoding (headers) {
-  return getHeaderCaseInsensitive(headers, 'content-encoding') || ''
-}
+const {
+  getHeaderCaseInsensitive,
+  getContentType,
+  getContentEncoding,
+  shouldDecompress,
+  isProtoContentType,
+  isTextualContentType,
+  isClearlyBinaryContentType,
+  getCompressionCodec,
+  decompressData,
+  decompressDataForLogging,
+  isEmptyBuffer
+} = require('./src/codecs/compression')
 
 function looksLikeConnectEnvelope (buffer) {
   if (!buffer || buffer.length < 5 || !Buffer.isBuffer(buffer)) return false
@@ -3775,91 +3289,6 @@ function logWebSocketMessage ({
 }
 
 // Content-types we bother to decompress for preview/logging
-const DECOMPRESS_ALLOWED_TYPES = [
-  'json',
-  'text/',
-  'javascript',
-  'xml',
-  '+json',
-  'x-www-form-urlencoded',
-  'application/graphql',
-  'application/grpc',
-  'application/connect+proto',
-  'application/proto'
-]
-
-/**
- * Check if a content-type matches any pattern in a list.
- * Optimized to avoid creating intermediate arrays.
- *
- * @param {string} contentType
- * @param {string[]} patterns
- * @returns {boolean}
- */
-function contentTypeMatchesAny (contentType, patterns) {
-  if (!contentType) return false
-  const lower = contentType.toLowerCase()
-  for (let i = 0; i < patterns.length; i++) {
-    if (lower.includes(patterns[i])) return true
-  }
-  return false
-}
-
-function shouldDecompress (contentType) {
-  return contentTypeMatchesAny(contentType, DECOMPRESS_ALLOWED_TYPES)
-}
-
-/**
- * Decompress response data when beneficial for analysis.
- * Uses getCompressionCodec internally to avoid duplicating codec logic.
- *
- * @param {Buffer} buffer
- * @param {string} encoding
- * @param {string} [contentType]
- * @returns {Buffer}
- */
-function decompressData (buffer, encoding, contentType) {
-  if (!buffer || buffer.length === 0) return buffer
-  if (!shouldDecompress(contentType)) return buffer
-  if (!encoding || encoding === 'identity') return buffer
-
-  const codec = getCompressionCodec(encoding)
-  if (!codec) return buffer
-
-  try {
-    return codec.decompress(buffer)
-  } catch (error) {
-    logDebug('decompressData', `Failed to decompress buffer (encoding=${encoding || 'identity'})`, error)
-    return buffer
-  }
-}
-
-// Decompression helper used only for logging/preview paths. It honours the
-// LOG_DECOMPRESS_MAX_BYTES safeguard so that we avoid fully decompressing
-// very large compressed bodies purely for UI previews.
-function decompressDataForLogging (buffer, encoding, contentType) {
-  if (!buffer || buffer.length === 0) return buffer
-
-  if (LOG_DECOMPRESS_MAX_BYTES > 0 && buffer.length > LOG_DECOMPRESS_MAX_BYTES) {
-    return buffer
-  }
-
-  return decompressData(buffer, encoding, contentType)
-}
-
-/**
- * Return true when the provided value is not a non-empty Buffer.
- *
- * Centralises the common guard pattern used throughout the proxy pipeline to
- * early-return when there is no usable body buffer.
- *
- * @param {any} buffer
- * @returns {boolean}
- */
-function isEmptyBuffer (buffer) {
-  return !buffer || !Buffer.isBuffer(buffer) || buffer.length === 0
-}
-
 /**
  * Extract the Connect/gRPC frame-level encoding header from an HTTP headers
  * object. Checks connect-content-encoding, connect-encoding, and grpc-encoding
@@ -3875,62 +3304,6 @@ function getConnectEncodingHeader (headers) {
     getHeaderCaseInsensitive(headers, 'grpc-encoding') ||
     ''
   )
-}
-
-/**
- * Check if a content-type indicates textual content suitable for text-based
- * rewrites and logging. This centralises the heuristic used by multiple
- * rewrite and logging paths.
- *
- * @param {string} contentType
- * @returns {boolean}
- */
-function isTextualContentType (contentType) {
-  if (!contentType) return false
-  const lower = safeString(contentType).toLowerCase()
-  return (
-    lower.includes('json') ||
-    lower.includes('text/') ||
-    lower.includes('javascript') ||
-    lower.includes('xml') ||
-    lower.includes('x-www-form-urlencoded')
-  )
-}
-
-function getCompressionCodec (encoding = '') {
-  if (!encoding || encoding === 'identity') return null
-  const normalized = encoding.toLowerCase()
-
-  if (normalized === 'gzip' || normalized === 'x-gzip') {
-    return {
-      decompress: data => zlib.gunzipSync(data),
-      compress: data => zlib.gzipSync(data)
-    }
-  }
-
-  if (normalized === 'deflate') {
-    return {
-      decompress: data => zlib.inflateSync(data),
-      compress: data => zlib.deflateSync(data)
-    }
-  }
-
-  if (normalized === 'br') {
-    return {
-      decompress: data => zlib.brotliDecompressSync(data),
-      compress: data => zlib.brotliCompressSync(data)
-    }
-  }
-
-  if (normalized === 'zstd') {
-    if (!ZSTD_SUPPORTED) return null
-    return {
-      decompress: data => zlib.zstdDecompressSync(data),
-      compress: data => zlib.zstdCompressSync(data)
-    }
-  }
-
-  return null
 }
 
 /**
@@ -4262,39 +3635,6 @@ function applyJsonResponseRewritesForLog ({
   }
 
   return { buffer: nextBuffer, jsonRewrite }
-}
-
-const PROTO_CONTENT_TYPES = [
-  'application/proto',
-  'application/grpc',
-  'application/grpc+proto',
-  'application/connect+proto'
-]
-
-function isProtoContentType (contentType = '') {
-  return contentTypeMatchesAny(contentType, PROTO_CONTENT_TYPES)
-}
-
-/**
- * Determine whether a content-type is clearly binary and should never be
- * decoded as text for logging or Connect/HTTP previews.
- *
- * @param {string} contentType
- * @returns {boolean}
- */
-function isClearlyBinaryContentType (contentType = '') {
-  if (!contentType) return false
-  const lower = contentType.toLowerCase()
-  // SVG is XML text even though it is an image/* type.
-  if (lower.includes('svg')) return false
-  return (
-    lower.includes('font/') ||
-    lower.includes('woff') ||
-    lower.includes('image/') ||
-    lower.includes('video/') ||
-    lower.includes('audio/') ||
-    lower.includes('octet-stream')
-  )
 }
 
 function applyLogPreviewLimit (text) {
@@ -4972,213 +4312,6 @@ function decodeConnectPayload (buffer, headers = {}) {
     enumerable: false,
     configurable: false
   })
-
-  return result
-}
-
-/**
- * Extract a JSON representation from a protobuf message buffer.
- *
- * The conversion:
- * - enforces global safeguards such as PROTOBUF_MAX_BYTES_LIMIT and
- *   PROTOBUF_MAX_FIELDS_LIMIT to avoid excessive work on large payloads;
- * - decodes nested messages recursively;
- * - attempts to interpret length-delimited fields as nested messages,
- *   UTF-8 strings or JSON strings before falling back to a binary blob
- *   representation of the form { base64, length }.
- *
- * This helper is used by rewrite paths and therefore must preserve the
- * existing structure so that JSONPath rules continue to behave identically.
- *
- * @param {Buffer} buffer - Protobuf message buffer for a single Connect frame.
- * @returns {object|null} Lightweight JSON view of the message, or null when the
- * payload cannot be safely represented.
- */
-function extractJsonFromProtobufBuffer (buffer) {
-  if (isEmptyBuffer(buffer)) return null
-  if (buffer.length > PROTOBUF_MAX_BYTES_LIMIT) return null
-
-  let root
-  try {
-    root = parseProtobuf(buffer)
-  } catch {
-    return null
-  }
-
-  if (!root || !Array.isArray(root.fields) || root.fields.length === 0) return null
-
-  const maxFields = PROTOBUF_MAX_FIELDS_LIMIT
-  let processedFields = 0
-
-  const toJsonFromFields = (fields, depth = 0) => {
-    if (!fields || !fields.length) return null
-
-    const bucket = new Map()
-
-    const pushValue = (fieldNumber, value) => {
-      if (value === null || value === undefined) return
-      const existing = bucket.get(fieldNumber)
-      if (existing) {
-        existing.push(value)
-      } else {
-        bucket.set(fieldNumber, [value])
-      }
-    }
-
-    for (const field of fields) {
-      if (processedFields >= maxFields) break
-      processedFields++
-      if (!field || typeof field.fieldNumber !== 'number') continue
-
-      let value = null
-
-      if (field.wireType === 0) {
-        // Varint
-        if (typeof field.value === 'number') {
-          value = field.value
-        }
-      } else if (field.wireType === 2 && Buffer.isBuffer(field.data)) {
-        // Length-delimited: try nested message first
-        let handled = false
-        try {
-          const nested = parseProtobuf(field.data)
-          if (nested && Array.isArray(nested.fields) && nested.fields.length) {
-            const nestedJson = toJsonFromFields(nested.fields, depth + 1)
-            // Only accept as nested protobuf if result has protobuf-style keys (f1, f2, etc.)
-            if (nestedJson && Object.keys(nestedJson).length > 0) {
-              const keys = Object.keys(nestedJson)
-              const hasProtobufKeys = keys.some(k => /^f\d+$/.test(k))
-              if (hasProtobufKeys) {
-                value = nestedJson
-                handled = true
-              }
-            }
-          }
-        } catch {}
-
-        if (!handled) {
-          try {
-            const text = field.data.toString('utf8')
-            if (text && text.trim()) {
-              const printableMatches = text.match(/[\x20-\x7E\n\r\t]/g) || []
-              const printableRatio = printableMatches.length / text.length
-
-              if (printableRatio >= 0.5) {
-                // Try to parse as JSON for richer JSONPath access.
-                // If parsing fails, keep as plain text.
-                const trimmedText = text.trim()
-                let json = null
-                try {
-                  json = JSON.parse(trimmedText)
-                } catch {
-                  // Not valid JSON - preserve as text
-                }
-                value = json !== null ? json : trimmedText
-                handled = true
-              }
-            }
-          } catch {}
-        }
-
-        if (!handled) {
-          const length = field.data.length
-          if (length > 0) {
-            value = {
-              base64: field.data.toString('base64'),
-              length
-            }
-          } else {
-            // Preserve zero-length strings as empty strings to maintain structure.
-            // Without this, text rules that empty a field would cause the field
-            // to be dropped entirely during JSON extraction -> re-encoding cycle.
-            value = ''
-          }
-        }
-      } else if ((field.wireType === 1 || field.wireType === 5) && Buffer.isBuffer(field.data)) {
-        // Fixed 32/64-bit: expose as hex blob (skip empty buffers)
-        const length = field.data.length
-        if (length > 0) {
-          value = {
-            bytesHex: field.data.toString('hex'),
-            length
-          }
-        }
-      }
-
-      if (value !== null) {
-        pushValue(field.fieldNumber, value)
-      }
-    }
-
-    const result = {}
-    for (const [fieldNumber, values] of bucket.entries()) {
-      const key = `f${fieldNumber}`
-      result[key] = values.length === 1 ? values[0] : values
-    }
-
-    return Object.keys(result).length > 0 ? result : null
-  }
-
-  return toJsonFromFields(root.fields, 0)
-}
-
-/**
- * Walk a JSON tree produced by extractJsonFromProtobufBuffer and remove
- * trivial binary blobs that only carry empty data, such as
- * { base64: "", length: 0 }.
- *
- * The function preserves the overall shape of the object while pruning
- * obviously useless placeholders from arrays and objects. This is intended
- * for logging/search views only; rewrite paths should continue to use the
- * raw extractJsonFromProtobufBuffer output so JSONPath rules see the full
- * structure.
- *
- * @param {any} value - Arbitrary JSON value to clean.
- * @returns {any} Cleaned JSON value with trivial blobs removed.
- */
-function stripTrivialBinaryBlobs (value) {
-  if (value === null || value === undefined) return value
-
-  if (Array.isArray(value)) {
-    const next = []
-    for (const item of value) {
-      const cleaned = stripTrivialBinaryBlobs(item)
-      if (cleaned !== undefined) {
-        next.push(cleaned)
-      }
-    }
-    return next
-  }
-
-  if (typeof value !== 'object') {
-    return value
-  }
-
-  const keys = Object.keys(value)
-
-  // Detect the canonical { base64, length } blob representation produced by
-  // extractJsonFromProtobufBuffer and drop it completely when it carries no
-  // actual data. This keeps logging views compact for empty binary fields.
-  if (keys.length === 2 && keys.includes('base64') && keys.includes('length')) {
-    const base64 = value.base64
-    const length = value.length
-
-    if ((base64 === '' || base64 === null || base64 === undefined) &&
-        typeof length === 'number' &&
-        length === 0) {
-      // Returning undefined here signals to the caller that this node should
-      // be removed from its parent container.
-      return undefined
-    }
-  }
-
-  const result = {}
-  for (const key of keys) {
-    const cleaned = stripTrivialBinaryBlobs(value[key])
-    if (cleaned !== undefined) {
-      result[key] = cleaned
-    }
-  }
 
   return result
 }
@@ -6586,26 +5719,6 @@ function computeBypassSuggestions ({ limit = 10, _windowSize = 500 } = {}) {
   return results
 }
 
-function parseListQuery (value, defaultList = []) {
-  if (Array.isArray(value)) {
-    const parts = value
-      .flatMap(v => String(v || '').split(','))
-      .map(v => v.trim())
-      .filter(Boolean)
-    return parts.length ? Array.from(new Set(parts)) : [...defaultList]
-  }
-
-  if (typeof value === 'string') {
-    const parts = value
-      .split(',')
-      .map(v => v.trim())
-      .filter(Boolean)
-    return parts.length ? Array.from(new Set(parts)) : [...defaultList]
-  }
-
-  return [...defaultList]
-}
-
 /**
  * Normalize a simple toggle payload coming from the UI.
  *
@@ -6653,16 +5766,6 @@ function handleBooleanToggleEndpoint ({ req, res, assignValue, responseFieldName
   const payload = { success: true }
   payload[responseFieldName] = result.value
   return res.json(payload)
-}
-
-/**
- * Validate that an ID is a non-empty string.
- *
- * @param {any} id
- * @returns {boolean}
- */
-function isValidId (id) {
-  return typeof id === 'string' && id.trim().length > 0
 }
 
 /**

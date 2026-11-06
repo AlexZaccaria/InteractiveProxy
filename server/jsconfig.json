@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "events": ["../node_modules/@types/node/events.d.ts"],
+      "punycode": ["../node_modules/@types/node/punycode.d.ts"],
+      "string_decoder": ["../node_modules/@types/node/string_decoder.d.ts"]
+    }
+  },
+  "include": ["src/**/*.js"]
+}
