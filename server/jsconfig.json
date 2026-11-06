@@ -17,5 +17,5 @@
       "string_decoder": ["../node_modules/@types/node/string_decoder.d.ts"]
     }
   },
-  "include": ["src/**/*.js"]
+  "include": ["index.js", "src/**/*.js"]
 }
