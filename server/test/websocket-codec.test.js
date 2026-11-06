@@ -128,8 +128,11 @@ describe('handshake and URL helpers', () => {
     assert.equal(I.httpUrlToWebSocketUrl('/path'), '/path')
   })
 
-  test('current behavior: httpUrlToWebSocketUrl also rewrites a URL embedded in the query string', () => {
-    assert.equal(I.httpUrlToWebSocketUrl('https://a.example/?u=http://b.example'), 'wss://a.example/?u=ws://b.example')
+  test('httpUrlToWebSocketUrl rewrites only the leading scheme, case-insensitively', () => {
+    assert.equal(I.httpUrlToWebSocketUrl('https://a.example/?u=http://b.example'), 'wss://a.example/?u=http://b.example')
+    assert.equal(I.httpUrlToWebSocketUrl('HTTPS://a/x'), 'wss://a/x')
+    assert.equal(I.httpUrlToWebSocketUrl('WSS://a/x'), 'WSS://a/x')
+    assert.equal(I.httpUrlToWebSocketUrl('Ws://a/x'), 'Ws://a/x')
   })
 })
 

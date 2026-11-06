@@ -97,9 +97,15 @@ test('boolean toggles validate the payload and are reflected by /api/config', as
   assert.equal(invalid.status, 400)
   assert.equal(invalid.json.error, 'Invalid "enabled" flag: expected a boolean.')
 
-  // current behavior: a payload without "enabled" resets the flag to true.
+  // A payload without "enabled" is rejected and leaves the flag as it was.
   const empty = await api('POST', '/api/edit-rules-mode', {})
-  assert.deepEqual(empty.json, { success: true, editRulesEnabled: true })
+  assert.equal(empty.status, 400)
+  assert.deepEqual(empty.json, { error: 'Missing "enabled" flag: expected a boolean.' })
+  assert.equal((await api('GET', '/api/config')).json.editRulesEnabled, false)
+
+  const on = await api('POST', '/api/edit-rules-mode', { enabled: true })
+  assert.deepEqual(on.json, { success: true, editRulesEnabled: true })
+  assert.equal((await api('GET', '/api/config')).json.editRulesEnabled, true)
 
   for (const path of ['/api/local-resources-mode', '/api/filter-rules-mode', '/api/blocked-rules-mode']) {
     const res = await api('POST', path, { enabled: true })
@@ -256,6 +262,46 @@ test('edit rules: create, rewrite a proxied response body, disable, delete', asy
   assert.equal(deleted.status, 204)
   assert.equal((await api('DELETE', `/api/edit-rules/${rule.id}`)).status, 404)
   assert.deepEqual((await api('GET', '/api/edit-rules')).json, { rules: [] })
+  assert.equal((await viaProxy('GET', `${upstreamBase}/text`)).body, 'hello world, world!')
+})
+
+test('URL-scoped text rules apply only to requests of the matching host', async () => {
+  const sameHost = await api('POST', '/api/edit-rules', {
+    kind: 'text',
+    name: 'scoped to the upstream',
+    startVariants: ['hello'],
+    replacement: 'hi',
+    target: 'response',
+    url: `${upstreamBase}/text`
+  })
+  assert.equal(sameHost.status, 201)
+  const otherHost = await api('POST', '/api/edit-rules', {
+    kind: 'text',
+    name: 'scoped to another host',
+    startVariants: ['world'],
+    replacement: 'nope',
+    target: 'response',
+    url: 'http://other.test/text'
+  })
+  assert.equal(otherHost.status, 201)
+
+  try {
+    const res = await viaProxy('GET', `${upstreamBase}/text`)
+    assert.equal(res.status, 200)
+    // Expected: the same-host rule applies, the other-host rule does not even
+    // though the path prefix matches. The engine filters correctly when given
+    // a URL context (see url-matching.test.js), but plain text bodies are
+    // rewritten by the fallback inside applyConnectRewritesAndDecode, which
+    // calls applyEditRulesToBuffer(workingBuffer) with no context at all (and
+    // the buffered response path passes no urlContext either), so every
+    // compiled rule applies regardless of url and target: the body comes back
+    // as 'hi nope, nope!'. Left failing on purpose until that path passes the
+    // URL/phase context.
+    assert.equal(res.body, 'hi world, world!')
+  } finally {
+    await api('DELETE', `/api/edit-rules/${sameHost.json.rule.id}`)
+    await api('DELETE', `/api/edit-rules/${otherHost.json.rule.id}`)
+  }
   assert.equal((await viaProxy('GET', `${upstreamBase}/text`)).body, 'hello world, world!')
 })
 

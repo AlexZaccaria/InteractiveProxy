@@ -148,17 +148,32 @@ test('POST with a JSON body is forwarded byte for byte', async () => {
   assert.equal(echo.headers['content-length'], String(Buffer.byteLength(body)))
 })
 
-test('POST with a text/plain body', async () => {
+test('POST with a text/plain body is forwarded byte for byte', async () => {
+  const body = 'plain text payload: héllo'
   const res = await viaProxy('POST', `${upstreamBase}/text`, {
-    headers: { 'content-type': 'text/plain' },
-    body: 'plain text payload'
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+    body
   })
   assert.equal(res.status, 200)
   const echo = JSON.parse(res.body)
   assert.equal(echo.method, 'POST')
-  // current behavior: no body parser handles text/plain, so req.rawBody and
-  // req.body are both unset and the body is dropped before forwarding.
-  assert.equal(echo.body, '')
+  assert.equal(echo.body, body)
+  assert.equal(echo.headers['content-type'], 'text/plain; charset=utf-8')
+  assert.equal(echo.headers['content-length'], String(Buffer.byteLength(body)))
+})
+
+test('POST with an XML body (neither JSON, urlencoded nor proto) is forwarded byte for byte', async () => {
+  const body = '<?xml version="1.0"?><note><to>proxy</to><body>x &amp; y</body></note>'
+  const res = await viaTargetHeader('POST', '/xml', `${upstreamBase}/xml`, {
+    headers: { 'content-type': 'application/xml' },
+    body
+  })
+  assert.equal(res.status, 200)
+  const echo = JSON.parse(res.body)
+  assert.equal(echo.method, 'POST')
+  assert.equal(echo.url, '/xml')
+  assert.equal(echo.body, body)
+  assert.equal(echo.headers['content-length'], String(Buffer.byteLength(body)))
 })
 
 test('HEAD is forwarded and answered without a body', async () => {
@@ -303,24 +318,17 @@ test('a blocked rule answers 204 and the entry shows up as blocked once the rule
   assert.equal(rule.enabled, true)
   assert.equal(rule.name, 'test block')
 
-  // current behavior: POST /api/blocked answers before the rule is active.
-  // saveBlockedUrls() is not awaited and only rebuilds the active list after
-  // its file write completes, so the first request right after the POST can
-  // still go through; retry briefly until the rule applies.
-  let blocked = null
-  for (let attempt = 0; attempt < 40; attempt++) {
-    blocked = await viaProxy('GET', `${upstreamBase}/blocked-path/resource.js`)
-    if (blocked.status === 204) break
-    await new Promise(resolve => setTimeout(resolve, 25))
-  }
+  // The rule is active as soon as POST /api/blocked has answered: it is
+  // enabled in memory before the file write, which the handler awaits.
+  const blocked = await viaProxy('GET', `${upstreamBase}/blocked-path/resource.js`)
   assert.equal(blocked.status, 204)
   assert.equal(blocked.body, '')
 
   const unrelated = await viaProxy('GET', `${upstreamBase}/still-open`)
   assert.equal(unrelated.status, 200)
 
-  // current behavior: /api/logs hides every entry whose URL matches a blocked
-  // rule (enabled or not) while the rule exists.
+  // /api/logs hides every entry whose URL matches a blocked rule (enabled or
+  // not) while the rule exists (documented behaviour).
   const hidden = await listLogs()
   assert.equal(hidden.some(entry => entry.source === 'blocked'), false)
   assert.equal(hidden.some(entry => entry.fullUrl === `${upstreamBase}/still-open`), true)
@@ -332,25 +340,35 @@ test('a blocked rule answers 204 and the entry shows up as blocked once the rule
   assert.equal(removed.status, 200)
   assert.equal(removed.json.blockedRules.some(entry => entry.id === rule.id), false)
 
-  // current behavior: the same unawaited save delays the visibility update
-  // of the log entries, so poll until the entry shows up.
-  let entries = []
-  for (let attempt = 0; attempt < 40 && entries.length === 0; attempt++) {
-    entries = (await listLogs()).filter(item => item.source === 'blocked')
-    if (entries.length === 0) await new Promise(resolve => setTimeout(resolve, 25))
-  }
-  assert.ok(entries.length >= 1, 'blocked entry becomes visible after the rule is removed')
+  // Removing the rule makes the hidden entry visible right away.
+  const entries = (await listLogs()).filter(item => item.source === 'blocked')
+  assert.equal(entries.length, 1, 'blocked entry is visible once the rule is removed')
   const entry = entries[0]
   assert.equal(entry.statusCode, 204)
   assert.equal(entry.method, 'GET')
   assert.equal(entry.url, `${upstreamBase}/blocked-path/resource.js`)
-  // current behavior: the blocked log builds fullUrl as `<scheme>://<Host
-  // header><request line>`; with a proxy-style absolute request line the
-  // origin is doubled.
-  assert.equal(entry.fullUrl, `${upstreamBase}${upstreamBase}/blocked-path/resource.js`)
+  // A proxy-style request carries an absolute request line, which is the
+  // client-facing URL as is (no Host header prepended).
+  assert.equal(entry.fullUrl, `${upstreamBase}/blocked-path/resource.js`)
 
   const afterRemoval = await viaProxy('GET', `${upstreamBase}/blocked-path/resource.js`)
   assert.equal(afterRemoval.status, 200)
+})
+
+test('a blocked rule added with a disabled flag is inactive until updated', async () => {
+  const added = await api('POST', '/api/blocked', { action: 'add', url: '/sleeping-block', enabled: false })
+  assert.equal(added.status, 200)
+  const rule = added.json.blockedRules.find(entry => entry.url === '/sleeping-block')
+  assert.equal(rule.enabled, false)
+
+  assert.equal((await viaProxy('GET', `${upstreamBase}/sleeping-block/a`)).status, 200)
+
+  const updated = await api('POST', '/api/blocked', { action: 'update', id: rule.id, enabled: true })
+  assert.equal(updated.status, 200)
+  assert.equal((await viaProxy('GET', `${upstreamBase}/sleeping-block/a`)).status, 204)
+
+  await api('POST', '/api/blocked', { action: 'remove', id: rule.id })
+  assert.equal((await viaProxy('GET', `${upstreamBase}/sleeping-block/a`)).status, 200)
 })
 
 test('POST /api/blocked validates its payload', async () => {

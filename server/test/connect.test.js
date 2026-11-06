@@ -167,11 +167,24 @@ describe('decodeConnectPayload', () => {
     assert.deepEqual(withHeader.frames[0].json, { f1: 'hello world', f2: 42 })
     assert.ok(Buffer.isBuffer(withHeader.frames[0]._decodedBuffer))
 
-    // current behavior: without the header the gzip bytes are previewed as text.
+    // Without the header the frame is left encoded and gets a note instead
+    // of a preview made of gzip bytes.
     const withoutHeader = I.decodeConnectPayload(gzFrame, PROTO)
+    assert.equal(withoutHeader.frames[0].compressed, true)
     assert.equal(withoutHeader.frames[0].frameDecompressed, false)
     assert.equal(withoutHeader.frames[0].json, null)
-    assert.equal(withoutHeader.frames[0].preview, 'HW(/IPt')
+    assert.equal(withoutHeader.frames[0].preview, '')
+    assert.equal(
+      withoutHeader.frames[0].note,
+      'compressed frame: no connect-content-encoding/grpc-encoding header, payload left encoded'
+    )
+
+    // A named codec that cannot decode the payload is reported the same way.
+    const undecodable = I.decodeConnectPayload(frame(1, protoMessage()), { ...PROTO, 'connect-content-encoding': 'gzip' })
+    assert.equal(undecodable.frames[0].frameDecompressed, false)
+    assert.equal(undecodable.frames[0].json, null)
+    assert.equal(undecodable.frames[0].preview, '')
+    assert.equal(undecodable.frames[0].note, 'compressed frame: decompression failed, payload left encoded')
   })
 
   it('treats a non-envelope protobuf body as a single unary end-stream frame', () => {
@@ -207,9 +220,26 @@ describe('decodeConnectPayload', () => {
 })
 
 describe('edit rule loading', () => {
-  it('current behavior: on-disk text rules with only start/end (no startVariants) compile to nothing', () => {
+  it('folds legacy start/end markers of on-disk text rules into the variant lists', () => {
     setRules([{ id: 'legacy', kind: 'text', enabled: true, start: 'hello', end: '', replacement: 'X' }])
-    assert.equal(I.getCompiledRules().length, 0)
+    const compiled = I.getCompiledRules()
+    assert.equal(compiled.length, 1)
+    assert.equal(compiled[0].mode, 'prefix')
+    assert.deepEqual(compiled[0].rule.startVariants, ['hello'])
+    assert.deepEqual(compiled[0].rule.endVariants, [])
+    assert.deepEqual(I.applyEditRulesToText('say hello Hello', { requestUrl: '/x', phase: 'request' }), {
+      text: 'say X X',
+      appliedRuleIds: ['legacy'],
+      changed: true
+    })
+
+    setRules([{ id: 'legacy2', kind: 'text', enabled: true, start: '[', end: ']', replacement: '<x>' }])
+    assert.equal(I.getCompiledRules()[0].mode, 'between')
+    assert.deepEqual(I.applyEditRulesToText('a [b] c [d]', { requestUrl: '/x', phase: 'request' }), {
+      text: 'a <x> c <x>',
+      appliedRuleIds: ['legacy2'],
+      changed: true
+    })
 
     setRules([textRule])
     assert.equal(I.getCompiledRules().length, 1)
@@ -240,9 +270,8 @@ describe('applyConnectFrameRewrites', () => {
     const [updated] = result.updatedFrames
     assert.equal(hex(updated.data), '0a0b48454c4c4f20776f726c64102a')
     assert.equal(updated.preview, '\n\x0BHELLO world\x10*')
-    // current behavior: after a text rewrite the frame's json view is null
-    // even though the rewritten payload is still parseable.
-    assert.equal(updated.json, null)
+    // The json view is re-extracted from the rewritten payload.
+    assert.deepEqual(updated.json, { f1: 'HELLO world', f2: 42 })
   })
 
   it('skips preview work when logging is disabled', () => {

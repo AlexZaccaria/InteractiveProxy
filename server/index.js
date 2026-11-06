@@ -676,13 +676,15 @@ function loadBypassUrls () {
 
 // Save blocked URLs to file
 async function saveBlockedUrls () {
+  // Activate the rules in memory before the (asynchronous) write so that a
+  // request arriving right after the API call already sees them.
+  blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
+  // Keep the log filtering patterns in sync with the latest blocked rules.
+  recomputeBlockedUrlSubstringsForFilter()
+
   try {
     const payload = JSON.stringify(blockedRules, null, 2)
     await fsPromises.writeFile(BLOCKED_URLS_FILE, payload)
-    // Update the active URLs array
-    blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
-    // Keep the log filtering patterns in sync with the latest blocked rules.
-    recomputeBlockedUrlSubstringsForFilter()
   } catch (error) {
     console.error('[proxy] Error saving blocked URLs:', error)
   }
@@ -944,8 +946,21 @@ function normalizeEditRule (rule = {}) {
       .filter(entry => entry.length > 0)
   }
 
-  const startVariants = normaliseVariantArray(rule.startVariants)
-  const endVariants = normaliseVariantArray(rule.endVariants)
+  // Rules written by older versions (and the documented on-disk format) carry
+  // a single `start`/`end` pair; fold it into the variant lists so that they
+  // keep applying after an upgrade.
+  const legacyStart = safeString(rule.start).trim()
+  const legacyEnd = safeString(rule.end).trim()
+  const startVariants = normaliseVariantArray(
+    Array.isArray(rule.startVariants) && rule.startVariants.length
+      ? rule.startVariants
+      : (legacyStart ? [legacyStart] : [])
+  )
+  const endVariants = normaliseVariantArray(
+    Array.isArray(rule.endVariants) && rule.endVariants.length
+      ? rule.endVariants
+      : (legacyEnd ? [legacyEnd] : [])
+  )
 
   return {
     id: rule.id || crypto.randomUUID(),
@@ -1503,7 +1518,15 @@ function rebuildEditRuleCache () {
         start: combo.start,
         end: combo.end
       }
-      const compiled = compileEditRule(variantRule)
+      let compiled = null
+      try {
+        compiled = compileEditRule(variantRule)
+      } catch (error) {
+        // An invalid regular expression in one rule must not take the whole
+        // rule set down with it: skip that combination and keep going.
+        logWarn('edit-rules', `Skipping rule ${rule.id || '(no id)'} "${rule.name || ''}": ${error.message}`)
+        continue
+      }
       if (compiled) {
         compiledEditRules.push(compiled)
       }
@@ -1712,7 +1735,10 @@ function urlPatternMatchesCandidates (rawPattern, candidates) {
       return candidates.some(candidate => {
         if (!candidate) return false
 
-        if (patternHost && candidate.host && candidate.host !== patternHost) {
+        // A pattern with a host is satisfied only by candidates that carry
+        // the same host; the relative requestUrl candidate (no host) cannot
+        // match it on its own.
+        if (patternHost && candidate.host !== patternHost) {
           return false
         }
 
@@ -2006,18 +2032,20 @@ function applyJsonPathRulesToObject (root, context = {}) {
 
 // Protobuf helpers (inlined from protobuf-rewriter.js)
 function readVarint (buffer, offset) {
+  // Accumulate with multiplication instead of 32-bit shifts so that int64
+  // values (timestamps, ids) are read correctly; exact up to 2^53.
   let result = 0
-  let shift = 0
+  let multiplier = 1
   let length = 0
 
   while (offset < buffer.length && length < 10) {
     const byte = buffer[offset++]
-    result |= (byte & 0x7F) << shift
+    result += (byte & 0x7F) * multiplier
     length++
     if ((byte & 0x80) === 0) {
-      return { value: result >>> 0, length }
+      return { value: result, length }
     }
-    shift += 7
+    multiplier *= 128
   }
 
   throw new Error('Invalid varint encoding')
@@ -2251,14 +2279,17 @@ function rewriteProtobufFields (buffer, textRewriter) {
 }
 
 // Encode a 32-bit unsigned integer as protobuf varint.
+// Encode a varint of any width. Negative numbers become their 64-bit two's
+// complement (10 bytes), as protobuf encodes negative int32/int64 values.
 function encodeVarint32 (value) {
-  let v = value >>> 0
+  let v = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value) || 0))
+  v = BigInt.asUintN(64, v)
   const bytes = []
-  while (v > 127) {
-    bytes.push((v & 0x7F) | 0x80)
-    v >>>= 7
+  while (v > 127n) {
+    bytes.push(Number(v & 0x7Fn) | 0x80)
+    v >>= 7n
   }
-  bytes.push(v)
+  bytes.push(Number(v))
   return Buffer.from(bytes)
 }
 
@@ -2843,22 +2874,26 @@ const headerLookupCache = new WeakMap()
 
 function getHeaderCaseInsensitive (headers, name) {
   if (!headers || typeof headers !== 'object') return undefined
+  const keys = Object.keys(headers)
   let cache = headerLookupCache.get(headers)
 
-  if (!cache) {
-    cache = {}
-    for (const [key, value] of Object.entries(headers)) {
+  // The cache is keyed by object identity; rebuild it when keys were added
+  // or removed since it was built (header rewrites mutate the same object).
+  if (!cache || cache.count !== keys.length) {
+    const map = {}
+    for (const key of keys) {
       const lower = key.toLowerCase()
       // Preserve the first occurrence for a given lower-cased key
-      if (!Object.hasOwn(cache, lower)) {
-        cache[lower] = Array.isArray(value) ? value[0] : value
+      if (!Object.hasOwn(map, lower)) {
+        const value = headers[key]
+        map[lower] = Array.isArray(value) ? value[0] : value
       }
     }
+    cache = { count: keys.length, map }
     headerLookupCache.set(headers, cache)
   }
 
-  const target = name.toLowerCase()
-  return cache[target]
+  return cache.map[name.toLowerCase()]
 }
 
 /**
@@ -3168,7 +3203,7 @@ function applyConnectFrameRewrites (buffer, headers = {}, decodedConnect = null,
           // Prefer the JSON view already produced by JSONPath rule
           // application when available, to avoid reparsing the protobuf
           // payload purely for logging/search views.
-          if (jsonPathResult && jsonPathResult.json !== undefined) {
+          if (jsonPathResult && jsonPathResult.json != null) {
             parsedJson = jsonPathResult.json
           } else {
             parsedJson = extractJsonFromProtobufBuffer(finalBufferUncompressed)
@@ -3973,25 +4008,29 @@ function rewriteJsonHttpBody ({
     phase
   })
 
-  const normalized = normalizeNestedJsonStrings(parsed)
-
-  // Capture a structured snapshot of the JSON payload before JSONPath rules
-  // are applied so that logs and the UI can render a true "before rewrite"
-  // view alongside the final rewritten object. This work is gated by the
-  // captureBeforeJson flag so that non-logging callers can skip the deep
-  // clone on large payloads.
-  let beforeJson = null
-  if (captureBeforeJson) {
+  // Rules operate on the body exactly as parsed: a string field that happens
+  // to contain JSON stays a string in what goes upstream. The nested-JSON
+  // normalisation is applied only to the views returned for logging, which
+  // are deep clones so the forwarded object is never touched. The clones are
+  // gated by captureBeforeJson so non-logging callers skip them.
+  const toDisplayJson = (value) => {
     try {
-      beforeJson = JSON.parse(JSON.stringify(normalized))
-    } catch {}
+      return normalizeNestedJsonStrings(JSON.parse(JSON.stringify(value)))
+    } catch {
+      return value
+    }
   }
 
-  const jsonPathResult = applyJsonPathRulesToObject(normalized, jsonPathContext)
+  const beforeJson = captureBeforeJson ? toDisplayJson(parsed) : null
+
+  const jsonPathResult = applyJsonPathRulesToObject(parsed, jsonPathContext)
+  const resultObject = jsonPathResult ? jsonPathResult.object : parsed
+  const json = captureBeforeJson ? toDisplayJson(resultObject) : resultObject
+
   if (!jsonPathResult || !jsonPathResult.changed) {
     return {
       buffer,
-      json: jsonPathResult ? jsonPathResult.object : parsed,
+      json,
       beforeJson,
       appliedRuleIds: jsonPathResult ? (jsonPathResult.appliedRuleIds || []) : [],
       changed: false,
@@ -3999,8 +4038,7 @@ function rewriteJsonHttpBody ({
     }
   }
 
-  const updatedObject = jsonPathResult.object
-  const updatedDecoded = Buffer.from(JSON.stringify(updatedObject), 'utf8')
+  const updatedDecoded = Buffer.from(JSON.stringify(resultObject), 'utf8')
 
   let nextBuffer = buffer
   if (decompressed) {
@@ -4021,7 +4059,7 @@ function rewriteJsonHttpBody ({
 
   return {
     buffer: nextBuffer,
-    json: updatedObject,
+    json,
     beforeJson,
     appliedRuleIds: jsonPathResult.appliedRuleIds || [],
     changed: true,
@@ -4247,6 +4285,8 @@ function isProtoContentType (contentType = '') {
 function isClearlyBinaryContentType (contentType = '') {
   if (!contentType) return false
   const lower = contentType.toLowerCase()
+  // SVG is XML text even though it is an image/* type.
+  if (lower.includes('svg')) return false
   return (
     lower.includes('font/') ||
     lower.includes('woff') ||
@@ -4463,7 +4503,10 @@ function ensureLogSearchSnapshots (log) {
 }
 
 // Precompiled regex for bufferToTextPreview to avoid repeated compilation
-const NON_PRINTABLE_REGEX = /[^\x09\x0A\x0D\x20-\x7E]/g
+// Control characters (minus tab/newline/carriage return) and U+FFFD, which
+// is what invalid UTF-8 decodes to; every other code point, accented letters
+// included, counts as printable.
+const NON_PRINTABLE_REGEX = /(?![\x09\x0A\x0D])[\p{C}�]/gu
 const ASCII_SEGMENT_REGEX = /[\x20-\x7E]{4,}/g
 
 /**
@@ -4792,17 +4835,23 @@ function decodeConnectPayload (buffer, headers = {}) {
           } catch (error) {
             framePayload = frameData
             frameDecompressed = false
+            note = 'compressed frame: decompression failed, payload left encoded'
           }
+        } else if (isCompressed) {
+          note = 'compressed frame: no connect-content-encoding/grpc-encoding header, payload left encoded'
         }
 
-        preview = bufferToTextPreview(framePayload)
-        json = tryParseJsonString(preview)
-        if (json === null) {
-          rawProtobufJson = extractJsonFromProtobufBuffer(framePayload)
-          if (rawProtobufJson && typeof rawProtobufJson === 'object') {
-            json = stripTrivialBinaryBlobs(rawProtobufJson)
-          } else {
-            json = rawProtobufJson
+        // A frame that is still compressed has no readable preview or JSON.
+        if (!isCompressed || frameDecompressed) {
+          preview = bufferToTextPreview(framePayload)
+          json = tryParseJsonString(preview)
+          if (json === null) {
+            rawProtobufJson = extractJsonFromProtobufBuffer(framePayload)
+            if (rawProtobufJson && typeof rawProtobufJson === 'object') {
+              json = stripTrivialBinaryBlobs(rawProtobufJson)
+            } else {
+              json = rawProtobufJson
+            }
           }
         }
       } else {
@@ -5255,7 +5304,9 @@ function applyConnectRewritesAndDecode (logEntry, buffer, headers, options = {})
       const contentType = getContentType(headers)
 
       if (isTextualContentType(contentType)) {
-        const bodyRewriteResult = applyEditRulesToBuffer(workingBuffer)
+        // Same URL/phase context as the Connect and JSONPath paths, so that
+        // URL-scoped and request/response-scoped text rules apply here too.
+        const bodyRewriteResult = applyEditRulesToBuffer(workingBuffer, jsonPathContext)
         if (bodyRewriteResult.changed) {
           workingBuffer = bodyRewriteResult.buffer
 
@@ -5479,7 +5530,12 @@ function processRequestBodyWithRewrites ({
       logEntry,
       buffer,
       headers,
-      { role: 'request', allowBodyRewriteFallback, updateContentEncoding: true }
+      {
+        role: 'request',
+        allowBodyRewriteFallback,
+        updateContentEncoding: true,
+        urlContext: { requestUrl, fullUrl }
+      }
     )
     workingBuffer = connectResult.buffer
     connectRequest = connectResult.connect
@@ -5572,7 +5628,12 @@ function handleBufferedUpstreamResponseWithRewrites (options = {}) {
     logEntry,
     responseBuffer,
     headers,
-    { role: 'response', allowBodyRewriteFallback: true, updateContentEncoding: true }
+    {
+      role: 'response',
+      allowBodyRewriteFallback: true,
+      updateContentEncoding: true,
+      urlContext: { requestUrl, fullUrl: jsonPathFullUrl }
+    }
   )
 
   let finalResponseBuffer = effectiveResponseBuffer
@@ -6560,7 +6621,11 @@ function validateTogglePayload (body, defaultEnabled) {
   const source = (body && typeof body === 'object') ? body : {}
 
   if (!Object.hasOwn(source, 'enabled')) {
-    return { ok: true, value: defaultEnabled }
+    return {
+      ok: false,
+      value: defaultEnabled,
+      error: 'Missing "enabled" flag: expected a boolean.'
+    }
   }
 
   const { enabled } = source
@@ -6724,6 +6789,34 @@ function buildConnectSearchContentForLog (connectData) {
   return parts.join('\n')
 }
 
+// File types derived from the URL extension when the response carries no
+// content-type (or a generic octet-stream).
+const EXTENSION_FILE_TYPES = {
+  '.json': 'json',
+  '.html': 'html',
+  '.htm': 'html',
+  '.css': 'css',
+  '.js': 'js',
+  '.mjs': 'js',
+  '.png': 'image',
+  '.jpg': 'image',
+  '.jpeg': 'image',
+  '.gif': 'image',
+  '.webp': 'image',
+  '.svg': 'image',
+  '.ico': 'image',
+  '.mp4': 'video',
+  '.webm': 'video',
+  '.mp3': 'audio',
+  '.ogg': 'audio',
+  '.wav': 'audio',
+  '.woff': 'font',
+  '.woff2': 'font',
+  '.ttf': 'font',
+  '.otf': 'font',
+  '.eot': 'font'
+}
+
 function getFileTypeFromLogEntry (log) {
   // Early return if already cached
   if (log?.fileType) return log.fileType
@@ -6731,7 +6824,10 @@ function getFileTypeFromLogEntry (log) {
   const contentType = (log && log.responseHeaders)
     ? getContentType(log.responseHeaders)
     : ''
-  const url = getLogUrlString(log).toLowerCase()
+  // Extension lookups ignore the query string and fragment.
+  const url = getLogUrlString(log).toLowerCase().split(/[?#]/, 1)[0]
+  const dot = url.lastIndexOf('.')
+  const extension = dot > url.lastIndexOf('/') ? url.slice(dot) : ''
 
   if (contentType.includes('json')) return 'json'
   if (contentType.includes('html')) return 'html'
@@ -6740,9 +6836,11 @@ function getFileTypeFromLogEntry (log) {
   if (contentType.includes('image/')) return 'image'
   if (contentType.includes('video/')) return 'video'
   if (contentType.includes('audio/')) return 'audio'
+  if (contentType.includes('font/') || EXTENSION_FILE_TYPES[extension] === 'font') return 'font'
 
-  const fontExtensions = ['.woff', '.woff2', '.ttf', '.otf', '.eot']
-  if (contentType.includes('font/') || fontExtensions.some(ext => url.endsWith(ext))) return 'font'
+  if ((!contentType || contentType.includes('octet-stream')) && EXTENSION_FILE_TYPES[extension]) {
+    return EXTENSION_FILE_TYPES[extension]
+  }
 
   // If bodies are structured objects, treat them as JSON for cosmetic purposes
   if (log && (typeof log.responseBody === 'object' && log.responseBody !== null)) return 'json'
@@ -7115,12 +7213,17 @@ function parseUrlCandidate (candidate) {
 
   try {
     const parsed = new URL(trimmed)
-		const protocol = safeString(parsed.protocol).toLowerCase()
-		if (protocol !== 'http:' && protocol !== 'https:') {
-			return null
-		}
+    const protocol = safeString(parsed.protocol).toLowerCase()
+    // WebSocket targets are carried as their HTTP equivalent; the upgrade
+    // path converts them back with httpUrlToWebSocketUrl.
+    let url = trimmed
+    if (protocol === 'ws:' || protocol === 'wss:') {
+      url = (protocol === 'wss:' ? 'https:' : 'http:') + trimmed.slice(protocol.length)
+    } else if (protocol !== 'http:' && protocol !== 'https:') {
+      return null
+    }
     return {
-      url: trimmed,
+      url,
       host: normalizeHostValue(parsed.hostname) || null,
       hostWithPort: parsed.host.toLowerCase()
     }
@@ -7148,7 +7251,7 @@ function resolveTargetFromRequest (req) {
   const hostHeader = safeTrim(req.headers.host)
   const normalizedHeaderHost = normalizeHostValue(hostHeader)
 
-  if (hostHeader && hostHeader !== `localhost:${PORT}` && hostHeader !== `127.0.0.1:${PORT}`) {
+  if (hostHeader && !PROXY_OWN_AUTHORITIES.has(hostHeader.toLowerCase())) {
     const assumedProtocol = getAssumedProtocol(req)
     const candidate = `${assumedProtocol}://${hostHeader}${requestUrl}`
     const parsedCandidate = parseUrlCandidate(candidate)
@@ -7265,9 +7368,15 @@ function hostPatternMatches (patternValue, host) {
  * @param {{host?: string|null, requestUrl?: string, fullUrl?: string|null, targetUrl?: string|null}} [input]
  * @returns {boolean}
  */
-function isInternalProxyRequest (input = {}) {
+function isInternalProxyRequest (rawInput = {}) {
+  const input = rawInput && typeof rawInput === 'object' ? rawInput : {}
   const host = normalizeHostValue(input.host) || ''
-  if (!host && typeof input.requestUrl !== 'string' && typeof input.fullUrl !== 'string') {
+  if (
+    !host &&
+    typeof input.requestUrl !== 'string' &&
+    typeof input.fullUrl !== 'string' &&
+    typeof input.targetUrl !== 'string'
+  ) {
     return false
   }
 
@@ -7330,9 +7439,10 @@ function shouldUseDirectConnection (input) {
  * @param {{requestUrl?: string, fullUrl?: string|null, host?: string|null, path?: string|null, targetUrl?: string|null, method?: string}} context
  * @returns {'block'|'direct'|'proxy'}
  */
-function decideHttpHandling (context) {
-  const requestUrl = context?.requestUrl || '/'
-  const fullUrl = context?.fullUrl || null
+function decideHttpHandling (rawContext) {
+  const context = rawContext && typeof rawContext === 'object' ? rawContext : {}
+  const requestUrl = context.requestUrl || '/'
+  const fullUrl = context.fullUrl || null
 
   // Blocked URLs take precedence over bypass/focus logic
   if (isRequestBlocked(requestUrl, fullUrl)) {
@@ -7611,25 +7721,29 @@ function sanitizeHeaders (headers = {}, omit = []) {
     omitSet = new Set()
   }
 
+  // Cached per headers object and invalidated when keys were added or
+  // removed since the cache was built.
+  const keys = Object.keys(headers)
   let cacheForHeaders = sanitizedHeadersCache.get(headers)
-  if (!cacheForHeaders) {
-    cacheForHeaders = new Map()
+  if (!cacheForHeaders || cacheForHeaders.count !== keys.length) {
+    cacheForHeaders = { count: keys.length, byOmit: new Map() }
     sanitizedHeadersCache.set(headers, cacheForHeaders)
   }
 
-  if (cacheForHeaders.has(omitKey)) {
-    return cacheForHeaders.get(omitKey)
+  if (cacheForHeaders.byOmit.has(omitKey)) {
+    return cacheForHeaders.byOmit.get(omitKey)
   }
 
   const sanitized = {}
 
-  for (const [key, value] of Object.entries(headers)) {
+  for (const key of keys) {
+    const value = headers[key]
     if (omitSet.has(key.toLowerCase())) continue
     if (value === undefined) continue
     sanitized[key] = value
   }
 
-  cacheForHeaders.set(omitKey, sanitized)
+  cacheForHeaders.byOmit.set(omitKey, sanitized)
   return sanitized
 }
 
@@ -7909,7 +8023,10 @@ async function tryHandleHttpBypass (req, res) {
   const hostHeader = safeString(req.headers?.host)
   const protocol = req.socket?.encrypted ? 'https' : 'http'
   const authority = hostHeader || `localhost:${PORT}`
-  const clientFacingUrl = `${protocol}://${authority}${requestUrl}`
+  // Proxy-style requests carry an absolute request line already.
+  const clientFacingUrl = /^https?:\/\//i.test(requestUrl)
+    ? requestUrl
+    : `${protocol}://${authority}${requestUrl}`
   const clientIp = req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown'
 
   if (handling === 'block') {
@@ -8300,6 +8417,19 @@ app.use(bodyParser.raw({
 }))
 app.use(bodyParser.json({ limit: BODY_LIMIT, verify: captureRawBody }))
 app.use(bodyParser.urlencoded({ extended: true, limit: BODY_LIMIT, verify: captureRawBody }))
+// Every other body (text/plain, XML, binary, multipart of proxied traffic) is
+// captured raw so the proxy flow forwards it byte for byte. Multipart bodies
+// addressed to the management API are left to multer.
+app.use(bodyParser.raw({
+  type: req => {
+    const contentType = getContentType(req.headers).toLowerCase()
+    if (contentType.startsWith('multipart/')) return isProxyTargetedRequest(req)
+    return true
+  },
+  limit: BODY_LIMIT,
+  verify: captureRawBody,
+  inflate: false
+}))
 
 /**
  * `host:port` values under which the proxy itself is addressed. A request
@@ -8705,7 +8835,7 @@ app.get('/api/blocked', (req, res) => {
 })
 
 // Add/update/remove blocked URL
-app.post('/api/blocked', (req, res) => {
+app.post('/api/blocked', async (req, res) => {
   const { id, url, action, enabled, name } = req.body || {}
 
   if (typeof action !== 'string') {
@@ -8723,7 +8853,7 @@ app.post('/api/blocked', (req, res) => {
 
     const newRule = normalizeBlockedRule({ id, enabled, name, url: normalizedUrl })
     blockedRules.push(newRule)
-    saveBlockedUrls()
+    await saveBlockedUrls()
   } else if (action === 'update') {
     if (!isValidId(id)) {
       return res.status(400).json({ error: 'ID is required for update' })
@@ -8756,7 +8886,7 @@ app.post('/api/blocked', (req, res) => {
       }
 
       blockedRules[idx] = normalizeBlockedRule(next)
-      saveBlockedUrls()
+      await saveBlockedUrls()
     } else {
       return res.status(404).json({ error: 'Rule not found' })
     }
@@ -8765,7 +8895,7 @@ app.post('/api/blocked', (req, res) => {
       return res.status(400).json({ error: 'ID is required for remove' })
     }
     blockedRules = blockedRules.filter(r => r.id !== id)
-    saveBlockedUrls()
+    await saveBlockedUrls()
   } else {
     return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
   }
@@ -9199,7 +9329,10 @@ app.get('/api/audit', (req, res) => {
  */
 async function handleProxiedHttpRequest (req, res) {
   const requestUrl = req.originalUrl
-  const fullUrl = req.protocol + '://' + req.get('host') + requestUrl
+  // Proxy-style requests carry an absolute request line already.
+  const fullUrl = /^https?:\/\//i.test(requestUrl)
+    ? requestUrl
+    : req.protocol + '://' + req.get('host') + requestUrl
   const clientIp = req.ip || req.connection?.remoteAddress || 'unknown'
   const requestStart = Date.now()
 
@@ -9784,8 +9917,9 @@ function generateWebSocketAccept (key) {
  */
 function httpUrlToWebSocketUrl (url = '') {
   if (!url) return ''
-  if (url.startsWith('ws://') || url.startsWith('wss://')) return url
-  return url.replace('https://', 'wss://').replace('http://', 'ws://')
+  if (/^wss?:\/\//i.test(url)) return url
+  // Only the scheme at the start is rewritten, never a URL inside the query.
+  return url.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
 }
 
 /**
@@ -9918,14 +10052,17 @@ server.on('connect', (req, clientSocket, head) => {
   }
 
   const targetHost = targetUrl.hostname
-  const targetPort = targetUrl.port || 443
+  const targetPort = targetUrl.port ? Number(targetUrl.port) : 443
+  // Authority used in every URL built for this tunnel: the port is kept when
+  // it is not the HTTPS default, otherwise upstream requests would go to 443.
+  const targetAuthority = targetPort === 443 ? targetHost : `${targetHost}:${targetPort}`
 
   const routingContext = buildRoutingContext({
     requestUrl: '/',
-    fullUrl: `https://${targetHost}`,
+    fullUrl: `https://${targetAuthority}`,
     host: targetHost,
     path: '/',
-    targetUrl: `https://${targetHost}`,
+    targetUrl: `https://${targetAuthority}`,
     method: req.method
   })
 
@@ -9936,7 +10073,7 @@ server.on('connect', (req, clientSocket, head) => {
 
     if (interactiveModeEnabled) {
       const requestStart = Date.now()
-      const fullUrl = `https://${targetHost}`
+      const fullUrl = `https://${targetAuthority}`
       const logEntry = createHttpFlowLogEntry({
         requestStart,
         method: req.method,
@@ -9991,7 +10128,7 @@ server.on('connect', (req, clientSocket, head) => {
   // Create HTTPS server to decrypt client traffic
   const httpsServer = https.createServer(httpsServerOptions, async (clientReq, clientRes) => {
     const requestUrl = clientReq.url
-    const fullUrl = `https://${targetHost}${requestUrl}`
+    const fullUrl = `https://${targetAuthority}${requestUrl}`
     const method = clientReq.method
     const requestStart = Date.now()
     const clientIp = clientReq.socket?.remoteAddress || clientReq.connection?.remoteAddress || 'unknown'
@@ -10059,7 +10196,7 @@ server.on('connect', (req, clientSocket, head) => {
           targetUrl: fullUrl,
           requestUrl,
           fullUrl,
-          targetHost,
+          targetHost: targetAuthority,
           requestStart,
           clientIp,
           omitHeaders: OMIT_HEADERS_MITM,
@@ -10140,7 +10277,7 @@ server.on('connect', (req, clientSocket, head) => {
 
           const omitHeaders = OMIT_HEADERS_MITM
           let headersToForward = createForwardHeaders(clientReq.headers, omitHeaders, {
-            host: targetHost
+            host: targetAuthority
           })
           headersToForward = applyHeaderRewrites(headersToForward, { requestUrl, fullUrl, phase: 'request' }, logEntry)
 

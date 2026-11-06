@@ -3,8 +3,9 @@
 /**
  * Characterization tests for text edit rules: normalization, on-disk
  * serialization, compilation and application to text, headers and buffers.
- * They assert the behavior observed in server/index.js as it is; a few
- * oddities are marked "current behavior" rather than fixed here.
+ * They assert the behavior observed in server/index.js as it is, including
+ * the Phase 1b fixes (legacy start/end migration, invalid regex skipped,
+ * host-scoped URL patterns).
  */
 
 const { test, describe, before, after } = require('node:test')
@@ -80,12 +81,18 @@ describe('normalizeEditRule (text)', () => {
     assert.equal(internals.normalizeEditRule({ kind: 'other' }).kind, 'text')
   })
 
-  test('legacy start/end markers are not carried into the normalized rule', () => {
-    // current behavior: only startVariants/endVariants survive normalization
+  test('legacy start/end markers are folded into the variant lists', () => {
     const rule = internals.normalizeEditRule({ start: 'legacy', end: 'x', replacement: 'r' })
     assert.equal(Object.hasOwn(rule, 'start'), false)
     assert.equal(Object.hasOwn(rule, 'end'), false)
-    assert.deepEqual(rule.startVariants, [])
+    assert.deepEqual(rule.startVariants, ['legacy'])
+    assert.deepEqual(rule.endVariants, ['x'])
+
+    // explicit variants win over the legacy fields; blank legacy fields are dropped
+    const mixed = internals.normalizeEditRule({ start: 'legacy', end: 'x', startVariants: ['v'], endVariants: [] })
+    assert.deepEqual(mixed.startVariants, ['v'])
+    assert.deepEqual(mixed.endVariants, ['x'])
+    assert.deepEqual(internals.normalizeEditRule({ start: '  ', end: '' }).startVariants, [])
   })
 })
 
@@ -201,8 +208,25 @@ describe('compileEditRule', () => {
   })
 
   test('an invalid regex throws SyntaxError', () => {
-    // current behavior: rebuildEditRuleCache does not catch it either
     assert.throws(() => internals.compileEditRule({ enabled: true, start: '(', useRegex: true }), SyntaxError)
+  })
+
+  test('rebuildEditRuleCache skips an invalid regex rule with a warning and keeps the others', () => {
+    const originalWarn = console.warn
+    const warnings = []
+    console.warn = (...args) => warnings.push(args.join(' '))
+    try {
+      loadRules([
+        { id: 'ok1', kind: 'text', startVariants: ['a'], replacement: 'b' },
+        { id: 'bad', name: 'Broken', kind: 'text', startVariants: ['('], replacement: 'x', useRegex: true },
+        { id: 'ok2', kind: 'text', startVariants: ['c'], replacement: 'd' }
+      ])
+    } finally {
+      console.warn = originalWarn
+    }
+    assert.deepEqual(internals.getCompiledRules().map(c => c.rule.id), ['ok1', 'ok2'])
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /^\[proxy\]\[edit-rules\] Skipping rule bad "Broken": Invalid regular expression/)
   })
 })
 
@@ -225,7 +249,7 @@ describe('rule cache and application', () => {
     ])
   })
 
-  test('variants expand to the cartesian product; disabled and legacy start/end rules are not compiled', () => {
+  test('variants expand to the cartesian product; disabled rules are not compiled, legacy start/end rules are', () => {
     const compiled = internals.getCompiledRules().map(c => [c.rule.id, c.mode, c.start, c.end])
     assert.deepEqual(compiled, [
       ['plain', 'prefix', 'foo', ''],
@@ -235,16 +259,15 @@ describe('rule cache and application', () => {
       ['req', 'prefix', 'phase', ''],
       ['res', 'prefix', 'phase', ''],
       ['scoped', 'prefix', 'scoped', ''],
+      // a rule written with legacy `start`/`end` (the on-disk format shown in
+      // ARCHITECTURE.md) is migrated to variants and compiled like the others
+      ['legacy', 'prefix', 'legacy', ''],
       ['variants', 'between', '[a]', '(1)'],
       ['variants', 'between', '[a]', '(2)'],
       ['variants', 'between', '[b]', '(1)'],
       ['variants', 'between', '[b]', '(2)'],
       ['suffix', 'suffix', '', 'END']
     ])
-    // current behavior: a rule written with legacy `start`/`end` (the format
-    // shown in ARCHITECTURE.md) has no variants after normalization and is
-    // silently inactive
-    assert.equal(compiled.some(([id]) => id === 'legacy'), false)
     assert.equal(internals.hasAnyEditOrJsonPathRules(), true)
   })
 
@@ -252,8 +275,8 @@ describe('rule cache and application', () => {
     const result = internals.applyEditRulesToText('foo <x> Hello hello 42 phase scoped legacy [a]..(2) zEND')
     // the regex rule turned "(2)" into "(N)" before the variants rule ran,
     // so the between span never matched: rules see the output of earlier rules
-    assert.equal(result.text, 'bar # Hi hello N REQ S legacy [a]..(N) zE')
-    assert.deepEqual(result.appliedRuleIds, ['plain', 'between', 'cs', 'rx', 'req', 'scoped', 'suffix'])
+    assert.equal(result.text, 'bar # Hi hello N REQ S L [a]..(N) zE')
+    assert.deepEqual(result.appliedRuleIds, ['plain', 'between', 'cs', 'rx', 'req', 'scoped', 'legacy', 'suffix'])
     assert.equal(result.changed, true)
   })
 
@@ -270,16 +293,20 @@ describe('rule cache and application', () => {
   test('URL-scoped rules skip other hosts/paths', () => {
     assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/other', fullUrl: 'https://other.com/other', phase: 'request' }),
       { text: 'scoped', appliedRuleIds: [], changed: false })
-    // current behavior: the relative requestUrl candidate has no host, so an
-    // absolute pattern matches any host as long as the path prefix matches
+    // the host of an absolute pattern must match: the relative requestUrl
+    // candidate (no host) cannot satisfy it on its own
     assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', fullUrl: 'https://other.com/v1/x', phase: 'request' }),
+      { text: 'scoped', appliedRuleIds: [], changed: false })
+    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', phase: 'request' }),
+      { text: 'scoped', appliedRuleIds: [], changed: false })
+    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', fullUrl: 'https://api.example.com/v1/x', phase: 'request' }),
       { text: 'S', appliedRuleIds: ['scoped'], changed: true })
   })
 
   test('getCompiledRulesForContext filters by phase and URL; null context returns everything', () => {
     const ids = internals.getCompiledRulesForContext(context('response')).map(c => c.rule.id)
-    assert.deepEqual(ids, ['plain', 'between', 'cs', 'rx', 'res', 'scoped', 'variants', 'variants', 'variants', 'variants', 'suffix'])
-    assert.equal(internals.getCompiledRulesForContext(null).length, 12)
+    assert.deepEqual(ids, ['plain', 'between', 'cs', 'rx', 'res', 'scoped', 'legacy', 'variants', 'variants', 'variants', 'variants', 'suffix'])
+    assert.equal(internals.getCompiledRulesForContext(null).length, 13)
   })
 
   test('empty or non-string input is returned untouched', () => {

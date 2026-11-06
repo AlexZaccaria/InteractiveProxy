@@ -471,11 +471,13 @@ Potential enhancements:
     "enabled": true,
     "kind": "text",
     "name": "Mask API keys",
-    "start": "api_key=",
-    "end": "",
+    "startVariants": ["api_key=", "apiKey="],
+    "endVariants": [],
     "replacement": "api_key=***",
     "useRegex": false,
-    "caseSensitive": false
+    "caseSensitive": false,
+    "url": "",
+    "target": "both"
   },
   {
     "id": "edit-2",
@@ -489,6 +491,14 @@ Potential enhancements:
   }
 ]
 ```
+
+Text rules list their markers in `startVariants` / `endVariants` (each entry
+is an alternative, OR semantics). Files written by older versions with a single
+`start` / `end` pair are still accepted: the pair is folded into the variant
+lists when the rule is loaded. Long string values may be stored as arrays of
+segments and are joined back on load. Rules are applied in file order and each
+rule sees the output of the previous one; a rule whose regular expression does
+not compile is skipped with a warning instead of blocking the whole set.
 
 ---
 

@@ -84,12 +84,17 @@ describe('urlPatternMatchesCandidates', () => {
     assert.equal(matches('https://api.example.com/v1/user'), false) // prefix is segment-based
   })
 
-  test('an absolute pattern with another host still matches through the relative candidate', () => {
-    // current behavior: the requestUrl candidate has host null, so the host
-    // check is skipped and the path prefix alone decides
-    assert.equal(matches('https://other.com/v1/users'), true)
+  test('an absolute pattern needs a candidate with the same host; the relative candidate cannot satisfy it', () => {
+    assert.equal(matches('https://other.com/v1/users'), false)
     const absoluteOnly = internals.buildUrlMatchContext({ fullUrl: 'https://api.example.com/v1/users/123' }).candidates
     assert.equal(internals.urlPatternMatchesCandidates('https://other.com/v1/users', absoluteOnly), false)
+    assert.equal(internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', absoluteOnly), true)
+
+    // a context with only a relative requestUrl (host null) never matches a
+    // host pattern, while path patterns still work on it
+    const relativeOnly = internals.buildUrlMatchContext({ requestUrl: '/v1/users/123' }).candidates
+    assert.equal(internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', relativeOnly), false)
+    assert.equal(internals.urlPatternMatchesCandidates('/v1/users', relativeOnly), true)
   })
 
   test('path patterns match by exact path or segment prefix', () => {

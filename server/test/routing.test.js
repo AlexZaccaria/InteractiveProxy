@@ -53,9 +53,15 @@ describe('resolveTargetFromRequest', () => {
     assert.deepEqual(I.resolveTargetFromRequest(req({ host: 'example.com' }, 'HTTPS://Example.com/P')), { url: 'HTTPS://Example.com/P', host: 'example.com', hostWithPort: 'example.com' })
   })
 
-  test('current behavior: an absolute ws:// request URL is rejected by the http-only parser and then glued to the Host header', () => {
+  test('ws:// and wss:// targets are carried as their http/https equivalent', () => {
     assert.deepEqual(I.resolveTargetFromRequest(req({ host: 'example.com' }, 'ws://example.com/sock')), {
-      url: 'http://example.comws://example.com/sock', host: 'example.comws', hostWithPort: 'example.comws'
+      url: 'http://example.com/sock', host: 'example.com', hostWithPort: 'example.com'
+    })
+    assert.deepEqual(I.resolveTargetFromRequest(req({ host: 'example.com' }, 'WSS://Example.com/P')), {
+      url: 'https://Example.com/P', host: 'example.com', hostWithPort: 'example.com'
+    })
+    assert.deepEqual(I.resolveTargetFromRequest(req({ 'x-target-url': 'wss://a/b', host: `localhost:${port}` }, '/x')), {
+      url: 'https://a/b', host: 'a', hostWithPort: 'a'
     })
   })
 
@@ -74,8 +80,10 @@ describe('resolveTargetFromRequest', () => {
     assert.deepEqual(I.resolveTargetFromRequest(req({ host: 'bad host' }, '/p')), { url: null, host: 'bad host' })
   })
 
-  test('current behavior: the own-authority comparison is case-sensitive, so LOCALHOST:<port> resolves to a target', () => {
-    assert.equal(I.resolveTargetFromRequest(req({ host: `LOCALHOST:${port}` }, '/api/config')).url, `http://LOCALHOST:${port}/api/config`)
+  test('the own-authority comparison is case-insensitive and covers the IPv6 loopback; a bare "localhost" is another host', () => {
+    assert.deepEqual(I.resolveTargetFromRequest(req({ host: `LOCALHOST:${port}` }, '/api/config')), { url: null, host: 'localhost' })
+    assert.equal(I.resolveTargetFromRequest(req({ host: `[::1]:${port}` }, '/api/config')).url, null)
+    assert.equal(I.resolveTargetFromRequest(req({ host: 'localhost' }, '/api/config')).url, 'http://localhost/api/config')
   })
 })
 
@@ -140,10 +148,12 @@ describe('routing context helpers', () => {
     assert.equal(I.isInternalProxyRequest(), false)
   })
 
-  test('current behavior: a targetUrl alone is not enough for isInternalProxyRequest, and a null context throws in decideHttpHandling', () => {
-    assert.equal(I.isInternalProxyRequest({ targetUrl: `http://127.0.0.1:${port}/x` }), false)
-    assert.throws(() => I.decideHttpHandling(null), TypeError)
-    assert.throws(() => I.decideWebSocketHandling(null), TypeError)
+  test('a targetUrl alone is enough for isInternalProxyRequest, and null contexts decide like empty ones', () => {
+    assert.equal(I.isInternalProxyRequest({ targetUrl: `http://127.0.0.1:${port}/x` }), true)
+    assert.equal(I.isInternalProxyRequest({ targetUrl: 'http://example.com/x' }), false)
+    assert.equal(I.isInternalProxyRequest(null), false)
+    assert.equal(I.decideHttpHandling(null), 'proxy')
+    assert.deepEqual(I.decideWebSocketHandling(null), { action: 'mitm', requestUrl: '/', fullUrl: null })
     assert.equal(I.decideHttpHandling(undefined), 'proxy')
     assert.equal(I.decideHttpHandling({}), 'proxy')
     assert.deepEqual(I.decideWebSocketHandling(undefined), { action: 'mitm', requestUrl: '/', fullUrl: null })
@@ -293,14 +303,15 @@ describe('header helpers', () => {
     assert.deepEqual(I.stripIdentifyingHeaders(null), {})
   })
 
-  test('sanitizeHeaders omits the listed names and caches the result per headers object', () => {
+  test('sanitizeHeaders omits the listed names and caches the result per headers object until its keys change', () => {
     const headers = { 'Sentry-Trace': 'x', accept: 'a', u: undefined }
     const first = I.sanitizeHeaders(headers, ['ACCEPT'])
     assert.deepEqual(first, { 'Sentry-Trace': 'x' })
     assert.equal(I.sanitizeHeaders(headers, ['accept']), first, 'same omit list returns the cached object')
-    // current behavior: keys added after the first call are not seen through the cache.
     headers.late = 'late'
-    assert.deepEqual(I.sanitizeHeaders(headers, ['accept']), { 'Sentry-Trace': 'x' })
+    const afterAdd = I.sanitizeHeaders(headers, ['accept'])
+    assert.deepEqual(afterAdd, { 'Sentry-Trace': 'x', late: 'late' })
+    assert.notEqual(afterAdd, first, 'a key added to the headers object invalidates the cache')
     assert.deepEqual(I.sanitizeHeaders({ a: '1', b: undefined }), { a: '1' })
     assert.deepEqual(I.sanitizeHeaders(null), {})
   })

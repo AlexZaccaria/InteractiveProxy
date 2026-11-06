@@ -103,8 +103,8 @@ describe('content-type heuristics', () => {
     }
   })
 
-  test('current behavior: image/svg+xml is both textual and clearly binary; PDF is neither', () => {
-    assert.deepEqual(classify('image/svg+xml'), { decompress: true, textual: true, binary: true, proto: false })
+  test('image/svg+xml is XML text, not clearly binary; PDF is neither', () => {
+    assert.deepEqual(classify('image/svg+xml'), { decompress: true, textual: true, binary: false, proto: false })
     assert.deepEqual(classify('application/pdf'), { decompress: false, textual: false, binary: false, proto: false })
   })
 
@@ -130,10 +130,12 @@ describe('header lookup', () => {
     assert.equal(I.getHeaderCaseInsensitive(null, 'x'), undefined)
   })
 
-  test('current behavior: the lookup is cached per headers object, so keys added after the first lookup are invisible', () => {
+  test('the per-object lookup cache follows keys added or removed after the first lookup', () => {
     const headers = { a: '1' }
     assert.equal(I.getHeaderCaseInsensitive(headers, 'a'), '1')
     headers['X-Late'] = 'late'
+    assert.equal(I.getHeaderCaseInsensitive(headers, 'x-late'), 'late')
+    delete headers['X-Late']
     assert.equal(I.getHeaderCaseInsensitive(headers, 'x-late'), undefined)
   })
 })
@@ -155,11 +157,29 @@ describe('getFileTypeFromLogEntry', () => {
     assert.equal(ft({ responseHeaders: { 'content-type': 'text/html+json' } }), 'json')
   })
 
-  test('only font extensions are recognised from the URL, and only without a query string', () => {
+  test('without a content type the URL extension decides, ignoring query string and fragment', () => {
     assert.equal(ft({ url: 'https://a/b/c.woff2' }), 'font')
-    assert.equal(ft({ url: 'https://a/b/c.woff2?v=1' }), 'other')
-    assert.equal(ft({ url: 'https://a/b/style.css' }), 'other')
-    assert.equal(ft({ url: '/app.js' }), 'other')
+    assert.equal(ft({ url: 'https://a/b/c.woff2?v=1' }), 'font')
+    assert.equal(ft({ url: 'https://a/b/c.woff2#frag' }), 'font')
+    assert.equal(ft({ url: 'https://a/b/style.css' }), 'css')
+    assert.equal(ft({ url: '/app.js' }), 'js')
+    assert.equal(ft({ url: '/m.mjs' }), 'js')
+    assert.equal(ft({ url: '/d.json?x' }), 'json')
+    assert.equal(ft({ url: '/p.html' }), 'html')
+    assert.equal(ft({ url: '/i.png' }), 'image')
+    assert.equal(ft({ url: '/i.svg' }), 'image')
+    assert.equal(ft({ url: '/v.mp4' }), 'video')
+    assert.equal(ft({ url: '/a.mp3' }), 'audio')
+    // A dot in a directory segment is not an extension; unknown extensions are "other".
+    assert.equal(ft({ url: '/v1.2/users' }), 'other')
+    assert.equal(ft({ url: '/noext' }), 'other')
+    assert.equal(ft({ url: '/x.unknown' }), 'other')
+  })
+
+  test('the extension also decides for application/octet-stream, but any other content type wins', () => {
+    assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/octet-stream' } }), 'css')
+    assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/json' } }), 'json')
+    assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'text/plain' } }), 'other')
   })
 
   test('object bodies and parseable JSON strings count as json; binary markers do not', () => {
@@ -202,8 +222,17 @@ describe('bufferToTextPreview', () => {
     assert.equal(I.bufferToTextPreview(mixed), 'absegment-onesegment-two')
   })
 
-  test('current behavior: non-ASCII characters are dropped once they push the printable ratio under 85%', () => {
-    assert.equal(I.bufferToTextPreview(Buffer.from('héllo wörld')), 'hllo wrld')
+  test('non-ASCII letters count as printable and are kept', () => {
+    assert.equal(I.bufferToTextPreview(Buffer.from('héllo wörld')), 'héllo wörld')
+    assert.equal(I.bufferToTextPreview(Buffer.from('日本語 テキスト')), '日本語 テキスト')
+  })
+
+  test('invalid UTF-8 (U+FFFD) still counts as non-printable, so binary-ish buffers degrade as before', () => {
+    assert.equal(I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdefghij'), Buffer.from([0xff, 0xfe, 0xc3])])), 'abcdefghij')
+    assert.equal(
+      I.bufferToTextPreview(Buffer.concat([Buffer.from('ab'), Buffer.alloc(14, 0xff), Buffer.from('segment-one')])),
+      'absegment-one'
+    )
   })
 })
 

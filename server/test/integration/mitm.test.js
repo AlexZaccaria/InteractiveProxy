@@ -159,7 +159,7 @@ test('the CA is generated lazily on the first CONNECT and signs a per-host leaf'
   secure.destroy()
 })
 
-test('a MITM request to an upstream on a non-443 port', async () => {
+test('a MITM request reaches an upstream on a non-443 port (the CONNECT port is kept)', async () => {
   await api('DELETE', '/api/logs')
 
   const { socket } = await openTunnel(`127.0.0.1:${upstreamPort}`)
@@ -171,19 +171,20 @@ test('a MITM request to an upstream on a non-443 port', async () => {
     headers: { host: `127.0.0.1:${upstreamPort}`, connection: 'close' }
   })
 
-  // current behavior: the MITM handler rebuilds the upstream URL as
-  // `https://<host><path>` without the port taken from the CONNECT target, so
-  // the request goes to 127.0.0.1:443 instead of the tunnelled port and fails.
-  assert.equal(res.status, 502)
-  assert.equal(res.body, 'Bad Gateway')
+  assert.equal(res.status, 200)
+  const echo = JSON.parse(res.body)
+  assert.equal(echo.method, 'GET')
+  assert.equal(echo.url, '/hello?via=mitm')
+  assert.equal(echo.headers.host, `127.0.0.1:${upstreamPort}`)
 
-  const logs = await api('GET', '/api/logs')
+  const logs = await api('GET', '/api/logs?sources=mitm')
   assert.equal(logs.json.total, 1)
   const entry = logs.json.items[0]
-  assert.equal(entry.source, 'error')
-  assert.equal(entry.fullUrl, 'https://127.0.0.1/hello?via=mitm')
-  assert.equal(entry.upstreamErrorCategory, 'connection')
-  assert.match(entry.error, /ECONNREFUSED/)
+  assert.equal(entry.source, 'mitm')
+  assert.equal(entry.statusCode, 200)
+  assert.equal(entry.method, 'GET')
+  assert.equal(entry.fullUrl, `https://127.0.0.1:${upstreamPort}/hello?via=mitm`)
+  assert.equal(entry.upstreamErrorCategory, undefined)
 
   secure.destroy()
 })

@@ -35,14 +35,19 @@ describe('readVarint', () => {
     assert.throws(() => I.readVarint(Buffer.from(new Array(11).fill(0x80)), 0), /Invalid varint encoding/)
   })
 
-  it('current behavior: keeps only the low 32 bits of wider varints', () => {
-    // 2^32 encoded as a 5-byte varint collapses to 0 (32-bit shifts).
-    assert.deepEqual(I.readVarint(Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]), 0), { value: 0, length: 5 })
-    // A 10-byte varint of all ones is accepted and reads as 2^32 - 1.
+  it('reads varints wider than 32 bits (exact up to 2^53, Number precision beyond)', () => {
+    // 2^32 encoded as a 5-byte varint.
+    assert.deepEqual(I.readVarint(Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]), 0), { value: 4294967296, length: 5 })
+    // 2^53 - 1 (Number.MAX_SAFE_INTEGER) round-trips exactly.
     assert.deepEqual(
-      I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]), 0),
-      { value: 4294967295, length: 10 }
+      I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f]), 0),
+      { value: Number.MAX_SAFE_INTEGER, length: 8 }
     )
+    // A 10-byte varint of all ones (2^64 - 1) is accepted; the value is the
+    // nearest Number, not a BigInt.
+    const allOnes = I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]), 0)
+    assert.equal(allOnes.length, 10)
+    assert.ok(allOnes.value === Number(2n ** 64n - 1n))
   })
 })
 
@@ -55,9 +60,12 @@ describe('encodeVarint32 / encodeProtobufKey / encodeLengthDelimitedField', () =
     assert.equal(hex(I.encodeVarint32(4294967295)), 'ffffffff0f')
   })
 
-  it('current behavior: wraps negative and >32-bit values through >>> 0', () => {
-    assert.equal(hex(I.encodeVarint32(-1)), 'ffffffff0f')
-    assert.equal(hex(I.encodeVarint32(4294967296)), '00')
+  it('encodes values of any width, negatives as 64-bit two\'s complement, and accepts BigInt', () => {
+    assert.equal(hex(I.encodeVarint32(4294967296)), '8080808010')
+    assert.equal(hex(I.encodeVarint32(Number.MAX_SAFE_INTEGER)), 'ffffffffffffff0f')
+    // -1 is the 10-byte encoding protobuf uses for negative int32/int64.
+    assert.equal(hex(I.encodeVarint32(-1)), 'ffffffffffffffffff01')
+    assert.equal(hex(I.encodeVarint32(300n)), 'ac02')
   })
 
   it('encodes field keys and rejects invalid field numbers', () => {

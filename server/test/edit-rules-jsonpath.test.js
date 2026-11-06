@@ -225,9 +225,9 @@ describe('rewriteJsonHttpBody', () => {
     })
     assert.equal(result.changed, true)
     assert.deepEqual(result.appliedRuleIds, ['j-str', 'j-num'])
-    // current behavior: string fields holding JSON are parsed into objects
-    // (normalizeNestedJsonStrings) and re-serialized that way in the output
-    assert.equal(result.buffer.toString(), '{"name":"Z","nested":{"inner":1},"n":7}')
+    // the forwarded body keeps a string field that holds JSON as a string;
+    // only the json/beforeJson views are normalized (nested JSON shown as objects)
+    assert.equal(result.buffer.toString(), '{"name":"Z","nested":"{\\"inner\\":1}","n":7}')
     assert.deepEqual(result.json, { name: 'Z', nested: { inner: 1 }, n: 7 })
     assert.deepEqual(result.beforeJson, { name: 'orig', nested: { inner: 1 }, n: 1 })
     assert.equal(result.decompressed, null)
@@ -243,8 +243,9 @@ describe('rewriteJsonHttpBody', () => {
     })
     assert.equal(result.changed, true)
     assert.equal(result.buffer[0], 0x1f)
-    assert.equal(zlib.gunzipSync(result.buffer).toString(), '{"name":"Z","nested":{"inner":1},"n":7}')
-    assert.equal(result.decompressed.toString(), '{"name":"Z","nested":{"inner":1},"n":7}')
+    assert.equal(zlib.gunzipSync(result.buffer).toString(), '{"name":"Z","nested":"{\\"inner\\":1}","n":7}')
+    assert.equal(result.decompressed.toString(), '{"name":"Z","nested":"{\\"inner\\":1}","n":7}')
+    assert.deepEqual(result.json, { name: 'Z', nested: { inner: 1 }, n: 7 })
   })
 
   test('non-JSON content type, malformed JSON and empty buffers pass through', () => {
@@ -262,7 +263,7 @@ describe('rewriteJsonHttpBody', () => {
     assert.deepEqual(result, { buffer: empty, json: null, appliedRuleIds: [], changed: false, decompressed: null })
   })
 
-  test('no matching rule keeps the buffer but still returns the normalized json; captureBeforeJson=false skips the snapshot', () => {
+  test('no matching rule keeps the buffer but still returns the normalized json; captureBeforeJson=false returns the raw object', () => {
     const original = body()
     const noMatch = internals.rewriteJsonHttpBody({ buffer: original, contentType: 'application/json', urlContext: { requestUrl: '/v2/a' } })
     assert.equal(noMatch.changed, false)
@@ -273,6 +274,20 @@ describe('rewriteJsonHttpBody', () => {
     const noCapture = internals.rewriteJsonHttpBody({ buffer: body(), contentType: 'application/json', urlContext: { requestUrl: '/v1/a' }, captureBeforeJson: false })
     assert.equal(noCapture.beforeJson, null)
     assert.equal(noCapture.changed, true)
+    // without the logging snapshot the json view is the object as forwarded
+    assert.deepEqual(noCapture.json, { name: 'Z', nested: '{"inner":1}', n: 7 })
+    assert.equal(noCapture.buffer.toString(), '{"name":"Z","nested":"{\\"inner\\":1}","n":7}')
+  })
+
+  test('a path into a string field that holds JSON does not match: the field is a string', () => {
+    loadRules([
+      { id: 'j-str', kind: 'jsonPath', path: 'root.name', value: 'Z', url: '/v1', target: 'request' },
+      { id: 'j-inner', kind: 'jsonPath', path: 'root.nested.inner', value: '9', valueType: 'number', url: '/v1', target: 'both' }
+    ])
+    const result = internals.rewriteJsonHttpBody({ buffer: body(), contentType: 'application/json', urlContext: { requestUrl: '/v1/a' }, phase: 'request' })
+    assert.deepEqual(result.appliedRuleIds, ['j-str'])
+    assert.equal(result.buffer.toString(), '{"name":"Z","nested":"{\\"inner\\":1}","n":1}')
+    assert.deepEqual(result.json, { name: 'Z', nested: { inner: 1 }, n: 1 })
   })
 })
 

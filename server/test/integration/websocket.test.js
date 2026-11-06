@@ -105,15 +105,22 @@ after(async () => {
   await proxy.stop()
 })
 
-test('an X-Target-URL with the ws:// scheme is not accepted', async () => {
-  // current behavior: parseUrlCandidate only accepts http: and https:, so a
-  // ws:// target leaves the upgrade without a destination; the proxy writes
-  // "HTTP/1.1 400 Bad Request" and destroys the socket at once, which the ws
-  // client reports as "socket hang up" (or as the 400 when the bytes arrive).
-  await assert.rejects(
-    connectThroughProxy(`ws://127.0.0.1:${upstreamPort}/socket`),
-    error => /socket hang up|Unexpected server response: 400/.test(error.message)
-  )
+test('an X-Target-URL with the ws:// scheme is accepted like the http:// form', async () => {
+  const client = await connectThroughProxy(`ws://127.0.0.1:${upstreamPort}/socket`)
+  const upstreamSide = lastUpstreamConnection()
+  assert.ok(upstreamSide, 'the proxy opened a connection to the upstream')
+
+  client.send('via ws target')
+  const echo = await nextMessage(client)
+  assert.ok(echo, 'echo received through the ws:// target')
+  assert.equal(echo.isBinary, false)
+  assert.equal(echo.data.toString('utf8'), 'via ws target')
+  assert.equal(upstreamSide.received.length, 1)
+
+  client.terminate()
+  await closed(client)
+  upstreamSide.ws.terminate()
+  await waitFor(() => upstreamSide.closed)
 })
 
 test('text, binary and JSON messages are relayed in both directions and logged', async () => {

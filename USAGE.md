@@ -148,6 +148,9 @@ Result: ✅ Serves local users.json
 
 #### 2. **Remote Proxy**
 If there's no local resource but the `X-Target-URL` header is specified, the request is forwarded.
+The header accepts `http://`, `https://`, `ws://` and `wss://` targets; WebSocket targets are used
+for upgrade requests. Request bodies of any content type (JSON, text, XML, binary, multipart) are
+forwarded byte for byte.
 
 ```
 Request: GET /api/users
@@ -251,6 +254,10 @@ Search in:
 - Request and response headers
 - Request and response bodies
 
+`GET /api/logs` (and the list in the UI) is chronological: the oldest entry of
+the in-memory window comes first and new traffic is appended at the end; use
+`offset`/`limit` to page through it.
+
 #### Request Details:
 Click on a request to see:
 - Complete headers
@@ -306,6 +313,11 @@ In the **"Blocked"** tab you can:
 - Add or remove blocked URL rules
 - Enable/disable blocking globally
 - Quickly block URLs directly from the logs view
+
+Note: the Request Logs view hides every entry whose URL matches a blocked rule
+pattern, whether the rule is enabled or not; remove the rule to see that
+traffic again. Rule changes made through `POST /api/blocked` are active as soon
+as the response arrives.
 
 ## ✏️ Edit Rules
 
