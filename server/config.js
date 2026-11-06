@@ -5,26 +5,25 @@ const fs = require('fs')
 
 // Ports
 /**
- * Attempt to load the backend port from the shared root ports.config.json
- * file. If the file is missing or invalid, this returns null and callers
- * should fall back to environment variables or defaults.
+ * Attempt to load the shared root ports.config.json file. If the file is
+ * missing or invalid, this returns an empty object and callers fall back to
+ * environment variables or defaults.
  *
- * @returns {number|null} Parsed backend port, or null when unavailable.
+ * @returns {{ uiPort?: number, backendPort?: number }} Parsed config, or {} when unavailable.
  */
-function loadBackendPortFromRootConfig () {
+function loadRootPortsConfig () {
   try {
     const configPath = path.join(__dirname, '..', 'ports.config.json')
     const raw = fs.readFileSync(configPath, 'utf8')
     const parsed = JSON.parse(raw)
-    const candidate = Number(parsed && parsed.backendPort)
-    if (Number.isFinite(candidate) && candidate > 0) {
-      return candidate
-    }
+    return parsed && typeof parsed === 'object' ? parsed : {}
   } catch (error) {
     // Silent fallback – server still starts even if config is missing.
+    return {}
   }
-  return null
 }
+
+const rootPortsConfig = loadRootPortsConfig()
 
 /**
  * Port on which the proxy/backend HTTP server listens.
@@ -37,10 +36,52 @@ function loadBackendPortFromRootConfig () {
  * @type {number}
  */
 const envPort = Number(process.env.PROXY_PORT)
-const configPort = loadBackendPortFromRootConfig()
+const configPort = Number(rootPortsConfig.backendPort)
 const PORT = Number.isFinite(envPort) && envPort > 0
   ? envPort
   : (Number.isFinite(configPort) && configPort > 0 ? configPort : 8050)
+
+/**
+ * Interface the proxy listens on. Defaults to the loopback address so that
+ * the MITM proxy and its management API are not reachable from the LAN
+ * unless explicitly requested via `PROXY_HOST` (e.g. `0.0.0.0`).
+ *
+ * @type {string}
+ */
+const HOST = typeof process.env.PROXY_HOST === 'string' && process.env.PROXY_HOST.trim()
+  ? process.env.PROXY_HOST.trim()
+  : '127.0.0.1'
+
+/**
+ * Port where the web UI is served in development (from ports.config.json).
+ * Used only to derive the browser origins allowed to call the management API.
+ *
+ * @type {number}
+ */
+const configUiPort = Number(rootPortsConfig.uiPort)
+const UI_PORT = Number.isFinite(configUiPort) && configUiPort > 0 ? configUiPort : 3050
+
+/**
+ * Browser origins allowed to call the `/api/*` management endpoints.
+ *
+ * By default this covers the dev UI and the proxy itself on localhost and
+ * 127.0.0.1 (plus `PROXY_HOST` when it is a concrete address). Additional
+ * origins can be added with the comma-separated `PROXY_UI_ORIGINS` variable.
+ * Requests without an Origin header (curl, scripts) are not affected.
+ *
+ * @type {string[]}
+ */
+const defaultOriginHosts = ['localhost', '127.0.0.1']
+if (HOST && HOST !== '0.0.0.0' && HOST !== '::' && !defaultOriginHosts.includes(HOST)) {
+  defaultOriginHosts.push(HOST)
+}
+const extraUiOrigins = typeof process.env.PROXY_UI_ORIGINS === 'string'
+  ? process.env.PROXY_UI_ORIGINS.split(',').map(value => value.trim()).filter(Boolean)
+  : []
+const UI_ORIGINS = Array.from(new Set([
+  ...defaultOriginHosts.flatMap(host => [`http://${host}:${UI_PORT}`, `http://${host}:${PORT}`]),
+  ...extraUiOrigins
+]))
 
 // Directories
 const ROOT_DIR = __dirname
@@ -154,6 +195,9 @@ const BODY_LIMIT = process.env.PROXY_BODY_LIMIT || '10mb'
 
 module.exports = {
   PORT,
+  HOST,
+  UI_PORT,
+  UI_ORIGINS,
   ROOT_DIR,
   STORAGE_DIR,
   LOGS_DIR,

@@ -19,6 +19,8 @@
 
 ## 🚀 Installation
 
+Requires **Node.js >= 22.15** and **npm >= 10**.
+
 ```bash
 # Clone or navigate to project directory
 cd interactive-proxy
@@ -80,6 +82,8 @@ The proxy server can be configured using environment variables.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROXY_PORT` | `8050` | Port for the proxy server (overrides `backendPort` in ports.config.json) |
+| `PROXY_HOST` | `127.0.0.1` | Interface to listen on (`0.0.0.0` to expose the proxy on the LAN) |
+| `PROXY_UI_ORIGINS` | `""` | Extra browser origins (comma-separated) allowed to call `/api/*`, in addition to the UI and proxy origins on localhost |
 | `PROXY_STORAGE_DIR` | `server/storage` | Directory for persistent configuration |
 | `PROXY_LOGS_DIR` | `server/logs` | Directory for logs |
 | `PROXY_CERTS_DIR` | `server/certs` | Directory for certificates |

@@ -6,6 +6,9 @@ client/node_modules/
 client/build/
 dist/
 
+# Generated from ports.config.json by dev-client.js / build-client.js
+client/src/config/generatedPorts.js
+
 # Storage and logs
 server/logs/
 server/certs/

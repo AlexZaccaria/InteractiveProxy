@@ -20,7 +20,7 @@ A modern interactive development proxy with a sleek web interface for intercepti
 
 ### 🎨 Modern and Intuitive UI
 - **Modern Design**: React interface with TailwindCSS
-- **Responsive**: Works on desktop and mobile
+- **Desktop Layout**: Designed for desktop browsers (minimum width 1024px)
 - **Dark Theme**: Dark theme to reduce eye strain
 - **Optimized UX**: Intuitive and fast navigation
 
@@ -49,6 +49,10 @@ A modern interactive development proxy with a sleek web interface for intercepti
 - **Safe Experiments**: Quickly prototype backend changes without touching the real service
 
 ## 🚀 Quick Start
+
+### Requirements
+- **Node.js >= 22.15** (zstd support comes from the built-in `zlib`)
+- **npm >= 10**
 
 ### Installation
 ```bash
@@ -114,13 +118,12 @@ Go to **"Request Logs"** in the web interface to see all requests!
 ## 🛠️ Technologies
 
 ### Backend
-- **Node.js** - JavaScript runtime
+- **Node.js** (>= 22.15) - JavaScript runtime; built-in `zlib` handles gzip, deflate, br and zstd
 - **Express** - Web framework
 - **undici** - HTTP client for proxying upstream requests
 - **ws** - WebSocket server
 - **node-forge** - HTTPS MITM and certificate generation
 - **Multer** - File upload handling
-- **fzstd** - Zstandard decompression (via WebAssembly bindings)
 
 ### Frontend
 -- **React** - UI library
@@ -237,7 +240,7 @@ npm run build            # Build frontend for production
 ## ⚠️ Important Notes
 
 - **Development only**: Do not use in production
-- **Security**: Do not expose on internet
+- **Security**: Do not expose on internet. The server binds to `127.0.0.1` by default; set `PROXY_HOST` only if you really need LAN access
 - **Ports**: Requires ports 8050 and 3050 to be free
 - **Sensitive data**: Do not handle sensitive information
 

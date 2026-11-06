@@ -14,11 +14,12 @@ const crypto = require('crypto')
 const { URL } = require('url')
 const WebSocket = require('ws')
 const zlib = require('zlib')
-const { decompress: zstdDecompress } = require('fzstd')
 const forge = require('node-forge')
 const { request, Agent } = require('undici')
 const {
   PORT,
+  HOST,
+  UI_ORIGINS,
   STORAGE_DIR,
   LOGS_DIR,
   CERTS_DIR,
@@ -62,19 +63,14 @@ const CONNECT_MAX_FRAME_BYTES_LIMIT = CONNECT_MAX_FRAME_BYTES > 0
 // Constant GUID used for WebSocket Sec-WebSocket-Accept computation
 const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
-let zstdCodec = null
+// Zstandard support comes from Node's built-in zlib (Node >= 22.15 / 23.8).
+const ZSTD_SUPPORTED =
+  typeof zlib.zstdCompressSync === 'function' &&
+  typeof zlib.zstdDecompressSync === 'function'
 
-;(async () => {
-  try {
-    const mod = await import('@foxglove/wasm-zstd')
-    const zstd = mod.default || mod
-    await zstd.isLoaded
-    zstdCodec = zstd
-    console.log('[proxy] zstd codec loaded')
-  } catch (error) {
-    console.warn('[proxy] zstd codec not available, zstd rewrites disabled:', error?.message || error)
-  }
-})();
+if (!ZSTD_SUPPORTED) {
+  console.warn('[proxy] zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched')
+}
 
 /**
  * Structured logging helpers used for internal diagnostics.
@@ -3892,10 +3888,10 @@ function getCompressionCodec (encoding = '') {
   }
 
   if (normalized === 'zstd') {
-    if (!zstdCodec) return null
+    if (!ZSTD_SUPPORTED) return null
     return {
-      decompress: data => Buffer.from(zstdDecompress(data)),
-      compress: data => zstdCodec.compress(data)
+      decompress: data => zlib.zstdDecompressSync(data),
+      compress: data => zlib.zstdCompressSync(data)
     }
   }
 
@@ -8286,7 +8282,15 @@ function serveLocalResourceStream (res, resource, { sourceTag, errorPrefix }) {
 }
 
 // Middleware
-app.use(cors())
+app.use(cors({
+  origin: (origin, callback) => {
+    // Requests without an Origin header come from non-browser clients
+    // (curl, scripts) and are allowed. Browser requests are allowed only
+    // from the UI origins so other websites cannot read API responses.
+    callback(null, !origin || UI_ORIGINS.includes(origin))
+  }
+}))
+
 app.set('trust proxy', true)
 app.use(bodyParser.raw({
   type: req => isProtoContentType(getContentType(req.headers)),
@@ -8297,14 +8301,79 @@ app.use(bodyParser.raw({
 app.use(bodyParser.json({ limit: BODY_LIMIT, verify: captureRawBody }))
 app.use(bodyParser.urlencoded({ extended: true, limit: BODY_LIMIT, verify: captureRawBody }))
 
+/**
+ * `host:port` values under which the proxy itself is addressed. A request
+ * whose Host header is not one of these is traffic for another server.
+ *
+ * @type {Set<string>}
+ */
+const PROXY_OWN_AUTHORITIES = new Set(
+  ['localhost', '127.0.0.1', '[::1]', HOST]
+    .concat(UI_ORIGINS.map(origin => {
+      try {
+        return new URL(origin).hostname
+      } catch {
+        return null
+      }
+    }))
+    .filter(host => host && host !== '0.0.0.0' && host !== '::')
+    .map(host => `${host.toLowerCase()}:${PORT}`)
+)
+
+/**
+ * True when a request that reached the Express app is traffic to forward
+ * (proxy-style absolute URL, X-Target-URL header or a Host header that is not
+ * the proxy itself) rather than a call to the management API.
+ *
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+function isProxyTargetedRequest (req) {
+  if (safeString(req.headers['x-target-url'])) return true
+
+  const rawUrl = safeString(req.originalUrl) || safeString(req.url)
+  if (/^(https?|wss?):\/\//i.test(rawUrl)) return true
+
+  const hostHeader = safeTrim(req.headers.host).toLowerCase()
+  return Boolean(hostHeader) && !PROXY_OWN_AUTHORITIES.has(hostHeader)
+}
+
+app.use('/api', (req, res, next) => {
+  // Express routes by path, so a proxied request such as
+  // http://example.com/api/users would otherwise be answered by the
+  // management API. Hand traffic addressed to other hosts to the proxy flow.
+  if (isProxyTargetedRequest(req)) {
+    return handleProxiedHttpRequest(req, res)
+  }
+
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next()
+  }
+
+  // CORS alone does not stop "simple" cross-site POSTs from reaching the
+  // handlers, so mutations on the management API additionally reject
+  // requests that a browser marks as coming from another site. Non-browser
+  // clients send neither Origin nor Sec-Fetch-Site and keep working.
+  const origin = safeString(req.headers.origin)
+  const fetchSite = safeString(req.headers['sec-fetch-site']).toLowerCase()
+
+  if ((origin && !UI_ORIGINS.includes(origin)) || fetchSite === 'cross-site') {
+    return res.status(403).json({ error: 'Cross-site requests to the proxy API are not allowed' })
+  }
+
+  next()
+})
+
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, STORAGE_DIR)
   },
   filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${file.originalname}`
-    cb(null, uniqueName)
+    // Keep only the base name and replace characters that are unsafe in file
+    // names so an upload can never escape STORAGE_DIR.
+    const baseName = path.basename(file.originalname || 'upload').replace(/[^\w.-]+/g, '_')
+    cb(null, `${Date.now()}-${baseName}`)
   }
 })
 const upload = multer({ storage })
@@ -8439,6 +8508,10 @@ app.post('/api/filter-mode', (req, res) => {
 
 // Open a native file picker (Windows) for local path selection.
 app.post('/api/system/file-picker', async (req, res) => {
+  if (process.platform !== 'win32') {
+    return res.status(501).json({ error: 'The native file picker is only available on Windows.' })
+  }
+
   const body = req.body && typeof req.body === 'object' ? req.body : {}
   const title = body.title == null ? undefined : String(body.title)
   const filter = body.filter == null ? undefined : String(body.filter)
@@ -9105,8 +9178,15 @@ app.get('/api/audit', (req, res) => {
   }
 })
 
-// Proxy middleware - handles all other requests
-app.use('*', async (req, res) => {
+/**
+ * Proxy flow for every request that is not a call to the management API:
+ * local resources, forwarding to the resolved target and logging. Also used
+ * by the `/api` guard for traffic addressed to other hosts.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ */
+async function handleProxiedHttpRequest (req, res) {
   const requestUrl = req.originalUrl
   const fullUrl = req.protocol + '://' + req.get('host') + requestUrl
   const clientIp = req.ip || req.connection?.remoteAddress || 'unknown'
@@ -9220,7 +9300,9 @@ app.use('*', async (req, res) => {
           bufferResponse: false
         })
 
-        logEntry.upstreamDurationMs = Date.now() - upstreamStart
+        if (logEntry) {
+          logEntry.upstreamDurationMs = Date.now() - upstreamStart
+        }
 
         let upstreamHeaders = upstreamResponse.headers
         upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
@@ -9329,7 +9411,10 @@ app.use('*', async (req, res) => {
       })
     }
   }
-})
+}
+
+// Proxy middleware - handles all other requests
+app.use('*', handleProxiedHttpRequest)
 
 const server = http.createServer((req, res) => {
   tryHandleHttpBypass(req, res)
@@ -10055,7 +10140,9 @@ server.on('connect', (req, clientSocket, head) => {
             bufferResponse: true
           })
 
-          logEntry.upstreamDurationMs = Date.now() - upstreamStart
+          if (logEntry) {
+            logEntry.upstreamDurationMs = Date.now() - upstreamStart
+          }
 
           // Parse and optionally rewrite response body before forwarding/logging.
           let upstreamHeaders = upstreamResponse.headers
@@ -10105,4 +10192,6 @@ server.on('connect', (req, clientSocket, head) => {
   }
 })
 
-server.listen(PORT, () => {})
+server.listen(PORT, HOST, () => {
+  console.log(`[proxy] listening on http://${HOST}:${PORT}`)
+})

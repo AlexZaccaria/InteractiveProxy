@@ -60,7 +60,7 @@
 │  │  5. Log Request (if Interactive Mode is ON)          │  │   │
 │  │     - Add to requestLogs array                       │  │   │
 │  │     - Limit to MAX_LOG_ENTRIES entries               │  │   │
-│  │       (default 1000, configurable via env)           │  │   │
+│  │       (default 5000, configurable via env)           │  │   │
 │  │     - Include: method, URL, headers, body, response  │  │   │
 │  └──────────────────────────────────────────────────────┘  │   │
 │                             │                               │   │
@@ -110,14 +110,14 @@
 - **Blocked URL Filtering**: Prevents loading of blocked URLs
 - **Request Logging**: Stores request/response data in memory (when Interactive Mode is ON)
 - **File Persistence**: Saves resources and config to disk
-- **Decompression**: Handles gzip, deflate, br and zstd encoded responses (zstd rewrites use an optional WebAssembly codec when available)
+- **Decompression**: Handles gzip, deflate, br and zstd encoded responses through Node's built-in `zlib` (zstd requires Node >= 22.15)
 - **WebSocket Handling**: Intercepts and logs WebSocket messages (Socket.IO compatible)
 
 #### Data Structures:
 ```javascript
 // In-memory storage
 // Sliding log window used for the UI; capped by MAX_LOG_ENTRIES
-// (default 1000, configurable via PROXY_MAX_LOG_ENTRIES).
+// (default 5000, configurable via PROXY_MAX_LOG_ENTRIES).
 let requestLogs = []
 let dashboardStats = {            // Incrementally updated dashboard metrics
   total: 0,
@@ -169,7 +169,7 @@ let editRules = []                // Live edit rules
 - **Content Preview**: JSON viewer, image display, HTML rendering
 - **WebSocket Message Display**: Shows direction and parsed content
 - **Filter Persistence**: Saves filters to localStorage
-- **Responsive Design**: Works on desktop and mobile
+- **Desktop Layout**: Designed for desktop browsers (minimum width 1024px)
 
 ## 🔄 Request Flow Details
 
@@ -300,7 +300,7 @@ Incoming Request → addLog(logEntry)
                    ↓ Yes
     requestLogs.unshift(logEntry)
                    ↓
-    Limit to MAX_LOG_ENTRIES entries (default 1000)
+    Limit to MAX_LOG_ENTRIES entries (default 5000)
                    ↓
     Available via GET /api/logs
 ```
@@ -321,10 +321,18 @@ UI Toggle → POST /api/interactive-mode
 ## 🔐 Security Considerations
 
 ### Development Only
-- Self-signed CA certificate (not trusted by default)
+- Self-signed CA certificate (not trusted by default); the CA private key is
+  stored unencrypted under the certificates directory
 - No authentication or authorization
 - Stores all traffic in memory
 - Logs may contain sensitive data
+
+### Network Exposure
+- The server binds to `127.0.0.1` by default (`PROXY_HOST` to change it)
+- Browser access to `/api/*` is limited to the UI origins (`PROXY_UI_ORIGINS`
+  to add more); mutations reject cross-site browser requests, while
+  non-browser clients such as curl are unaffected
+- Upstream TLS certificates are not verified unless `PROXY_STRICT_TLS` is set
 
 ### Best Practices
 - Use only on local development machine
@@ -338,13 +346,13 @@ UI Toggle → POST /api/interactive-mode
 ### Optimizations
 - **In-memory storage** for fast resource lookup
 - **Streaming responses** for large files
-- **Compression support** (gzip, deflate, br, zstd — with optional WebAssembly acceleration for zstd)
+- **Compression support** (gzip, deflate, br, zstd via Node's built-in `zlib`)
 - **Connection pooling** for proxy requests
 - **Interactive Mode** to disable logging overhead
 
 ### Limits
 - **Log window size**: requestLogs is capped by MAX_LOG_ENTRIES
-  (default 1000, configurable via the `PROXY_MAX_LOG_ENTRIES` env var). Oldest
+  (default 5000, configurable via the `PROXY_MAX_LOG_ENTRIES` env var). Oldest
   entries are removed when the cap is exceeded.
 - **Dashboard polling**: the UI polls `/api/dashboard` every 2 seconds when
   Interactive Mode is ON. The Request Logs view fetches `/api/logs` on demand
@@ -381,13 +389,12 @@ Potential enhancements:
 ## 🛠️ Technology Stack
 
 ### Backend
-- **Node.js** - JavaScript runtime
+- **Node.js** (>= 22.15) - JavaScript runtime; built-in `zlib` handles gzip, deflate, br and zstd
 - **Express** - Web framework
 - **undici** - HTTP client for upstream proxying
 - **node-forge** - Certificate generation for MITM
 - **ws** - WebSocket support
 - **multer** - File upload handling
-- **fzstd** - Zstandard decompression (via WebAssembly bindings)
 
 ### Frontend
 -- **React** - UI library

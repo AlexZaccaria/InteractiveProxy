@@ -1,6 +1,8 @@
 # 🚀 Quick Start Guide
 
 ## Quick Installation
+Requires Node.js >= 22.15 and npm >= 10.
+
 ```bash
 # Install all dependencies
 npm run install-all
