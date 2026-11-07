@@ -204,7 +204,9 @@ function createJsonPathRewriter(store) {
         // target with the parsed object/array. This is primarily for advanced
         // callers using the HTTP API directly.
         if (effectiveValue && typeof effectiveValue === 'object') {
-          newValue = effectiveValue
+          // Insert a copy: the rule's own value must never be reachable from a
+          // body or a log view, which are mutated and normalised later.
+          newValue = structuredClone(effectiveValue)
         } else if (typeof effectiveValue === 'string') {
           try {
             newValue = JSON.parse(effectiveValue)
