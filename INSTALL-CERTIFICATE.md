@@ -97,6 +97,21 @@ Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\Roo
    - You should see HTTPS requests with **MITM** badge (cyan)
    - You can expand requests to see full URLs, headers, and body
 
+4. **Test with curl** (no system-wide installation needed)
+   ```bash
+   curl --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
+   ```
+   On Windows the bundled curl uses the Schannel TLS backend, which refuses
+   certificates without revocation information (`curl: (60) schannel: the
+   revocation status is unknown`); the proxy's certificates carry none, so add
+   `--ssl-no-revoke`:
+   ```bash
+   curl --ssl-no-revoke --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
+   ```
+   The CA files (`ca-cert.pem`, `ca-key.pem`, the shared `leaf-key.pem` and the
+   per-host certificates under `hosts/`) are created on the first HTTPS
+   request through the proxy, not at startup.
+
 ## 🔍 What You Can See with MITM
 
 With the certificate installed, the proxy can intercept and show:

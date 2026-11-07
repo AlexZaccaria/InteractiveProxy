@@ -17,6 +17,7 @@
 
 const { URL } = require('url')
 const { safeString } = require('../util/strings')
+const { logDebug } = require('../util/logger')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const {
   STREAMED_BODY_MARKER,
@@ -706,11 +707,10 @@ function createHttpFlow({
           res.removeListener('close', onClose)
         }
       } else {
-        // No local resource and no target URL (likely WebSocket or direct connection)
-        if (logEntry) {
-          logEntry.source = 'websocket'
-          addLog(logEntry)
-        }
+        // No local resource and no target: the request is addressed to the
+        // proxy itself (a UI asset that does not exist, a stray favicon) and
+        // is not traffic to show in the log.
+        logDebug('http-flow', `No target for own-origin request ${req.method} ${requestUrl}`)
 
         res.status(404).json({
           error: 'No local resource found and no target URL specified',
