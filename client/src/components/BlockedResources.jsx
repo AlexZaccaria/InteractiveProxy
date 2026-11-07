@@ -192,7 +192,7 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
                         {rule.url}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => toggleRuleEnabled(rule)}
                         disabled={togglingId === (rule.id || rule.url)}

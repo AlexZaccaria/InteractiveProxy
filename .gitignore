@@ -3,11 +3,8 @@ node_modules/
 client/node_modules/
 
 # Build output
-client/build/
+client/dist/
 dist/
-
-# Generated from ports.config.json by dev-client.js / build-client.js
-client/src/config/generatedPorts.js
 
 # Storage and logs
 server/logs/

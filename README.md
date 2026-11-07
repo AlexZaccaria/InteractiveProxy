@@ -50,8 +50,8 @@ The UI is at `http://127.0.0.1:8050/`.
 | `npm run dev` | Proxy with readable log output plus the UI development server, side by side |
 | `npm run server` | Proxy alone; log lines are readable on a terminal and JSON when piped (`PROXY_LOG_FORMAT`) |
 | `npm run client` | UI development server alone |
-| `npm run build` | Production build of the UI into `client/build` |
-| `npm start` | Same as `npm run server`; serves `client/build` when it exists |
+| `npm run build` | Production build of the UI into `client/dist` (Vite) |
+| `npm start` | Same as `npm run server`; serves `client/dist` when it exists |
 | `npm test` | Server test suite (`node --test`) |
 | `npm run lint` | ESLint on server, scripts and client |
 | `npm run typecheck` | `tsc` over the server's JSDoc types |
@@ -79,7 +79,7 @@ InteractiveProxy
   │    ├─ test/               unit and integration tests
   │    ├─ storage/            persisted rules, resources and flags (created at runtime)
   │    └─ certs/              CA, leaf key and host certificates (created at runtime)
-  ├─ client/                  React UI (Create React App)
+  ├─ client/                  React UI built by Vite (index.html, vite.config.js, src/)
   ├─ scripts/                 port tooling and the development launcher
   ├─ docs/API.md              management API reference
   ├─ ports.config.json        UI and proxy ports

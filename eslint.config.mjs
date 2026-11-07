@@ -22,8 +22,7 @@ export default [
   {
     ignores: [
       '**/node_modules/**',
-      'client/build/**',
-      'client/src/config/generatedPorts.js',
+      'client/dist/**',
       'server/storage/**',
       'server/certs/**',
       'server/logs/**'
@@ -33,7 +32,7 @@ export default [
 
   // Backend, launchers, scripts and the client's tool configs: CommonJS on Node.
   {
-    files: ['server/**/*.js', 'scripts/**/*.js', '*.js', 'client/*.js'],
+    files: ['server/**/*.js', 'scripts/**/*.js', '*.js'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'commonjs',
@@ -42,7 +41,18 @@ export default [
     rules: sharedRules
   },
 
-  // Frontend: React with JSX in .js files (Create React App convention).
+  // Client tooling (Vite config): ES modules on Node.
+  {
+    files: ['client/*.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: globals.node
+    },
+    rules: sharedRules
+  },
+
+  // Frontend: React with JSX (.jsx) built by Vite.
   {
     files: ['client/src/**/*.{js,jsx}'],
     ...react.configs.flat.recommended,

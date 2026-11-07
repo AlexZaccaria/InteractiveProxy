@@ -51,7 +51,8 @@
 
 - The server was split from one 10,340-line file into modules under `server/src/` with factories instead of module-level state; `server/index.js` only wires them.
 - JSDoc types checked by `tsc` (`npm run typecheck`), ESLint 9, Prettier on server and tooling, GitHub Actions on Node 22, 24 and 26.
-- npm workspaces for the server and the client with a single lockfile; the client's launchers resolve `react-scripts` from the workspace root.
+- npm workspaces for the server and the client with a single lockfile.
+- The client is built by Vite 7 with `@vitejs/plugin-react` and Tailwind 4 (`@tailwindcss/vite`) instead of Create React App; JSX files use the `.jsx` extension, the ports come from `ports.config.json` through `vite.config.js`, the build goes to `client/dist`, and new client modules are type-checked from JSDoc (`client/jsconfig.json`).
 - 305 tests with `node:test`: unit tests of the codecs, rules, routing and logs, and integration tests against local HTTP, HTTPS, HTTP/2 and WebSocket upstreams.
 - The log window is a ring buffer with an index by id.
 

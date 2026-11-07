@@ -325,7 +325,7 @@ const app = createApp({
   isProxyTargetedRequest: router.isProxyTargetedRequest,
   handleProxiedHttpRequest: httpFlow.handleProxiedHttpRequest,
   apiRouter,
-  clientBuildDir: path.join(__dirname, '..', 'client', 'build')
+  clientBuildDir: path.join(__dirname, '..', 'client', 'dist')
 })
 const webSocketProxy = createWebSocketProxy({
   router,

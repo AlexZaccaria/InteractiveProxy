@@ -34,7 +34,7 @@ client ──► http.Server request
                   │         ├─ local resource matches ──► served from disk
                   │         └─ forward: header rewrites ──► upstream ──► stream or buffer+rewrite ──► log
                   ├─ /api ──► management API (cross-site guard first)
-                  ├─ client/build ──► static UI, when built
+                  ├─ client/dist ──► static UI, when built
                   └─ anything else ──► handleProxiedHttpRequest ──► 404 without a target
 ```
 
@@ -80,9 +80,9 @@ The orchestrators under `rewrite/` connect the engines to the flows: `http-json`
 
 ## Management API and UI
 
-`app.js` builds the Express application: CORS restricted to the UI origins, `trust proxy`, the body parsers (Protobuf raw, JSON, URL-encoded, then a raw catch-all for every other type), the proxy-targeted guard, the `/api` router, the static UI from `client/build` when it exists, and the catch-all proxy handler. `api/index` mounts the route groups behind the cross-site guard; `api/events` keeps the Server-Sent Events clients and publishes the changes the stores report through their `onChange` / `onEntryAdded` listeners. The endpoints and the event contract are in [docs/API.md](docs/API.md).
+`app.js` builds the Express application: CORS restricted to the UI origins, `trust proxy`, the body parsers (Protobuf raw, JSON, URL-encoded, then a raw catch-all for every other type), the proxy-targeted guard, the `/api` router, the static UI from `client/dist` when it exists, and the catch-all proxy handler. `api/index` mounts the route groups behind the cross-site guard; `api/events` keeps the Server-Sent Events clients and publishes the changes the stores report through their `onChange` / `onEntryAdded` listeners. The endpoints and the event contract are in [docs/API.md](docs/API.md).
 
-The client (`client/src`) is a Create React App project: `App.js` holds the header, the tabs and the global flags; `components/` holds one component per tab plus the modal and the audit panel. `hooks/useProxyEvents.js` subscribes to `GET /api/events`: `stats` events update the dashboard counters directly, `log` events trigger a debounced refetch of the log window the client holds (so the server-side filters keep applying), `config` and `rules` events refresh the flags, the rule lists and the suggestions, and `logs-cleared` resets the list. The 2 s polling of `/api/dashboard`, the first-page poll of `/api/logs`, the 1 s poll of the filter suggestions and the 5 s poll of the audit panel run only while the stream is not open (no `EventSource`, or a connection being retried); the dashboard is fetched once whenever the stream opens, because it has no replay.
+The client is a React application built by Vite: `client/index.html` loads `src/main.jsx`, `vite.config.js` reads `ports.config.json` and injects the backend address as the `__PROXY_PORTS__` constant (`src/config/apiConfig.js`), `@tailwindcss/vite` compiles the styles from the single `@import "tailwindcss"` in `src/index.css`. `App.jsx` holds the header, the tabs and the global flags; `components/` holds one component per tab plus the modal and the audit panel. `hooks/useProxyEvents.js` subscribes to `GET /api/events`: `stats` events update the dashboard counters directly, `log` events trigger a debounced refetch of the log window the client holds (so the server-side filters keep applying), `config` and `rules` events refresh the flags, the rule lists and the suggestions, and `logs-cleared` resets the list. The 2 s polling of `/api/dashboard`, the first-page poll of `/api/logs`, the 1 s poll of the filter suggestions and the 5 s poll of the audit panel run only while the stream is not open (no `EventSource`, or a connection being retried); the dashboard is fetched once whenever the stream opens, because it has no replay.
 
 ## Persistence
 

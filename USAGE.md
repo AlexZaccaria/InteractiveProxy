@@ -129,7 +129,7 @@ Booleans accept `1`, `true` and `yes`.
 }
 ```
 
-The server reads `backendPort` (overridden by `PROXY_PORT`). The UI launchers (`dev-client.js`, `build-client.js`) generate `client/src/config/generatedPorts.js` from it and set the port of the development server. When the UI is served by the proxy itself, API calls stay on the proxy's origin.
+The server reads `backendPort` (overridden by `PROXY_PORT`). `client/vite.config.js` reads the same file: it runs the development server on `uiPort` (`http://localhost:3050` by default, failing instead of moving to another port when it is taken) and injects the backend host, port and protocol into the app as a compile-time constant. When the UI is served by the proxy itself, API calls stay on the proxy's origin.
 
 ### Persistent files
 
@@ -153,4 +153,5 @@ Everything the proxy persists lives under the storage and certificate directorie
 | `curl: (60) schannel: the revocation status is unknown` | curl on Windows uses Schannel, which requires revocation information the proxy's certificates do not carry; add `--ssl-no-revoke` |
 | A local resource is not served | The resource is disabled, the global switch is off, or its URL is not contained in the request URL |
 | A rule does not apply | Its URL pattern names a host that differs from the request's, its phase does not match, the global edit switch is off, or the response was streamed (binary, event stream or above the size threshold) before any rule could apply; a regular expression that does not compile is reported in the server log |
-| `npm run dev` fails on `react-scripts` | Run `npm install` at the repository root; the client's dependencies are hoisted into the root `node_modules` |
+| `npm run dev` fails to start `vite` | Run `npm install` at the repository root; the client's dependencies are hoisted into the root `node_modules` |
+| The UI development server reports port 3050 in use | `strictPort` is on so the app always runs on `uiPort`; stop the other process or change `uiPort` in `ports.config.json` |

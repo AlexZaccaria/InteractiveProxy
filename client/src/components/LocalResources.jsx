@@ -283,7 +283,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="e.g. /api/data.json or https://example.com/api/data.json"
-                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
                 required
               />
             </div>
@@ -296,7 +296,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
               <select
                 value={contentType}
                 onChange={(e) => setContentType(e.target.value)}
-                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               >
                 <option value="text/plain">text/plain</option>
                 <option value="text/html">text/html</option>
@@ -352,7 +352,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                   onChange={(e) => setTextContent(e.target.value)}
                   placeholder="Enter text content, JSON, HTML, etc..."
                   rows={8}
-                  className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono resize-none"
+                  className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono resize-none"
                   required
                 />
                 <p className="mt-2 text-xs text-slate-400">
@@ -364,7 +364,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
             {/* Error Message */}
             {error && (
               <div className="flex items-center space-x-2 p-4 bg-red-900/40 border border-red-800 rounded-lg text-red-200">
-                <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                <AlertCircle className="w-5 h-5 shrink-0" />
                 <p className="text-sm">{error}</p>
               </div>
             )}
@@ -372,7 +372,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
             {/* Success Message */}
             {success && (
               <div className="flex items-center space-x-2 p-4 bg-emerald-900/40 border border-emerald-700 rounded-lg text-emerald-200">
-                <CheckCircle className="w-5 h-5 flex-shrink-0" />
+                <CheckCircle className="w-5 h-5 shrink-0" />
                 <p className="text-sm">{success}</p>
               </div>
             )}
@@ -442,7 +442,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                     </div>
                     
                     <div className="flex items-start space-x-2 mb-2">
-                      <LinkIcon className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+                      <LinkIcon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                       <p className="text-white font-mono text-sm break-all">
                         {resource.url}
                       </p>
@@ -453,7 +453,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                     </p>
                   </div>
                   
-                  <div className="ml-4 flex items-center gap-2 flex-shrink-0">
+                  <div className="ml-4 flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => handleToggleEnabled(resource)}
                       disabled={togglingUrl === resource.url}
@@ -474,7 +474,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                     <button
                       onClick={() => handleDelete(resource.url)}
                       disabled={deletingUrl === resource.url}
-                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
+                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
                       title="Delete resource"
                     >
                       {deletingUrl === resource.url ? (

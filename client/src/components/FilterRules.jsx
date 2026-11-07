@@ -476,7 +476,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="e.g. Analytics, CDN, Third-party scripts"
-              className="w-full px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -490,7 +490,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
                 value={newPattern}
                 onChange={(e) => setNewPattern(e.target.value)}
                 placeholder="Enter partial URL (e.g. /metrics, anthropic.com/api)"
-                className="flex-1 px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="flex-1 px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="submit"
@@ -588,7 +588,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
                     rule.enabled ? 'text-slate-300' : 'text-slate-500'
                   }`} title={rule.url}>{rule.url}</p>
                 </div>
-                <div className="flex items-center space-x-2 flex-shrink-0">
+                <div className="flex items-center space-x-2 shrink-0">
                   <button
                     onClick={() => togglePattern(rule.id, rule.enabled)}
                     disabled={activeRuleId === rule.id && isLoading}

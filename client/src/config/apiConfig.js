@@ -1,50 +1,63 @@
-import { UI_PORT, BACKEND_PORT, BACKEND_HOST, BACKEND_PROTOCOL } from './generatedPorts';
+/**
+ * Ports and base URL of the backend.
+ *
+ * The values come from `ports.config.json` at the repository root, injected
+ * by `vite.config.js` as the compile-time constant `__PROXY_PORTS__`.
+ */
 
 /**
- * Port where the React UI is expected to run in development.
- *
- * Value is sourced from the auto-generated `generatedPorts` module, which in
- * turn is derived from the root `ports.config.json`. Tooling and scripts are
- * responsible for actually serving the UI on this port during development.
+ * @typedef {Object} ProxyPorts
+ * @property {number} uiPort Port of the UI development server.
+ * @property {number} backendPort Port the proxy listens on.
+ * @property {string} backendHost Host name of the proxy.
+ * @property {'http' | 'https'} backendProtocol Protocol used to reach the proxy.
+ */
+
+/* global __PROXY_PORTS__ */
+
+/** @type {ProxyPorts} */
+const ports = typeof __PROXY_PORTS__ !== 'undefined'
+  ? __PROXY_PORTS__
+  : { uiPort: 3050, backendPort: 8050, backendHost: 'localhost', backendProtocol: 'http' };
+
+/**
+ * Port where the UI development server runs.
  *
  * @type {number}
  */
-export { UI_PORT };
+export const UI_PORT = ports.uiPort;
 
 /**
  * Port where the proxy/backend HTTP server listens.
  *
- * Sourced from the auto-generated `generatedPorts` module, keeping it
- * synchronized with the backend configuration and root `ports.config.json`.
- *
  * @type {number}
  */
-export { BACKEND_PORT };
+export const BACKEND_PORT = ports.backendPort;
 
 /**
  * Hostname for the backend server.
  *
  * @type {string}
  */
-export { BACKEND_HOST };
+export const BACKEND_HOST = ports.backendHost;
 
 /**
  * Protocol used to talk to the backend server.
  *
  * @type {'http' | 'https'}
  */
-export { BACKEND_PROTOCOL };
+export const BACKEND_PROTOCOL = ports.backendProtocol;
 
 /**
- * True when the UI is being served by the proxy itself (production build
- * under /ui) rather than by the CRA dev server: API calls then stay on the
- * current origin instead of the configured backend host/port.
+ * True when the UI is being served by the proxy itself (production build)
+ * rather than by the development server: API calls then stay on the current
+ * origin instead of the configured backend host/port.
  *
  * @type {boolean}
  */
 const SERVED_BY_BACKEND =
   typeof window !== 'undefined' &&
-  window.location &&
+  Boolean(window.location) &&
   String(window.location.port) === String(BACKEND_PORT);
 
 /**

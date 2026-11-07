@@ -334,7 +334,7 @@ function PresetDropdown({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`group inline-flex w-full min-w-[220px] items-center justify-between gap-2 rounded-lg border border-[#2a2a2a] bg-[#0b0b0b] px-3 h-8 text-left text-xs text-slate-100 transition-colors hover:border-blue-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
+        className={`group inline-flex w-full min-w-[220px] items-center justify-between gap-2 rounded-lg border border-[#2a2a2a] bg-[#0b0b0b] px-3 h-8 text-left text-xs text-slate-100 transition-colors hover:border-blue-500/60 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
           open ? 'border-blue-500/60 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]' : ''
         } ${buttonClassName}`}
       >
@@ -1574,7 +1574,7 @@ function EditRules({
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g., Replace API Key"
-                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
             </div>
 
@@ -1589,7 +1589,7 @@ function EditRules({
                     value={formData.url}
                     onChange={(e) => setFormData({ ...formData, url: e.target.value })}
                     placeholder="es: /api/v1/users oppure https://example.com/api"
-                    className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
 
@@ -1643,7 +1643,7 @@ function EditRules({
                       value={formData.path}
                       onChange={(e) => setFormData({ ...formData, path: e.target.value })}
                       placeholder="es: root.data[0].user.name"
-                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                     />
                   </div>
                 </div>
@@ -1728,7 +1728,7 @@ function EditRules({
                           value={formData.value}
                           onChange={handleJsonValueTextChange}
                           placeholder="Insert a value"
-                          className="flex-1 px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          className="flex-1 px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                         />
                         <button
                           type="button"
@@ -1758,7 +1758,7 @@ function EditRules({
                       onChange={(e) => setFormData({ ...formData, startVariantsText: e.target.value })}
                       placeholder="Each line is an alternative start marker that can trigger this rule."
                       rows={3}
-                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
                       All non-empty lines are treated as OR markers for the start boundary.
@@ -1774,7 +1774,7 @@ function EditRules({
                       onChange={(e) => setFormData({ ...formData, endVariantsText: e.target.value })}
                       placeholder="Each line is an alternative end marker that can close the replacement block."
                       rows={3}
-                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
                       Leave this empty to replace everything from the start marker to the end of the content.
@@ -1832,7 +1832,7 @@ function EditRules({
                       value={formData.url}
                       onChange={(e) => setFormData({ ...formData, url: e.target.value })}
                       placeholder="es: /api/v1/users oppure https://example.com/api"
-                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -1846,7 +1846,7 @@ function EditRules({
                     onChange={(e) => setFormData({ ...formData, replacement: e.target.value })}
                     placeholder="New text to insert"
                     rows={3}
-                    className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                    className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
                   />
                 </div>
               </>
@@ -1962,7 +1962,7 @@ function EditRules({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       <PresetDropdown
                         value={rulePresetValue}
                         placeholder="Apply preset"

@@ -102,7 +102,7 @@ function Modal({ isOpen, onClose, title, message, type = 'info', onConfirm, show
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder={inputPlaceholder}
-              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleConfirm();

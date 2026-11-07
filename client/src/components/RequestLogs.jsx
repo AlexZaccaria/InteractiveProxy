@@ -363,7 +363,7 @@ const HeaderList = ({ headers }) => {
             key={key}
             className="px-3 py-2 flex flex-col sm:flex-row sm:items-start gap-2"
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 sm:w-48 flex-shrink-0">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 sm:w-48 shrink-0">
               {key}
             </div>
             <div className="text-[11px] text-slate-200 font-mono break-all flex-1 leading-relaxed">
@@ -2324,7 +2324,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
               placeholder="Search URL..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-8 pr-8 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full pl-8 pr-8 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             />
             <div
               className="absolute right-2.5 top-1/2 transform -translate-y-1/2"
@@ -2387,10 +2387,10 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
                 placeholder="Search in request..."
                 value={requestBodySearch}
                 onChange={(e) => setRequestBodySearch(e.target.value)}
-                className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-yellow-500"
               />
             </div>
-            <div className="relative group/request-rewrites flex-shrink-0">
+            <div className="relative group/request-rewrites shrink-0">
               <button
                 type="button"
                 onClick={() => setRequestRewrittenOnly(prev => !prev)}
@@ -2427,10 +2427,10 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
                 placeholder="Search in response..."
                 value={responseSearchTerm}
                 onChange={(e) => setResponseSearchTerm(e.target.value)}
-                className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-green-500"
               />
             </div>
-            <div className="relative group/response-rewrites flex-shrink-0">
+            <div className="relative group/response-rewrites shrink-0">
               <button
                 type="button"
                 onClick={() => setResponseRewrittenOnly(prev => !prev)}
@@ -2465,7 +2465,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
           <div className="relative dropdown-container">
             <button
               onClick={() => setShowSourcesDropdown(!showSourcesDropdown)}
-              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-400 w-full"
+              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-slate-400 w-full"
             >
               <Filter className="w-3.5 h-3.5" />
               <span>Sources ({selectedSources.length})</span>
@@ -2512,7 +2512,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
           <div className="relative dropdown-container">
             <button
               onClick={() => setShowMethodsDropdown(!showMethodsDropdown)}
-              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-400 w-full"
+              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-slate-400 w-full"
             >
               <Filter className="w-3.5 h-3.5" />
               <span>Methods ({selectedMethods.length})</span>
@@ -2576,7 +2576,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
           <div className="relative dropdown-container">
             <button
               onClick={() => setShowFileTypesDropdown(!showFileTypesDropdown)}
-              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-400 w-full"
+              className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-slate-400 w-full"
             >
               <Filter className="w-3.5 h-3.5" />
               <span>Types ({selectedFileTypes.length})</span>
@@ -2710,7 +2710,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
                                 e.stopPropagation();
                                 setPinnedRewritesLogId((current) => (current === log.id ? null : log.id));
                               }}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/20 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/20 focus:outline-hidden focus:ring-1 focus:ring-emerald-500/60"
                             >
                               <span className="text-[10px] uppercase tracking-wide text-emerald-400">Rewrites</span>
                               <span className="font-mono">{log.rewrites.length}</span>
