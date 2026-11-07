@@ -19,7 +19,7 @@ const { getFileTypeFromLogEntry, filterLogsCore } = require('./search')
  * @param {LogEntry | null | undefined} log
  * @returns {Record<string, any> | null}
  */
-function buildBaseClientLogView (log) {
+function buildBaseClientLogView(log) {
   if (!log || typeof log !== 'object') return null
 
   return {
@@ -41,20 +41,43 @@ function buildBaseClientLogView (log) {
 
 // Fields to copy if they have a truthy/defined value (common to both views)
 const LOG_VIEW_COMMON_FIELDS = [
-  'upstreamDurationMs', 'upstreamErrorCategory', 'requestStartTs', 'totalDurationMs',
-  'proxyOverheadMs', 'requestBytes', 'responseBytes', 'rewriteCount', 'connectionId',
-  'isConnectionLog', 'isWebSocketSummary', 'headers', 'responseHeaders',
-  'requestBodySummary', 'responseBodySummary', 'rewrites', 'connectSummary', 'wsSummary'
+  'upstreamDurationMs',
+  'upstreamErrorCategory',
+  'requestStartTs',
+  'totalDurationMs',
+  'proxyOverheadMs',
+  'requestBytes',
+  'responseBytes',
+  'rewriteCount',
+  'connectionId',
+  'isConnectionLog',
+  'isWebSocketSummary',
+  'headers',
+  'responseHeaders',
+  'requestBodySummary',
+  'responseBodySummary',
+  'rewrites',
+  'connectSummary',
+  'wsSummary'
 ]
 
 // Fields to copy only in full view (not summary)
 const LOG_VIEW_FULL_FIELDS = [
-  'body', 'responseBody', 'requestBodyJson', 'responseBodyJson',
-  'requestBodyJsonBefore', 'responseBodyJsonBefore',
-  'requestBodyTextBefore', 'requestBodyTextAfter',
-  'responseBodyTextBefore', 'responseBodyTextAfter',
-  'wsBodyJsonAfter', 'wsBodyJsonBefore', 'originalBody',
-  'rawRequestBodyPreview', 'rawResponseBodyPreview'
+  'body',
+  'responseBody',
+  'requestBodyJson',
+  'responseBodyJson',
+  'requestBodyJsonBefore',
+  'responseBodyJsonBefore',
+  'requestBodyTextBefore',
+  'requestBodyTextAfter',
+  'responseBodyTextBefore',
+  'responseBodyTextAfter',
+  'wsBodyJsonAfter',
+  'wsBodyJsonBefore',
+  'originalBody',
+  'rawRequestBodyPreview',
+  'rawResponseBodyPreview'
 ]
 
 /**
@@ -65,7 +88,7 @@ const LOG_VIEW_FULL_FIELDS = [
  * @param {{summary?: boolean}} [options]
  * @returns {Record<string, any> | null}
  */
-function buildClientLogViewInternal (log, options = {}) {
+function buildClientLogViewInternal(log, options = {}) {
   const summary = options.summary === true
   const view = buildBaseClientLogView(log)
   if (!view || !log) return null
@@ -126,7 +149,7 @@ const buildClientLogSummaryView = log => buildClientLogViewInternal(log, { summa
  * @param {LogStore} store
  * @returns {{ items: any[], total: number, hasMore: boolean, offset: number, limit: number }}
  */
-function filterLogsForApiRequest (req, store) {
+function filterLogsForApiRequest(req, store) {
   const query = req.query || {}
 
   const { ordered, total } = filterLogsCore(query, store)

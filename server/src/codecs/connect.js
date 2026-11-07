@@ -23,19 +23,21 @@ const {
   decompressData
 } = require('./compression')
 const { extractJsonFromProtobufBuffer, stripTrivialBinaryBlobs } = require('./protobuf')
-const { SEARCH_SNAPSHOT_MAX_BYTES, bufferToTextPreview, tryParseJsonString } = require('../logs/preview')
+const {
+  SEARCH_SNAPSHOT_MAX_BYTES,
+  bufferToTextPreview,
+  tryParseJsonString
+} = require('../logs/preview')
 
 /** @typedef {import('./compression').HeadersLike} HeadersLike */
 
 // Normalised Connect limits computed once at startup to avoid repeated
 // ternaries and allocations on hot paths.
-const CONNECT_MAX_FRAMES_LIMIT = CONNECT_MAX_FRAMES > 0
-  ? CONNECT_MAX_FRAMES
-  : Number.POSITIVE_INFINITY
+const CONNECT_MAX_FRAMES_LIMIT =
+  CONNECT_MAX_FRAMES > 0 ? CONNECT_MAX_FRAMES : Number.POSITIVE_INFINITY
 
-const CONNECT_MAX_FRAME_BYTES_LIMIT = CONNECT_MAX_FRAME_BYTES > 0
-  ? CONNECT_MAX_FRAME_BYTES
-  : Number.POSITIVE_INFINITY
+const CONNECT_MAX_FRAME_BYTES_LIMIT =
+  CONNECT_MAX_FRAME_BYTES > 0 ? CONNECT_MAX_FRAME_BYTES : Number.POSITIVE_INFINITY
 
 /**
  * One frame of a decoded Connect payload as kept on a log entry. Rewrite
@@ -111,13 +113,12 @@ const CONNECT_MAX_FRAME_BYTES_LIMIT = CONNECT_MAX_FRAME_BYTES > 0
  * @param {HeadersLike | null | undefined} headers
  * @returns {string}
  */
-function getConnectEncodingHeader (headers) {
-  const value = (
+function getConnectEncodingHeader(headers) {
+  const value =
     getHeaderCaseInsensitive(headers, 'connect-content-encoding') ||
     getHeaderCaseInsensitive(headers, 'connect-encoding') ||
     getHeaderCaseInsensitive(headers, 'grpc-encoding') ||
     ''
-  )
   return typeof value === 'string' ? value : String(value)
 }
 
@@ -128,13 +129,13 @@ function getConnectEncodingHeader (headers) {
  * @param {Buffer | null | undefined} buffer
  * @returns {boolean}
  */
-function looksLikeConnectEnvelope (buffer) {
+function looksLikeConnectEnvelope(buffer) {
   if (!buffer || buffer.length < 5 || !Buffer.isBuffer(buffer)) return false
   try {
     let offset = 0
     while (offset + 5 <= buffer.length) {
       const flags = buffer.readUInt8(offset)
-      if ((flags & 0xFC) !== 0) return false
+      if ((flags & 0xfc) !== 0) return false
       const length = buffer.readUInt32BE(offset + 1)
       offset += 5
       if (length < 0 || offset + length > buffer.length) return false
@@ -154,7 +155,7 @@ function looksLikeConnectEnvelope (buffer) {
  * @param {Array<EnvelopeFrame | null | undefined>} [frames]
  * @returns {Buffer}
  */
-function rebuildConnectEnvelope (frames = []) {
+function rebuildConnectEnvelope(frames = []) {
   if (!Array.isArray(frames) || frames.length === 0) {
     return Buffer.alloc(0)
   }
@@ -171,7 +172,7 @@ function rebuildConnectEnvelope (frames = []) {
   for (const frame of frames) {
     const flags = typeof frame?.flags === 'number' ? frame.flags : 0
     const data = Buffer.isBuffer(frame?.data) ? frame.data : Buffer.alloc(0)
-    rebuilt.writeUInt8(flags & 0xFF, offset)
+    rebuilt.writeUInt8(flags & 0xff, offset)
     rebuilt.writeUInt32BE(data.length, offset + 1)
     if (data.length > 0) {
       data.copy(rebuilt, offset + 5)
@@ -202,7 +203,7 @@ function rebuildConnectEnvelope (frames = []) {
  * @returns {DecodedConnectPayload | null} Decoded Connect payload suitable for
  * logging, or null if the payload is not recognised as Connect/gRPC.
  */
-function decodeConnectPayload (buffer, headers = {}) {
+function decodeConnectPayload(buffer, headers = {}) {
   if (isEmptyBuffer(buffer)) return null
   // isEmptyBuffer is not a type guard: past it, buffer is a non-empty Buffer.
   // The self-assignment only narrows the type for the checker.
@@ -287,7 +288,8 @@ function decodeConnectPayload (buffer, headers = {}) {
             note = 'compressed frame: decompression failed, payload left encoded'
           }
         } else if (isCompressed) {
-          note = 'compressed frame: no connect-content-encoding/grpc-encoding header, payload left encoded'
+          note =
+            'compressed frame: no connect-content-encoding/grpc-encoding header, payload left encoded'
         }
 
         // A frame that is still compressed has no readable preview or JSON.
@@ -437,7 +439,7 @@ function decodeConnectPayload (buffer, headers = {}) {
  * @param {{ frameCount?: unknown, frames?: unknown } | null | undefined} connect
  * @returns {number}
  */
-function countConnectFrames (connect) {
+function countConnectFrames(connect) {
   if (!connect || typeof connect !== 'object') return 0
   if (typeof connect.frameCount === 'number') return connect.frameCount
   if (Array.isArray(connect.frames)) return connect.frames.length
@@ -457,12 +459,13 @@ function countConnectFrames (connect) {
  * @param {{ frames?: unknown, originalFrames?: unknown } | null | undefined} connectData
  * @returns {string}
  */
-function buildConnectSearchContentForLog (connectData) {
+function buildConnectSearchContentForLog(connectData) {
   if (!connectData || typeof connectData !== 'object') return ''
 
-  const maxBytes = Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
-    ? SEARCH_SNAPSHOT_MAX_BYTES
-    : 0
+  const maxBytes =
+    Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
+      ? SEARCH_SNAPSHOT_MAX_BYTES
+      : 0
 
   /** @type {string[]} */
   const parts = []
@@ -470,7 +473,7 @@ function buildConnectSearchContentForLog (connectData) {
   let truncated = false
 
   /** @param {unknown} value */
-  const appendSegment = (value) => {
+  const appendSegment = value => {
     if (truncated || !value) return
     const text = String(value)
     if (!text) return
@@ -498,7 +501,7 @@ function buildConnectSearchContentForLog (connectData) {
   }
 
   /** @param {unknown} frames */
-  const collectFromFrames = (frames) => {
+  const collectFromFrames = frames => {
     if (!Array.isArray(frames) || !frames.length || truncated) return
 
     for (const frame of frames) {
@@ -545,41 +548,46 @@ function buildConnectSearchContentForLog (connectData) {
  * @param {Partial<DecodedConnectPayload> | null | undefined} connectData
  * @returns {ConnectClientView | null}
  */
-function buildConnectViewForClient (connectData) {
+function buildConnectViewForClient(connectData) {
   if (!connectData || typeof connectData !== 'object') return null
 
   /**
    * @param {unknown} frames
    * @returns {ConnectFrameView[]}
    */
-  const mapFrames = (frames) => {
+  const mapFrames = frames => {
     if (!Array.isArray(frames)) return []
-    return /** @type {ConnectFrameView[]} */ (frames
-      .map((frame, idx) => {
-        if (!frame || typeof frame !== 'object') return null
-        const frameIndex = typeof frame.index === 'number' ? frame.index : idx
+    return /** @type {ConnectFrameView[]} */ (
+      frames
+        .map((frame, idx) => {
+          if (!frame || typeof frame !== 'object') return null
+          const frameIndex = typeof frame.index === 'number' ? frame.index : idx
 
-        return {
-          index: frameIndex,
-          length: frame.length,
-          compressed: !!frame.compressed,
-          endStream: !!frame.endStream,
-          frameDecompressed: !!frame.frameDecompressed,
-          preview: safeString(frame.preview),
-          json: frame.json ?? null,
-          note: frame.note ?? null,
-          error: frame.error ?? null
-        }
-      })
-      .filter(Boolean))
+          return {
+            index: frameIndex,
+            length: frame.length,
+            compressed: !!frame.compressed,
+            endStream: !!frame.endStream,
+            frameDecompressed: !!frame.frameDecompressed,
+            preview: safeString(frame.preview),
+            json: frame.json ?? null,
+            note: frame.note ?? null,
+            error: frame.error ?? null
+          }
+        })
+        .filter(Boolean)
+    )
   }
 
   return {
     contentType: connectData.contentType || null,
     envelope: !!connectData.envelope,
-    frameCount: typeof connectData.frameCount === 'number'
-      ? connectData.frameCount
-      : (Array.isArray(connectData.frames) ? connectData.frames.length : 0),
+    frameCount:
+      typeof connectData.frameCount === 'number'
+        ? connectData.frameCount
+        : Array.isArray(connectData.frames)
+          ? connectData.frames.length
+          : 0,
     frames: mapFrames(connectData.frames),
     originalFrames: mapFrames(connectData.originalFrames)
   }

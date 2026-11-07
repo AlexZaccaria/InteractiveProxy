@@ -11,16 +11,18 @@ let upstream
 let upstreamPort
 let upstreamBase
 
-function request (options, body) {
+function request(options, body) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: proxyPort, ...options }, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks).toString('utf8')
-      }))
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf8')
+        })
+      )
     })
     req.on('error', reject)
     if (body) req.write(body)
@@ -28,23 +30,30 @@ function request (options, body) {
   })
 }
 
-async function api (method, path, payload, headers = {}) {
+async function api(method, path, payload, headers = {}) {
   const body = payload === undefined ? undefined : JSON.stringify(payload)
-  const response = await request({
-    method,
-    path,
-    headers: {
-      host: `127.0.0.1:${proxyPort}`,
-      ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}),
-      ...headers
-    }
-  }, body)
+  const response = await request(
+    {
+      method,
+      path,
+      headers: {
+        host: `127.0.0.1:${proxyPort}`,
+        ...(body
+          ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }
+          : {}),
+        ...headers
+      }
+    },
+    body
+  )
   let json = null
-  try { json = JSON.parse(response.body) } catch {}
+  try {
+    json = JSON.parse(response.body)
+  } catch {}
   return { ...response, json }
 }
 
-function viaProxy (method, url) {
+function viaProxy(method, url) {
   return request({ method, path: url, headers: { host: new URL(url).host } })
 }
 
@@ -107,7 +116,11 @@ test('boolean toggles validate the payload and are reflected by /api/config', as
   assert.deepEqual(on.json, { success: true, editRulesEnabled: true })
   assert.equal((await api('GET', '/api/config')).json.editRulesEnabled, true)
 
-  for (const path of ['/api/local-resources-mode', '/api/filter-rules-mode', '/api/blocked-rules-mode']) {
+  for (const path of [
+    '/api/local-resources-mode',
+    '/api/filter-rules-mode',
+    '/api/blocked-rules-mode'
+  ]) {
     const res = await api('POST', path, { enabled: true })
     assert.equal(res.status, 200, path)
     assert.equal(res.json.success, true, path)
@@ -251,7 +264,10 @@ test('edit rules: create, rewrite a proxied response body, disable, delete', asy
   const untouched = await viaProxy('GET', `${upstreamBase}/text`)
   assert.equal(untouched.body, 'hello world, world!')
 
-  const reEnabled = await api('PUT', `/api/edit-rules/${rule.id}`, { enabled: true, caseSensitive: true })
+  const reEnabled = await api('PUT', `/api/edit-rules/${rule.id}`, {
+    enabled: true,
+    caseSensitive: true
+  })
   assert.equal(reEnabled.json.rule.caseSensitive, true)
   assert.equal((await viaProxy('GET', `${upstreamBase}/text`)).body, 'hello proxy, proxy!')
 
@@ -313,35 +329,60 @@ test('a text rule without markers is stored but never applied', async () => {
 })
 
 test('mutations reject cross-site browser requests and accept everything else', async () => {
-  const evil = await api('POST', '/api/interactive-mode', { enabled: true }, { origin: 'http://evil.example' })
+  const evil = await api(
+    'POST',
+    '/api/interactive-mode',
+    { enabled: true },
+    { origin: 'http://evil.example' }
+  )
   assert.equal(evil.status, 403)
   assert.deepEqual(evil.json, { error: 'Cross-site requests to the proxy API are not allowed' })
 
-  const ui = await api('POST', '/api/interactive-mode', { enabled: true }, { origin: `http://localhost:${proxyPort}` })
+  const ui = await api(
+    'POST',
+    '/api/interactive-mode',
+    { enabled: true },
+    { origin: `http://localhost:${proxyPort}` }
+  )
   assert.equal(ui.status, 200)
 
-  const devUi = await api('POST', '/api/interactive-mode', { enabled: true }, { origin: 'http://localhost:3050' })
+  const devUi = await api(
+    'POST',
+    '/api/interactive-mode',
+    { enabled: true },
+    { origin: 'http://localhost:3050' }
+  )
   assert.equal(devUi.status, 200)
 
-  const crossSite = await request({
-    method: 'POST',
-    path: '/api/interactive-mode',
-    headers: {
-      host: `127.0.0.1:${proxyPort}`,
-      'sec-fetch-site': 'cross-site',
-      'content-type': 'application/x-www-form-urlencoded',
-      'content-length': 13
-    }
-  }, 'enabled=false')
+  const crossSite = await request(
+    {
+      method: 'POST',
+      path: '/api/interactive-mode',
+      headers: {
+        host: `127.0.0.1:${proxyPort}`,
+        'sec-fetch-site': 'cross-site',
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': 13
+      }
+    },
+    'enabled=false'
+  )
   assert.equal(crossSite.status, 403)
 
-  const sameSite = await api('POST', '/api/interactive-mode', { enabled: true }, { 'sec-fetch-site': 'same-site' })
+  const sameSite = await api(
+    'POST',
+    '/api/interactive-mode',
+    { enabled: true },
+    { 'sec-fetch-site': 'same-site' }
+  )
   assert.equal(sameSite.status, 200)
 
   const bare = await api('POST', '/api/interactive-mode', { enabled: true })
   assert.equal(bare.status, 200)
 
-  const readWithEvilOrigin = await api('GET', '/api/config', undefined, { origin: 'http://evil.example' })
+  const readWithEvilOrigin = await api('GET', '/api/config', undefined, {
+    origin: 'http://evil.example'
+  })
   assert.equal(readWithEvilOrigin.status, 200, 'GET is not blocked, only left without CORS headers')
 })
 

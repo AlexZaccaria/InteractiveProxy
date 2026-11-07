@@ -46,7 +46,7 @@ const { safeString } = require('../util/strings')
  * @param {unknown} value
  * @returns {string|null}
  */
-function normalizeHostValue (value) {
+function normalizeHostValue(value) {
   if (!value || typeof value !== 'string') return null
   const lower = value.trim().toLowerCase()
   if (lower.startsWith('[')) {
@@ -65,7 +65,7 @@ function normalizeHostValue (value) {
  * @param {unknown} candidate
  * @returns {ParsedUrlCandidate|null}
  */
-function parseUrlCandidate (candidate) {
+function parseUrlCandidate(candidate) {
   if (!candidate || typeof candidate !== 'string') return null
   const trimmed = candidate.trim()
   if (!trimmed) return null
@@ -106,7 +106,7 @@ const URL_PARSE_CACHE_MAX = 500
  * @param {unknown} url - URL string to parse
  * @returns {{ host: string|null, path: string }|null}
  */
-function getCachedUrlParse (url) {
+function getCachedUrlParse(url) {
   if (!url || typeof url !== 'string') return null
   const key = url.toLowerCase()
 
@@ -148,12 +148,12 @@ function getCachedUrlParse (url) {
  * @param {UrlMatchContext} [context]
  * @returns {UrlCandidate[]}
  */
-function buildUrlMatchCandidatesFromContext (context = {}) {
+function buildUrlMatchCandidatesFromContext(context = {}) {
   /** @type {UrlCandidate[]} */
   const candidates = []
 
   /** @param {unknown} value */
-  const pushCandidate = (value) => {
+  const pushCandidate = value => {
     if (typeof value !== 'string') return
     const trimmed = value.trim().toLowerCase()
     if (!trimmed) return
@@ -195,7 +195,7 @@ function buildUrlMatchCandidatesFromContext (context = {}) {
  * @param {UrlMatchContext} [context]
  * @returns {UrlMatchContext & { candidates: UrlCandidate[] }}
  */
-function buildUrlMatchContext (context = {}) {
+function buildUrlMatchContext(context = {}) {
   const baseContext = context && typeof context === 'object' ? context : {}
   const candidates = buildUrlMatchCandidatesFromContext(baseContext)
   return { ...baseContext, candidates }
@@ -209,7 +209,7 @@ function buildUrlMatchContext (context = {}) {
  * @param {UrlMatchContext} [context]
  * @returns {UrlMatchContext & { phase: string, candidates: UrlCandidate[] }}
  */
-function buildJsonPathRuleContext (context = {}) {
+function buildJsonPathRuleContext(context = {}) {
   /** @type {UrlMatchContext} */
   const base = context && typeof context === 'object' ? { ...context } : {}
   base.phase = base.phase === 'response' ? 'response' : 'request'
@@ -232,7 +232,7 @@ function buildJsonPathRuleContext (context = {}) {
  * @param {UrlCandidate[]} candidates
  * @returns {boolean}
  */
-function urlPatternMatchesCandidates (rawPattern, candidates) {
+function urlPatternMatchesCandidates(rawPattern, candidates) {
   const pattern = rawPattern.trim().toLowerCase()
   if (!pattern) return false
 
@@ -300,7 +300,7 @@ function urlPatternMatchesCandidates (rawPattern, candidates) {
  * @param {UrlMatchContext} [context]
  * @returns {boolean}
  */
-function urlPatternMatchesContext (rawPattern, context = {}) {
+function urlPatternMatchesContext(rawPattern, context = {}) {
   const baseContext = context && typeof context === 'object' ? context : {}
   const candidates = buildUrlMatchCandidatesFromContext(baseContext)
   return urlPatternMatchesCandidates(rawPattern, candidates)
@@ -314,7 +314,7 @@ function urlPatternMatchesContext (rawPattern, context = {}) {
  * @param {UrlMatchContext} [contextOrMatch]
  * @returns {boolean}
  */
-function jsonPathRuleMatchesUrl (rule, contextOrMatch = {}) {
+function jsonPathRuleMatchesUrl(rule, contextOrMatch = {}) {
   const rawPattern = safeString(rule.url)
   const trimmed = rawPattern.trim()
   if (!trimmed) return false
@@ -337,7 +337,7 @@ function jsonPathRuleMatchesUrl (rule, contextOrMatch = {}) {
  * @param {UrlMatchContext} [contextOrMatch]
  * @returns {boolean}
  */
-function textRuleMatchesUrl (rule, contextOrMatch = {}) {
+function textRuleMatchesUrl(rule, contextOrMatch = {}) {
   if (!rule || typeof rule !== 'object') return true
 
   const rawPattern = safeString(rule.url)
@@ -367,7 +367,7 @@ function textRuleMatchesUrl (rule, contextOrMatch = {}) {
  * @param {unknown} pattern
  * @returns {string}
  */
-function deriveDisplayNameFromUrlPattern (pattern) {
+function deriveDisplayNameFromUrlPattern(pattern) {
   if (!pattern || typeof pattern !== 'string') return ''
 
   try {
@@ -398,7 +398,7 @@ function deriveDisplayNameFromUrlPattern (pattern) {
  * @param {string} host
  * @returns {boolean}
  */
-function hostPatternMatches (patternValue, host) {
+function hostPatternMatches(patternValue, host) {
   if (!patternValue || !host) return false
   if (patternValue.startsWith('.')) {
     const suffix = patternValue.slice(1)

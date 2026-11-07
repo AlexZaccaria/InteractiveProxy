@@ -30,7 +30,10 @@ describe('getCompressionCodec', () => {
 
   test('gzip output is readable by zlib and zstd by zstdDecompressSync', () => {
     assert.deepEqual(zlib.gunzipSync(I.getCompressionCodec('gzip').compress(SAMPLE)), SAMPLE)
-    assert.deepEqual(zlib.zstdDecompressSync(I.getCompressionCodec('zstd').compress(SAMPLE)), SAMPLE)
+    assert.deepEqual(
+      zlib.zstdDecompressSync(I.getCompressionCodec('zstd').compress(SAMPLE)),
+      SAMPLE
+    )
   })
 
   test('identity, empty, undefined and unknown encodings have no codec', () => {
@@ -42,9 +45,26 @@ describe('getCompressionCodec', () => {
 
 describe('decompressData', () => {
   test('decompresses allowed content types', () => {
-    assert.equal(I.decompressData(zlib.gzipSync(SAMPLE), 'gzip', 'application/json').toString(), SAMPLE.toString())
-    assert.equal(I.decompressData(zlib.brotliCompressSync(SAMPLE), 'br', 'text/html; charset=utf-8').toString(), SAMPLE.toString())
-    assert.equal(I.decompressData(zlib.zstdCompressSync(SAMPLE), 'zstd', 'application/vnd.api+json').toString(), SAMPLE.toString())
+    assert.equal(
+      I.decompressData(zlib.gzipSync(SAMPLE), 'gzip', 'application/json').toString(),
+      SAMPLE.toString()
+    )
+    assert.equal(
+      I.decompressData(
+        zlib.brotliCompressSync(SAMPLE),
+        'br',
+        'text/html; charset=utf-8'
+      ).toString(),
+      SAMPLE.toString()
+    )
+    assert.equal(
+      I.decompressData(
+        zlib.zstdCompressSync(SAMPLE),
+        'zstd',
+        'application/vnd.api+json'
+      ).toString(),
+      SAMPLE.toString()
+    )
   })
 
   test('returns the input Buffer itself when the content type is not worth decompressing', () => {
@@ -83,34 +103,93 @@ describe('content-type heuristics', () => {
   })
 
   test('JSON, text, JavaScript, XML and form bodies are textual and decompressed', () => {
-    for (const ct of ['application/json', 'application/vnd.api+json', 'text/html; charset=utf-8', 'text/plain', 'application/javascript', 'application/xml', 'application/x-www-form-urlencoded', 'APPLICATION/JSON', 'application/connect+json']) {
-      assert.deepEqual(classify(ct), { decompress: true, textual: true, binary: false, proto: false }, ct)
+    for (const ct of [
+      'application/json',
+      'application/vnd.api+json',
+      'text/html; charset=utf-8',
+      'text/plain',
+      'application/javascript',
+      'application/xml',
+      'application/x-www-form-urlencoded',
+      'APPLICATION/JSON',
+      'application/connect+json'
+    ]) {
+      assert.deepEqual(
+        classify(ct),
+        { decompress: true, textual: true, binary: false, proto: false },
+        ct
+      )
     }
   })
 
   test('protobuf and gRPC types are decompressed and flagged as proto but not textual', () => {
-    for (const ct of ['application/grpc', 'application/grpc+proto', 'application/connect+proto', 'application/proto']) {
-      assert.deepEqual(classify(ct), { decompress: true, textual: false, binary: false, proto: true }, ct)
+    for (const ct of [
+      'application/grpc',
+      'application/grpc+proto',
+      'application/connect+proto',
+      'application/proto'
+    ]) {
+      assert.deepEqual(
+        classify(ct),
+        { decompress: true, textual: false, binary: false, proto: true },
+        ct
+      )
     }
     // current behavior: the proto check is a substring match, so grpc-web counts as well.
     assert.equal(I.isProtoContentType('application/grpc-web+proto'), true)
-    assert.deepEqual(classify('application/graphql'), { decompress: true, textual: false, binary: false, proto: false })
+    assert.deepEqual(classify('application/graphql'), {
+      decompress: true,
+      textual: false,
+      binary: false,
+      proto: false
+    })
   })
 
   test('images, media, fonts and octet-stream are clearly binary and never decompressed', () => {
-    for (const ct of ['application/octet-stream', 'image/png', 'video/mp4', 'audio/mpeg', 'font/woff2', 'application/font-woff']) {
-      assert.deepEqual(classify(ct), { decompress: false, textual: false, binary: true, proto: false }, ct)
+    for (const ct of [
+      'application/octet-stream',
+      'image/png',
+      'video/mp4',
+      'audio/mpeg',
+      'font/woff2',
+      'application/font-woff'
+    ]) {
+      assert.deepEqual(
+        classify(ct),
+        { decompress: false, textual: false, binary: true, proto: false },
+        ct
+      )
     }
   })
 
   test('image/svg+xml is XML text, not clearly binary; PDF is neither', () => {
-    assert.deepEqual(classify('image/svg+xml'), { decompress: true, textual: true, binary: false, proto: false })
-    assert.deepEqual(classify('application/pdf'), { decompress: false, textual: false, binary: false, proto: false })
+    assert.deepEqual(classify('image/svg+xml'), {
+      decompress: true,
+      textual: true,
+      binary: false,
+      proto: false
+    })
+    assert.deepEqual(classify('application/pdf'), {
+      decompress: false,
+      textual: false,
+      binary: false,
+      proto: false
+    })
   })
 
   test('missing content types are nothing', () => {
-    assert.deepEqual(classify(''), { decompress: false, textual: false, binary: false, proto: false })
-    assert.deepEqual(classify(undefined), { decompress: false, textual: false, binary: false, proto: false })
+    assert.deepEqual(classify(''), {
+      decompress: false,
+      textual: false,
+      binary: false,
+      proto: false
+    })
+    assert.deepEqual(classify(undefined), {
+      decompress: false,
+      textual: false,
+      binary: false,
+      proto: false
+    })
   })
 })
 
@@ -125,7 +204,13 @@ describe('header lookup', () => {
 
   test('getHeaderCaseInsensitive takes the first value of arrays and the first of duplicate keys', () => {
     assert.equal(I.getHeaderCaseInsensitive({ 'X-Multi': ['a', 'b'] }, 'x-multi'), 'a')
-    assert.equal(I.getHeaderCaseInsensitive({ 'content-type': 'first', 'Content-Type': 'second' }, 'content-type'), 'first')
+    assert.equal(
+      I.getHeaderCaseInsensitive(
+        { 'content-type': 'first', 'Content-Type': 'second' },
+        'content-type'
+      ),
+      'first'
+    )
     assert.equal(I.getHeaderCaseInsensitive({ a: '1' }, 'x-none'), undefined)
     assert.equal(I.getHeaderCaseInsensitive(null, 'x'), undefined)
   })
@@ -177,8 +262,14 @@ describe('getFileTypeFromLogEntry', () => {
   })
 
   test('the extension also decides for application/octet-stream, but any other content type wins', () => {
-    assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/octet-stream' } }), 'css')
-    assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/json' } }), 'json')
+    assert.equal(
+      ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/octet-stream' } }),
+      'css'
+    )
+    assert.equal(
+      ft({ url: '/a.css', responseHeaders: { 'content-type': 'application/json' } }),
+      'json'
+    )
     assert.equal(ft({ url: '/a.css', responseHeaders: { 'content-type': 'text/plain' } }), 'other')
   })
 
@@ -193,7 +284,10 @@ describe('getFileTypeFromLogEntry', () => {
   })
 
   test('a cached fileType short-circuits the classification', () => {
-    assert.equal(ft({ fileType: 'image', responseHeaders: { 'content-type': 'application/json' } }), 'image')
+    assert.equal(
+      ft({ fileType: 'image', responseHeaders: { 'content-type': 'application/json' } }),
+      'image'
+    )
   })
 })
 
@@ -206,8 +300,14 @@ describe('bufferToTextPreview', () => {
   })
 
   test('keeps the printable characters when at least 35% of the text is printable', () => {
-    assert.equal(I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdefghij'), Buffer.from([0x00, 0x01])])), 'abcdefghij')
-    assert.equal(I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdef'), Buffer.alloc(6)])), 'abcdef')
+    assert.equal(
+      I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdefghij'), Buffer.from([0x00, 0x01])])),
+      'abcdefghij'
+    )
+    assert.equal(
+      I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdef'), Buffer.alloc(6)])),
+      'abcdef'
+    )
   })
 
   test('joins ASCII runs of at least four characters when the buffer is mostly binary', () => {
@@ -228,9 +328,16 @@ describe('bufferToTextPreview', () => {
   })
 
   test('invalid UTF-8 (U+FFFD) still counts as non-printable, so binary-ish buffers degrade as before', () => {
-    assert.equal(I.bufferToTextPreview(Buffer.concat([Buffer.from('abcdefghij'), Buffer.from([0xff, 0xfe, 0xc3])])), 'abcdefghij')
     assert.equal(
-      I.bufferToTextPreview(Buffer.concat([Buffer.from('ab'), Buffer.alloc(14, 0xff), Buffer.from('segment-one')])),
+      I.bufferToTextPreview(
+        Buffer.concat([Buffer.from('abcdefghij'), Buffer.from([0xff, 0xfe, 0xc3])])
+      ),
+      'abcdefghij'
+    )
+    assert.equal(
+      I.bufferToTextPreview(
+        Buffer.concat([Buffer.from('ab'), Buffer.alloc(14, 0xff), Buffer.from('segment-one')])
+      ),
       'absegment-one'
     )
   })

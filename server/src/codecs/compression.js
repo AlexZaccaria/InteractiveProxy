@@ -29,11 +29,13 @@ const { safeString } = require('../util/strings')
 
 // Zstandard support comes from Node's built-in zlib (Node >= 22.15 / 23.8).
 const ZSTD_SUPPORTED =
-  typeof zlib.zstdCompressSync === 'function' &&
-  typeof zlib.zstdDecompressSync === 'function'
+  typeof zlib.zstdCompressSync === 'function' && typeof zlib.zstdDecompressSync === 'function'
 
 if (!ZSTD_SUPPORTED) {
-  logWarn('codecs', 'zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched')
+  logWarn(
+    'codecs',
+    'zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched'
+  )
 }
 
 // Content types whose bodies are worth decompressing for inspection.
@@ -70,7 +72,7 @@ const headerLookupCache = new WeakMap()
  * @param {string} name
  * @returns {string | number | undefined}
  */
-function getHeaderCaseInsensitive (headers, name) {
+function getHeaderCaseInsensitive(headers, name) {
   if (!headers || typeof headers !== 'object') return undefined
   const keys = Object.keys(headers)
   let cache = headerLookupCache.get(headers)
@@ -102,7 +104,7 @@ function getHeaderCaseInsensitive (headers, name) {
  * @param {HeadersLike | null | undefined} headers
  * @returns {string}
  */
-function getContentType (headers) {
+function getContentType(headers) {
   return String(getHeaderCaseInsensitive(headers, 'content-type') || '')
 }
 
@@ -113,7 +115,7 @@ function getContentType (headers) {
  * @param {HeadersLike | null | undefined} headers
  * @returns {string}
  */
-function getContentEncoding (headers) {
+function getContentEncoding(headers) {
   return String(getHeaderCaseInsensitive(headers, 'content-encoding') || '')
 }
 
@@ -125,7 +127,7 @@ function getContentEncoding (headers) {
  * @param {string[]} patterns
  * @returns {boolean}
  */
-function contentTypeMatchesAny (contentType, patterns) {
+function contentTypeMatchesAny(contentType, patterns) {
   if (!contentType) return false
   const lower = contentType.toLowerCase()
   for (let i = 0; i < patterns.length; i++) {
@@ -138,7 +140,7 @@ function contentTypeMatchesAny (contentType, patterns) {
  * @param {string | undefined} contentType
  * @returns {boolean}
  */
-function shouldDecompress (contentType) {
+function shouldDecompress(contentType) {
   return contentTypeMatchesAny(contentType, DECOMPRESS_ALLOWED_TYPES)
 }
 
@@ -146,7 +148,7 @@ function shouldDecompress (contentType) {
  * @param {string | undefined} contentType
  * @returns {boolean}
  */
-function isProtoContentType (contentType = '') {
+function isProtoContentType(contentType = '') {
   return contentTypeMatchesAny(contentType, PROTO_CONTENT_TYPES)
 }
 
@@ -158,7 +160,7 @@ function isProtoContentType (contentType = '') {
  * @param {string | undefined} contentType
  * @returns {boolean}
  */
-function isTextualContentType (contentType) {
+function isTextualContentType(contentType) {
   if (!contentType) return false
   const lower = safeString(contentType).toLowerCase()
   return (
@@ -177,7 +179,7 @@ function isTextualContentType (contentType) {
  * @param {string | undefined} contentType
  * @returns {boolean}
  */
-function isClearlyBinaryContentType (contentType = '') {
+function isClearlyBinaryContentType(contentType = '') {
   if (!contentType) return false
   const lower = contentType.toLowerCase()
   // SVG is XML text even though it is an image/* type.
@@ -199,7 +201,7 @@ function isClearlyBinaryContentType (contentType = '') {
  * @param {string} [encoding]
  * @returns {CompressionCodec | null}
  */
-function getCompressionCodec (encoding = '') {
+function getCompressionCodec(encoding = '') {
   if (!encoding || encoding === 'identity') return null
   const normalized = encoding.toLowerCase()
 
@@ -244,7 +246,7 @@ function getCompressionCodec (encoding = '') {
  * @param {string} [contentType]
  * @returns {Buffer}
  */
-function decompressData (buffer, encoding, contentType) {
+function decompressData(buffer, encoding, contentType) {
   if (!buffer || buffer.length === 0) return buffer
   if (!shouldDecompress(contentType)) return buffer
   if (!encoding || encoding === 'identity') return buffer
@@ -255,7 +257,11 @@ function decompressData (buffer, encoding, contentType) {
   try {
     return codec.decompress(buffer)
   } catch (error) {
-    logDebug('decompressData', `Failed to decompress buffer (encoding=${encoding || 'identity'})`, error)
+    logDebug(
+      'decompressData',
+      `Failed to decompress buffer (encoding=${encoding || 'identity'})`,
+      error
+    )
     return buffer
   }
 }
@@ -270,7 +276,7 @@ function decompressData (buffer, encoding, contentType) {
  * @param {string} [contentType]
  * @returns {Buffer}
  */
-function decompressDataForLogging (buffer, encoding, contentType) {
+function decompressDataForLogging(buffer, encoding, contentType) {
   if (!buffer || buffer.length === 0) return buffer
 
   if (LOG_DECOMPRESS_MAX_BYTES > 0 && buffer.length > LOG_DECOMPRESS_MAX_BYTES) {
@@ -289,7 +295,7 @@ function decompressDataForLogging (buffer, encoding, contentType) {
  * @param {unknown} buffer
  * @returns {boolean}
  */
-function isEmptyBuffer (buffer) {
+function isEmptyBuffer(buffer) {
   return !buffer || !Buffer.isBuffer(buffer) || buffer.length === 0
 }
 

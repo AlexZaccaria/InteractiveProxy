@@ -22,7 +22,7 @@ const { logWarn } = require('../util/logger')
  * @param {string} file PEM file path, or an empty string when not configured.
  * @returns {string | null}
  */
-function loadCaBundle (file) {
+function loadCaBundle(file) {
   if (!file) return null
   try {
     return fs.readFileSync(file, 'utf8')
@@ -69,7 +69,7 @@ function loadCaBundle (file) {
  * @param {UpstreamOptions} options
  * @returns {Upstream}
  */
-function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs, allowH2 = false }) {
+function createUpstream({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs, allowH2 = false }) {
   const httpDispatcher = new Agent({
     connections: 128,
     keepAliveTimeout: 60_000,
@@ -98,7 +98,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
    * @param {string} urlString
    * @returns {Agent}
    */
-  function selectDispatcher (urlString) {
+  function selectDispatcher(urlString) {
     try {
       const parsed = new URL(urlString)
       return parsed.protocol === 'https:' ? httpsDispatcher : httpDispatcher
@@ -113,7 +113,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
    * @param {AbortSignal} [abortSignal]
    * @returns {Record<string, any>}
    */
-  function createUpstreamRequestOptions (url, baseOptions, abortSignal) {
+  function createUpstreamRequestOptions(url, baseOptions, abortSignal) {
     /** @type {Record<string, any>} */
     const options = {
       ...baseOptions,
@@ -144,7 +144,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
    * @param {UpstreamRequestParams} params
    * @returns {Promise<{ response: UpstreamResponse, buffer: Buffer | null }>}
    */
-  async function performUpstreamRequest ({
+  async function performUpstreamRequest({
     url,
     method,
     headers,
@@ -167,9 +167,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
 
     let buffer = null
     if (bufferResponse) {
-      buffer = response.body
-        ? Buffer.from(await response.body.arrayBuffer())
-        : Buffer.alloc(0)
+      buffer = response.body ? Buffer.from(await response.body.arrayBuffer()) : Buffer.alloc(0)
     }
 
     return { response, buffer }
@@ -183,7 +181,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
    * @param {AbortController} abortController
    * @returns {() => void} The close listener that was attached.
    */
-  function attachAbortOnClose (res, abortController) {
+  function attachAbortOnClose(res, abortController) {
     const onClose = () => {
       try {
         abortController.abort()
@@ -196,7 +194,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
     return onClose
   }
 
-  async function close () {
+  async function close() {
     await Promise.allSettled([httpDispatcher.close(), httpsDispatcher.close()])
   }
 
@@ -229,7 +227,10 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs,
  * @param {UpstreamErrorParams} params
  * @param {(logEntry: Record<string, any>, error: Error) => void} recordUpstreamErrorOnLog
  */
-function handleUpstreamError ({ logEntry, error, res, message = 'Bad Gateway', useJson = false }, recordUpstreamErrorOnLog) {
+function handleUpstreamError(
+  { logEntry, error, res, message = 'Bad Gateway', useJson = false },
+  recordUpstreamErrorOnLog
+) {
   if (logEntry) {
     recordUpstreamErrorOnLog(logEntry, error)
   }
@@ -243,7 +244,11 @@ function handleUpstreamError ({ logEntry, error, res, message = 'Bad Gateway', u
       res.end(message)
     }
   } else {
-    try { res.end() } catch { /* response already finished */ }
+    try {
+      res.end()
+    } catch {
+      /* response already finished */
+    }
   }
 }
 

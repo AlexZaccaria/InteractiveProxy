@@ -18,7 +18,7 @@ const path = require('path')
 
 let loaded = null
 
-function getFreePort () {
+function getFreePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer()
     probe.once('error', reject)
@@ -38,7 +38,7 @@ function getFreePort () {
  *   writeStorageFile: (name: string, value: any) => string
  * }>}
  */
-async function loadServer () {
+async function loadServer() {
   if (loaded) return loaded
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-proxy-test-'))
@@ -64,7 +64,7 @@ async function loadServer () {
     port,
     tmpDir,
     storageDir,
-    writeStorageFile (name, value) {
+    writeStorageFile(name, value) {
       const target = path.join(storageDir, name)
       fs.writeFileSync(target, JSON.stringify(value, null, 2))
       return target

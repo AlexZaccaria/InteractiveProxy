@@ -29,7 +29,7 @@ const { safeTrim } = require('../util/strings')
  * @param {unknown} appliedRuleIds
  * @returns {boolean}
  */
-function hasAppliedRules (appliedRuleIds) {
+function hasAppliedRules(appliedRuleIds) {
   return Array.isArray(appliedRuleIds) && appliedRuleIds.length > 0
 }
 
@@ -49,7 +49,7 @@ function hasAppliedRules (appliedRuleIds) {
  * @param {RuleStore} store
  * @returns {void}
  */
-function attachRewriteMetadata (logEntry, appliedRuleIds, phase, store) {
+function attachRewriteMetadata(logEntry, appliedRuleIds, phase, store) {
   if (!logEntry || !Array.isArray(appliedRuleIds) || appliedRuleIds.length === 0) return
   if (!logEntry.rewrites) {
     logEntry.rewrites = []
@@ -58,11 +58,7 @@ function attachRewriteMetadata (logEntry, appliedRuleIds, phase, store) {
 
   // Normalise the phase hint to one of 'request' | 'response' | 'both' | null.
   const normalizedPhase =
-    phase === 'request' || phase === 'response'
-      ? phase
-      : phase === 'both'
-        ? 'both'
-        : null
+    phase === 'request' || phase === 'response' ? phase : phase === 'both' ? 'both' : null
 
   for (const id of appliedRuleIds) {
     if (!id) continue

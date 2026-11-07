@@ -32,7 +32,7 @@ let defaultKeepAliveMs = DEFAULT_KEEP_ALIVE_MS
 /**
  * @param {number} ms
  */
-function setDefaultKeepAliveMs (ms) {
+function setDefaultKeepAliveMs(ms) {
   defaultKeepAliveMs = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_KEEP_ALIVE_MS
 }
 
@@ -52,13 +52,13 @@ function setDefaultKeepAliveMs (ms) {
 /**
  * @returns {EventBus}
  */
-function createEventBus () {
+function createEventBus() {
   let nextId = 1
   /** @type {Set<(event: BusEvent) => void>} */
   const listeners = new Set()
 
   return {
-    publish (name, data) {
+    publish(name, data) {
       /** @type {BusEvent} */
       const event = { id: nextId++, name, data }
       for (const listener of listeners) {
@@ -70,9 +70,11 @@ function createEventBus () {
       }
       return event
     },
-    subscribe (listener) {
+    subscribe(listener) {
       listeners.add(listener)
-      return () => { listeners.delete(listener) }
+      return () => {
+        listeners.delete(listener)
+      }
     }
   }
 }
@@ -84,7 +86,7 @@ function createEventBus () {
  * @param {{ id?: number, name: string, data: unknown }} event
  * @returns {string}
  */
-function formatEvent (event) {
+function formatEvent(event) {
   const lines = []
   if (typeof event.id === 'number') lines.push(`id: ${event.id}`)
   lines.push(`event: ${event.name}`)
@@ -110,7 +112,7 @@ function formatEvent (event) {
  * @param {EventsRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createEventsRoutes ({
+function createEventsRoutes({
   logStore,
   stats,
   configStore,
@@ -129,9 +131,10 @@ function createEventsRoutes ({
   /** @type {NodeJS.Timeout | null} */
   let statsTimer = null
 
-  const keepAliveInterval = () => (Number.isFinite(keepAliveMs) && Number(keepAliveMs) > 0
-    ? Number(keepAliveMs)
-    : defaultKeepAliveMs)
+  const keepAliveInterval = () =>
+    Number.isFinite(keepAliveMs) && Number(keepAliveMs) > 0
+      ? Number(keepAliveMs)
+      : defaultKeepAliveMs
 
   // ---- counters -----------------------------------------------------------
 
@@ -139,8 +142,14 @@ function createEventsRoutes ({
    * The dashboard payload as `/api/dashboard` returns it, minus the resource
    * and blocked lists (those travel as `rules` events).
    */
-  function dashboardData () {
-    const { stats: dashboard, editedRequests, performance, payloads, routes } = stats.getDashboardSnapshot()
+  function dashboardData() {
+    const {
+      stats: dashboard,
+      editedRequests,
+      performance,
+      payloads,
+      routes
+    } = stats.getDashboardSnapshot()
     return {
       stats: dashboard,
       performance,
@@ -154,7 +163,7 @@ function createEventsRoutes ({
     }
   }
 
-  function publishStats () {
+  function publishStats() {
     if (statsTimer) {
       clearTimeout(statsTimer)
       statsTimer = null
@@ -164,7 +173,7 @@ function createEventsRoutes ({
   }
 
   /** Trailing coalescing: one `stats` event per window while entries keep coming. */
-  function scheduleStats () {
+  function scheduleStats() {
     if (statsTimer || clients.size === 0) return
     statsTimer = setTimeout(publishStats, statsCoalesceMs)
     statsTimer.unref()
@@ -217,7 +226,7 @@ function createEventsRoutes ({
   /**
    * @param {import('express').Response} res
    */
-  function dropClient (res) {
+  function dropClient(res) {
     if (!clients.delete(res)) return
     try {
       res.end()
@@ -231,7 +240,7 @@ function createEventsRoutes ({
    * @param {import('express').Response} res
    * @param {string} chunk
    */
-  function writeTo (res, chunk) {
+  function writeTo(res, chunk) {
     if (res.destroyed || res.writableEnded) {
       clients.delete(res)
       stopKeepAliveIfIdle()
@@ -248,13 +257,13 @@ function createEventsRoutes ({
   /**
    * @param {string} chunk
    */
-  function broadcast (chunk) {
+  function broadcast(chunk) {
     for (const res of Array.from(clients)) {
       writeTo(res, chunk)
     }
   }
 
-  function startKeepAlive () {
+  function startKeepAlive() {
     if (keepAliveTimer) return
     keepAliveTimer = setInterval(() => broadcast(': ping\n\n'), keepAliveInterval())
     // Open streams must not keep the process alive on their own: stop()
@@ -262,7 +271,7 @@ function createEventsRoutes ({
     keepAliveTimer.unref()
   }
 
-  function stopKeepAliveIfIdle () {
+  function stopKeepAliveIfIdle() {
     if (clients.size > 0) return
     if (keepAliveTimer) {
       clearInterval(keepAliveTimer)
@@ -293,13 +302,16 @@ function createEventsRoutes ({
     clients.add(res)
     startKeepAlive()
 
-    writeTo(res, formatEvent({
-      name: 'hello',
-      data: {
-        interactiveModeEnabled: configStore.interactiveModeEnabled,
-        serverTime: new Date().toISOString()
-      }
-    }))
+    writeTo(
+      res,
+      formatEvent({
+        name: 'hello',
+        data: {
+          interactiveModeEnabled: configStore.interactiveModeEnabled,
+          serverTime: new Date().toISOString()
+        }
+      })
+    )
 
     res.on('close', () => {
       clients.delete(res)

@@ -27,9 +27,9 @@ const { getContentType, isProtoContentType } = require('./codecs/compression')
  * @param {import('http').ServerResponse} res
  * @param {Buffer} buf
  */
-function captureRawBody (req, res, buf) {
+function captureRawBody(req, res, buf) {
   if (buf && buf.length) {
-    /** @type {RequestWithRawBody} */ (req).rawBody = Buffer.from(buf)
+    ;/** @type {RequestWithRawBody} */ (req).rawBody = Buffer.from(buf)
   }
 }
 
@@ -51,41 +51,54 @@ function captureRawBody (req, res, buf) {
  * @param {AppOptions} options
  * @returns {import('express').Express}
  */
-function createApp ({ uiOrigins, bodyLimit, isProxyTargetedRequest, handleProxiedHttpRequest, apiRouter, clientBuildDir }) {
+function createApp({
+  uiOrigins,
+  bodyLimit,
+  isProxyTargetedRequest,
+  handleProxiedHttpRequest,
+  apiRouter,
+  clientBuildDir
+}) {
   const app = express()
 
   // Middleware
-  app.use(cors({
-    origin: (origin, callback) => {
-      // Requests without an Origin header come from non-browser clients
-      // (curl, scripts) and are allowed. Browser requests are allowed only
-      // from the UI origins so other websites cannot read API responses.
-      callback(null, !origin || uiOrigins.includes(origin))
-    }
-  }))
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        // Requests without an Origin header come from non-browser clients
+        // (curl, scripts) and are allowed. Browser requests are allowed only
+        // from the UI origins so other websites cannot read API responses.
+        callback(null, !origin || uiOrigins.includes(origin))
+      }
+    })
+  )
 
   app.set('trust proxy', true)
-  app.use(bodyParser.raw({
-    type: req => isProtoContentType(getContentType(req.headers)),
-    limit: bodyLimit,
-    verify: captureRawBody,
-    inflate: false
-  }))
+  app.use(
+    bodyParser.raw({
+      type: req => isProtoContentType(getContentType(req.headers)),
+      limit: bodyLimit,
+      verify: captureRawBody,
+      inflate: false
+    })
+  )
   app.use(bodyParser.json({ limit: bodyLimit, verify: captureRawBody }))
   app.use(bodyParser.urlencoded({ extended: true, limit: bodyLimit, verify: captureRawBody }))
   // Every other body (text/plain, XML, binary, multipart of proxied traffic) is
   // captured raw so the proxy flow forwards it byte for byte. Multipart bodies
   // addressed to the management API are left to multer.
-  app.use(bodyParser.raw({
-    type: req => {
-      const contentType = getContentType(req.headers).toLowerCase()
-      if (contentType.startsWith('multipart/')) return isProxyTargetedRequest(req)
-      return true
-    },
-    limit: bodyLimit,
-    verify: captureRawBody,
-    inflate: false
-  }))
+  app.use(
+    bodyParser.raw({
+      type: req => {
+        const contentType = getContentType(req.headers).toLowerCase()
+        if (contentType.startsWith('multipart/')) return isProxyTargetedRequest(req)
+        return true
+      },
+      limit: bodyLimit,
+      verify: captureRawBody,
+      inflate: false
+    })
+  )
 
   // Express routes by path, so a proxied request such as
   // http://example.com/api/users or http://example.com/index.html would

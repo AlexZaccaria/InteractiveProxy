@@ -64,7 +64,7 @@ const { bufferToTextPreview, normalizeNestedJsonStrings } = require('../logs/pre
  *
  * @param {HttpJsonRewriterDeps} deps
  */
-function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isInteractive }) {
+function createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInteractive }) {
   /**
    * @param {LogEntry|null|undefined} logEntry
    * @param {string[]} appliedRuleIds
@@ -81,7 +81,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    * @param {LogEntry|null|undefined} logEntry
    * @returns {boolean}
    */
-  function wantsInteractiveLogging (logEntry) {
+  function wantsInteractiveLogging(logEntry) {
     return isInteractive() && !!logEntry
   }
 
@@ -94,7 +94,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    * @param {LogEntry|null|undefined} logEntry - Log entry to attach rewrite metadata to.
    * @returns {Record<string, any>} Rewritten headers.
    */
-  function applyHeaderRewrites (headers, context, logEntry) {
+  function applyHeaderRewrites(headers, context, logEntry) {
     const result = textRules.applyEditRulesToHeaders(headers, context)
     if (result.changed && logEntry && hasAppliedRules(result.appliedRuleIds)) {
       attach(logEntry, result.appliedRuleIds, context.phase)
@@ -128,7 +128,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    *   overhead on large payloads.
    * @returns {JsonRewriteResult}
    */
-  function rewriteJsonHttpBody ({
+  function rewriteJsonHttpBody({
     buffer,
     encoding = '',
     contentType = '',
@@ -177,7 +177,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
     // are deep clones so the forwarded object is never touched. The clones are
     // gated by captureBeforeJson so non-logging callers skip them.
     /** @param {any} value */
-    const toDisplayJson = (value) => {
+    const toDisplayJson = value => {
       try {
         return normalizeNestedJsonStrings(JSON.parse(JSON.stringify(value)))
       } catch {
@@ -196,7 +196,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
         buffer: input,
         json,
         beforeJson,
-        appliedRuleIds: jsonPathResult ? (jsonPathResult.appliedRuleIds || []) : [],
+        appliedRuleIds: jsonPathResult ? jsonPathResult.appliedRuleIds || [] : [],
         changed: false,
         decompressed
       }
@@ -248,7 +248,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    * @param {boolean} [params.captureBeforeJson=true]
    * @returns {{ buffer: Buffer, jsonRewrite: JsonRewriteResult, contentType: string }}
    */
-  function runJsonBodyRewrite ({
+  function runJsonBodyRewrite({
     buffer,
     headers,
     requestUrl,
@@ -293,20 +293,21 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    * @param {{ logNonJsonBody?: boolean }} [options]
    * @returns {{ buffer: Buffer }} Updated body buffer.
    */
-  function applyJsonRequestRewritesForLog ({
-    buffer,
-    headers,
-    requestUrl,
-    fullUrl,
-    logEntry
-  }, options = {}) {
+  function applyJsonRequestRewritesForLog(
+    { buffer, headers, requestUrl, fullUrl, logEntry },
+    options = {}
+  ) {
     if (isEmptyBuffer(buffer)) {
       return { buffer }
     }
 
     const wantsLogging = wantsInteractiveLogging(logEntry)
 
-    const { buffer: nextBuffer, jsonRewrite, contentType } = runJsonBodyRewrite({
+    const {
+      buffer: nextBuffer,
+      jsonRewrite,
+      contentType
+    } = runJsonBodyRewrite({
       buffer,
       headers,
       requestUrl,
@@ -316,7 +317,8 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
     })
 
     const { logNonJsonBody = false } = options || {}
-    const isJsonContentType = typeof contentType === 'string' && contentType.toLowerCase().includes('application/json')
+    const isJsonContentType =
+      typeof contentType === 'string' && contentType.toLowerCase().includes('application/json')
 
     if (logEntry && jsonRewrite.json !== null && jsonRewrite.json !== undefined) {
       // For HTTP JSON requests, store the parsed object directly on the log
@@ -398,7 +400,7 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
    * @returns {{ buffer: Buffer, jsonRewrite: JsonRewriteResult|null }} Updated body buffer
    * and raw jsonRewrite result for advanced callers.
    */
-  function applyJsonResponseRewritesForLog ({
+  function applyJsonResponseRewritesForLog({
     buffer,
     headers,
     requestUrl,
@@ -427,7 +429,11 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
       }
     }
 
-    if (logEntry && Array.isArray(jsonRewrite.appliedRuleIds) && jsonRewrite.appliedRuleIds.length) {
+    if (
+      logEntry &&
+      Array.isArray(jsonRewrite.appliedRuleIds) &&
+      jsonRewrite.appliedRuleIds.length
+    ) {
       attach(logEntry, jsonRewrite.appliedRuleIds, phase)
     }
 

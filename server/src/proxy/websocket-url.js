@@ -13,7 +13,7 @@
  * @param {string} url
  * @returns {string}
  */
-function httpUrlToWebSocketUrl (url = '') {
+function httpUrlToWebSocketUrl(url = '') {
   if (!url) return ''
   if (/^wss?:\/\//i.test(url)) return url
   // Only the scheme at the start is rewritten, never a URL inside the query.

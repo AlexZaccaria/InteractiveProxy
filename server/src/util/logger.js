@@ -38,7 +38,7 @@ const { LOG_LEVEL, LOG_FORMAT } = require('../../config')
  * @param {number} level
  * @returns {'debug' | 'log' | 'warn' | 'error'}
  */
-function consoleMethodFor (level) {
+function consoleMethodFor(level) {
   if (level >= 50) return 'error'
   if (level >= 40) return 'warn'
   if (level >= 30) return 'log'
@@ -55,7 +55,7 @@ const prettyDestination = {
    * @param {string} line
    * @returns {void}
    */
-  write (line) {
+  write(line) {
     /** @type {PrettyRecord} */
     let record
     try {

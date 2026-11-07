@@ -22,18 +22,20 @@ const { normalizeBypassRule } = require('../proxy/router')
  * @param {FiltersRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createFiltersRoutes ({ router: proxyRouter, suggestions, bypassCounter }) {
+function createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }) {
   const router = express.Router()
 
   // Get all filter rules
   router.get('/filters', (req, res) => {
     try {
       const queryModeRaw = typeof req.query.mode === 'string' ? req.query.mode.toLowerCase() : null
-      const effectiveMode = (queryModeRaw === 'focus' || queryModeRaw === 'ignore')
-        ? queryModeRaw
-        : proxyRouter.getBypassMode()
+      const effectiveMode =
+        queryModeRaw === 'focus' || queryModeRaw === 'ignore'
+          ? queryModeRaw
+          : proxyRouter.getBypassMode()
 
-      const rulesForMode = proxyRouter.getBypassRules()
+      const rulesForMode = proxyRouter
+        .getBypassRules()
         .filter(rule => rule && rule.mode === effectiveMode)
 
       res.json(rulesForMode)
@@ -48,7 +50,9 @@ function createFiltersRoutes ({ router: proxyRouter, suggestions, bypassCounter 
     const bypassRules = proxyRouter.getBypassRules()
 
     if (typeof action !== 'string') {
-      return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
     }
 
     if (action === 'add') {
@@ -78,7 +82,8 @@ function createFiltersRoutes ({ router: proxyRouter, suggestions, bypassCounter 
       if (ruleIndex !== -1) {
         const existing = normalizeBypassRule(bypassRules[ruleIndex])
         const nextModeRaw = typeof mode === 'string' ? mode.toLowerCase() : existing.mode
-        const nextMode = (nextModeRaw === 'focus' || nextModeRaw === 'ignore') ? nextModeRaw : existing.mode
+        const nextMode =
+          nextModeRaw === 'focus' || nextModeRaw === 'ignore' ? nextModeRaw : existing.mode
 
         let nextUrl = existing.url
         if (url !== undefined) {
@@ -117,7 +122,9 @@ function createFiltersRoutes ({ router: proxyRouter, suggestions, bypassCounter 
       proxyRouter.setBypassRules(bypassRules.filter(r => r.id !== id))
       proxyRouter.saveBypassUrls()
     } else {
-      return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
     }
 
     res.json({ success: true, bypassRules: proxyRouter.getBypassRules() })

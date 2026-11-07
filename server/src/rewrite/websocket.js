@@ -48,7 +48,7 @@ const { normalizeWebSocketPayload, normalizeNestedJsonStrings } = require('../lo
  *
  * @param {WebSocketRewriterDeps} deps
  */
-function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
+function createWebSocketRewriter({ ruleStore, textRules, jsonPathRules }) {
   /**
    * Apply text edit rules to a WebSocket payload that has already been
    * normalised into a Buffer by higher-level helpers.
@@ -62,7 +62,7 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
    * @param {UrlMatchContext|null} [context]
    * @returns {WebSocketRewriteResult}
    */
-  function rewriteWebSocketPayload (payloadBuffer, isBinary, context) {
+  function rewriteWebSocketPayload(payloadBuffer, isBinary, context) {
     if (!payloadBuffer || !Buffer.isBuffer(payloadBuffer) || payloadBuffer.length === 0) {
       const emptyBuffer = Buffer.isBuffer(payloadBuffer) ? payloadBuffer : Buffer.alloc(0)
       return { buffer: emptyBuffer, appliedRuleIds: [], changed: false }
@@ -112,7 +112,7 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
    * @param {UrlMatchContext|null} [context]
    * @returns {WebSocketDescribedPayload}
    */
-  function applyWebSocketRewritesAndDescribe (payload, isBinary, context) {
+  function applyWebSocketRewritesAndDescribe(payload, isBinary, context) {
     let payloadBuffer = normalizeWebSocketPayload(payload)
 
     /** @type {string[]|null} */
@@ -124,9 +124,7 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
     let jsonAfter = null
 
     const tooLargeTextFrame =
-      !isBinary &&
-      WS_MAX_TEXT_BYTES > 0 &&
-      payloadBuffer.length > WS_MAX_TEXT_BYTES
+      !isBinary && WS_MAX_TEXT_BYTES > 0 && payloadBuffer.length > WS_MAX_TEXT_BYTES
 
     // Only attempt rewrites on reasonably-sized text frames when we have
     // compiled rules. This avoids decoding and scanning frames when edit rules
@@ -136,14 +134,19 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
       const compiledJsonPathRulesLocal = ruleStore.getCompiledJsonPathRules()
 
       const hasTextRules = Array.isArray(compiledTextRules) && compiledTextRules.length > 0
-      const hasJsonPathRules = Array.isArray(compiledJsonPathRulesLocal) && compiledJsonPathRulesLocal.length > 0
+      const hasJsonPathRules =
+        Array.isArray(compiledJsonPathRulesLocal) && compiledJsonPathRulesLocal.length > 0
 
       // Capture the original textual payload (before any rewrites) so that the
       // UI can render a true "before rewrite" preview for WebSocket messages.
       try {
         originalBody = payloadBuffer.toString('utf8')
       } catch (error) {
-        logDebug('applyWebSocketRewritesAndDescribe', 'Failed to decode original WebSocket payload as UTF‑8', error)
+        logDebug(
+          'applyWebSocketRewritesAndDescribe',
+          'Failed to decode original WebSocket payload as UTF‑8',
+          error
+        )
         originalBody = null
       }
 
@@ -176,7 +179,11 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
           try {
             textForJson = payloadBuffer.toString('utf8')
           } catch (error) {
-            logDebug('applyWebSocketRewritesAndDescribe', 'Failed to decode WebSocket payload as UTF‑8 for JSONPath', error)
+            logDebug(
+              'applyWebSocketRewritesAndDescribe',
+              'Failed to decode WebSocket payload as UTF‑8 for JSONPath',
+              error
+            )
           }
         } else {
           textForJson = originalBody
@@ -212,7 +219,10 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
                 phase: context && typeof context.phase === 'string' ? context.phase : 'request'
               }
 
-              const jsonResult = jsonPathRules.applyJsonPathRulesToObject(normalizedParsed, jsonPathContext)
+              const jsonResult = jsonPathRules.applyJsonPathRulesToObject(
+                normalizedParsed,
+                jsonPathContext
+              )
               if (jsonResult && jsonResult.changed) {
                 const updatedObject = jsonResult.object
                 const updatedText = prefix + JSON.stringify(updatedObject)
@@ -232,7 +242,11 @@ function createWebSocketRewriter ({ ruleStore, textRules, jsonPathRules }) {
                 jsonAfter = normalizedParsed
               }
             } catch (error) {
-              logDebug('applyWebSocketRewritesAndDescribe', 'Failed to parse WebSocket JSON payload for JSONPath', error)
+              logDebug(
+                'applyWebSocketRewritesAndDescribe',
+                'Failed to parse WebSocket JSON payload for JSONPath',
+                error
+              )
             }
           }
         }

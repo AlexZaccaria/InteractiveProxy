@@ -12,7 +12,7 @@ const tls = require('tls')
 const forge = require('node-forge')
 
 /** Self-signed certificate (native key generation, forge for the X.509 part). */
-function createSelfSignedCert (commonName) {
+function createSelfSignedCert(commonName) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   const keyPem = privateKey.export({ type: 'pkcs1', format: 'pem' })
   const forgeKey = forge.pki.privateKeyFromPem(keyPem)
@@ -28,7 +28,13 @@ function createSelfSignedCert (commonName) {
   cert.setIssuer(attrs)
   cert.setExtensions([
     { name: 'basicConstraints', cA: false },
-    { name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }, { type: 2, value: commonName }] }
+    {
+      name: 'subjectAltName',
+      altNames: [
+        { type: 7, ip: '127.0.0.1' },
+        { type: 2, value: commonName }
+      ]
+    }
   ])
   cert.sign(forgeKey, forge.md.sha256.create())
 
@@ -39,7 +45,7 @@ function createSelfSignedCert (commonName) {
  * Open a CONNECT tunnel through the proxy and resolve with the raw socket
  * once the proxy has answered, together with the status line it sent.
  */
-function openTunnel (proxyPort, target) {
+function openTunnel(proxyPort, target) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, '127.0.0.1', () => {
       socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`)
@@ -62,7 +68,7 @@ function openTunnel (proxyPort, target) {
 }
 
 /** TLS handshake with the proxy over an established tunnel (no SNI when `servername` is omitted). */
-function secureTunnel (socket, servername) {
+function secureTunnel(socket, servername) {
   return new Promise((resolve, reject) => {
     socket.resume()
     const options = { socket, rejectUnauthorized: false }

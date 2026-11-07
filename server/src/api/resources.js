@@ -22,7 +22,7 @@ const { safeTrim } = require('../util/strings')
  * @param {ResourcesRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createResourcesRoutes ({ resourceStore, storageDir, upload }) {
+function createResourcesRoutes({ resourceStore, storageDir, upload }) {
   const router = express.Router()
 
   router.get('/resources', (req, res) => {

@@ -23,7 +23,7 @@ const { URL } = require('url')
  * @param {Buffer} [params.head] Bytes read past the CONNECT request line.
  * @returns {import('net').Socket} The socket to the target.
  */
-function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
+function createRawTunnel({ clientSocket, targetHost, targetPort, head }) {
   const targetSocket = net.connect(targetPort, targetHost, () => {
     clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
     if (head && head.length) {
@@ -34,19 +34,35 @@ function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
   })
 
   const closeSockets = () => {
-    try { clientSocket.destroy() } catch { /* already destroyed */ }
-    try { targetSocket.destroy() } catch { /* already destroyed */ }
+    try {
+      clientSocket.destroy()
+    } catch {
+      /* already destroyed */
+    }
+    try {
+      targetSocket.destroy()
+    } catch {
+      /* already destroyed */
+    }
   }
 
   targetSocket.on('error', closeSockets)
   clientSocket.on('error', closeSockets)
 
   clientSocket.on('close', () => {
-    try { targetSocket.end() } catch { /* already closed */ }
+    try {
+      targetSocket.end()
+    } catch {
+      /* already closed */
+    }
   })
 
   targetSocket.on('close', () => {
-    try { clientSocket.end() } catch { /* already closed */ }
+    try {
+      clientSocket.end()
+    } catch {
+      /* already closed */
+    }
   })
 
   return targetSocket
@@ -66,7 +82,7 @@ function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
  * @param {string | null} params.caBundle Additional CA bundle (PEM) used in strict mode.
  * @returns {void}
  */
-function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictTls, caBundle }) {
+function createRawWebSocketTunnel({ req, clientSocket, head, targetUrl, strictTls, caBundle }) {
   let parsed
   try {
     parsed = new URL(targetUrl)
@@ -77,7 +93,7 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictT
   }
 
   const isSecure = parsed.protocol === 'https:' || parsed.protocol === 'wss:'
-  const port = parsed.port ? Number(parsed.port) : (isSecure ? 443 : 80)
+  const port = parsed.port ? Number(parsed.port) : isSecure ? 443 : 80
   const connectHandler = () => {
     const pathWithQuery = (parsed.pathname || '/') + (parsed.search || '')
     const requestLine = `${req.method} ${pathWithQuery || '/'} HTTP/${req.httpVersion}\r\n`
@@ -129,8 +145,16 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictT
   }
 
   const destroyBoth = () => {
-    try { clientSocket.destroy() } catch { /* already destroyed */ }
-    try { targetSocket.destroy() } catch { /* already destroyed */ }
+    try {
+      clientSocket.destroy()
+    } catch {
+      /* already destroyed */
+    }
+    try {
+      targetSocket.destroy()
+    } catch {
+      /* already destroyed */
+    }
   }
 
   targetSocket.on('error', () => {
@@ -142,11 +166,19 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictT
   })
 
   clientSocket.on('close', () => {
-    try { targetSocket.end() } catch { /* already closed */ }
+    try {
+      targetSocket.end()
+    } catch {
+      /* already closed */
+    }
   })
 
   targetSocket.on('close', () => {
-    try { clientSocket.end() } catch { /* already closed */ }
+    try {
+      clientSocket.end()
+    } catch {
+      /* already closed */
+    }
   })
 }
 

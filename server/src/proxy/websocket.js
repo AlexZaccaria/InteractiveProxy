@@ -79,9 +79,9 @@ const FORWARDED_HANDSHAKE_HEADERS = ['user-agent', 'origin', 'cookie', 'authoriz
  * @param {import('http').IncomingMessage} req
  * @returns {string[]}
  */
-function offeredProtocols (req) {
+function offeredProtocols(req) {
   const raw = req.headers['sec-websocket-protocol']
-  const header = Array.isArray(raw) ? raw.join(',') : (raw || '')
+  const header = Array.isArray(raw) ? raw.join(',') : raw || ''
   const seen = new Set()
   /** @type {string[]} */
   const list = []
@@ -106,7 +106,7 @@ function offeredProtocols (req) {
  * @param {Buffer} reason
  * @returns {void}
  */
-function mirrorClose (ws, code, reason) {
+function mirrorClose(ws, code, reason) {
   if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) return
   if (code === 1006) {
     ws.terminate()
@@ -129,7 +129,14 @@ function mirrorClose (ws, code, reason) {
  *
  * @param {WebSocketProxyDeps} deps
  */
-function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caBundle, bypassCounter }) {
+function createWebSocketProxy({
+  router,
+  addLog,
+  entries,
+  webSocketRewriter,
+  caBundle,
+  bypassCounter
+}) {
   const { createWebSocketConnectionLog, logWebSocketMessage, logWebSocketDirectTunnel } = entries
   const { applyWebSocketRewritesAndDescribe } = webSocketRewriter
 
@@ -140,7 +147,16 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
    * @param {WebSocketFrameParams} params
    * @returns {void}
    */
-  function handleWebSocketFrame ({ data, isBinary, direction, wsUrl, connectionId, wsMetrics, sendToTarget, bypass }) {
+  function handleWebSocketFrame({
+    data,
+    isBinary,
+    direction,
+    wsUrl,
+    connectionId,
+    wsMetrics,
+    sendToTarget,
+    bypass
+  }) {
     const isServerToClient = direction === 'server->client'
     const phase = isServerToClient ? 'response' : 'request'
 
@@ -178,11 +194,17 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
     }
 
     // Full mode: apply rewrites and log full content
-    const { buffer: payloadBuffer, rewrites, body, originalBody, jsonAfter } = applyWebSocketRewritesAndDescribe(
-      data,
-      isBinary,
-      { requestUrl: wsUrl, fullUrl: wsUrl, phase }
-    )
+    const {
+      buffer: payloadBuffer,
+      rewrites,
+      body,
+      originalBody,
+      jsonAfter
+    } = applyWebSocketRewritesAndDescribe(data, isBinary, {
+      requestUrl: wsUrl,
+      fullUrl: wsUrl,
+      phase
+    })
 
     sendToTarget(payloadBuffer, isBinary)
 
@@ -228,7 +250,13 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
    * @param {{ bypass?: boolean, head?: Buffer }} [options] `bypass` relays without rewrites or logging; `head` is the first packet of the upgraded socket.
    * @returns {void}
    */
-  function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, fullUrl, { bypass = false, head = Buffer.alloc(0) } = {}) {
+  function handleWebSocketUpgrade(
+    clientReq,
+    clientSocket,
+    targetHost,
+    fullUrl,
+    { bypass = false, head = Buffer.alloc(0) } = {}
+  ) {
     const rawUrl = fullUrl || ''
     const wsUrl = httpUrlToWebSocketUrl(rawUrl) || rawUrl
     const connectionId = Date.now() + Math.random()
@@ -246,7 +274,7 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
     let summaryLogged = false
 
     /** @param {string} [reason] */
-    const logWebSocketSummary = (reason) => {
+    const logWebSocketSummary = reason => {
       if (summaryLogged || bypass) return
       summaryLogged = true
 
@@ -269,7 +297,8 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
           closeReason: reason || null
         },
         headers: {},
-        body: `[WS summary] C->S: ${wsMetrics.messagesClientToServer} messages / ${wsMetrics.bytesClientToServer} bytes, ` +
+        body:
+          `[WS summary] C->S: ${wsMetrics.messagesClientToServer} messages / ${wsMetrics.bytesClientToServer} bytes, ` +
           `S->C: ${wsMetrics.messagesServerToClient} messages / ${wsMetrics.bytesServerToClient} bytes, ` +
           `rewritten: ${wsMetrics.rewrittenMessages}, duration: ${durationMs}ms`,
         responseBody: null,
@@ -388,7 +417,7 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
      *
      * @param {WebSocket} client
      */
-    function relay (client) {
+    function relay(client) {
       client.on('message', (data, isBinary) => {
         if (targetWs.readyState !== WebSocket.OPEN) return
 
@@ -456,7 +485,7 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
    * @param {Buffer} head
    * @returns {void}
    */
-  function handleUpgrade (req, socket, head) {
+  function handleUpgrade(req, socket, head) {
     const resolvedTarget = router.resolveTargetFromRequest(req)
     const bypassInput = router.buildBypassInputFromHttpRequest(req, resolvedTarget)
     const decision = router.decideWebSocketHandling(bypassInput)

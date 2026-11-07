@@ -24,8 +24,9 @@
  * @param {boolean} defaultEnabled
  * @returns {TogglePayloadResult}
  */
-function validateTogglePayload (body, defaultEnabled) {
-  const source = (body && typeof body === 'object') ? /** @type {Record<string, unknown>} */ (body) : {}
+function validateTogglePayload(body, defaultEnabled) {
+  const source =
+    body && typeof body === 'object' ? /** @type {Record<string, unknown>} */ (body) : {}
 
   if (!Object.hasOwn(source, 'enabled')) {
     return {
@@ -64,7 +65,14 @@ function validateTogglePayload (body, defaultEnabled) {
  * @param {ToggleEndpointParams} params
  * @returns {import('express').Response}
  */
-function handleBooleanToggleEndpoint ({ req, res, assignValue, responseFieldName, defaultEnabled = true, persist }) {
+function handleBooleanToggleEndpoint({
+  req,
+  res,
+  assignValue,
+  responseFieldName,
+  defaultEnabled = true,
+  persist
+}) {
   const result = validateTogglePayload(req.body, defaultEnabled)
   if (!result.ok) {
     return res.status(400).json({ error: result.error })

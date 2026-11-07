@@ -20,7 +20,10 @@ before(async () => {
 
 describe('getCachedUrlParse', () => {
   test('returns lower-cased host and the pathname of absolute URLs, null otherwise', () => {
-    assert.deepEqual(internals.getCachedUrlParse('https://Foo.COM:8443/A/B?q'), { host: 'foo.com', path: '/A/B' })
+    assert.deepEqual(internals.getCachedUrlParse('https://Foo.COM:8443/A/B?q'), {
+      host: 'foo.com',
+      path: '/A/B'
+    })
     assert.equal(internals.getCachedUrlParse('nope'), null)
     assert.equal(internals.getCachedUrlParse(''), null)
     assert.equal(internals.getCachedUrlParse(undefined), null)
@@ -42,15 +45,26 @@ describe('buildUrlMatchCandidatesFromContext / buildUrlMatchContext', () => {
     assert.deepEqual(candidates, [
       // current behavior: the relative candidate keeps the query string in its path
       { raw: '/v1/users/123?x=1', host: null, path: '/v1/users/123?x=1' },
-      { raw: 'https://api.example.com/v1/users/123?x=1', host: 'api.example.com', path: '/v1/users/123' }
+      {
+        raw: 'https://api.example.com/v1/users/123?x=1',
+        host: 'api.example.com',
+        path: '/v1/users/123'
+      }
     ])
   })
 
   test('non-URL values keep raw only; unparsable http strings have no host/path; empty context gives none', () => {
-    assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({ requestUrl: 'Login?x' }), [{ raw: 'login?x', host: null, path: null }])
-    assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({ fullUrl: 'http://' }), [{ raw: 'http://', host: null, path: null }])
+    assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({ requestUrl: 'Login?x' }), [
+      { raw: 'login?x', host: null, path: null }
+    ])
+    assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({ fullUrl: 'http://' }), [
+      { raw: 'http://', host: null, path: null }
+    ])
     assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({}), [])
-    assert.deepEqual(internals.buildUrlMatchCandidatesFromContext({ requestUrl: 5, fullUrl: '  ' }), [])
+    assert.deepEqual(
+      internals.buildUrlMatchCandidatesFromContext({ requestUrl: 5, fullUrl: '  ' }),
+      []
+    )
   })
 
   test('buildUrlMatchContext keeps the context fields and adds candidates', () => {
@@ -86,14 +100,25 @@ describe('urlPatternMatchesCandidates', () => {
 
   test('an absolute pattern needs a candidate with the same host; the relative candidate cannot satisfy it', () => {
     assert.equal(matches('https://other.com/v1/users'), false)
-    const absoluteOnly = internals.buildUrlMatchContext({ fullUrl: 'https://api.example.com/v1/users/123' }).candidates
-    assert.equal(internals.urlPatternMatchesCandidates('https://other.com/v1/users', absoluteOnly), false)
-    assert.equal(internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', absoluteOnly), true)
+    const absoluteOnly = internals.buildUrlMatchContext({
+      fullUrl: 'https://api.example.com/v1/users/123'
+    }).candidates
+    assert.equal(
+      internals.urlPatternMatchesCandidates('https://other.com/v1/users', absoluteOnly),
+      false
+    )
+    assert.equal(
+      internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', absoluteOnly),
+      true
+    )
 
     // a context with only a relative requestUrl (host null) never matches a
     // host pattern, while path patterns still work on it
     const relativeOnly = internals.buildUrlMatchContext({ requestUrl: '/v1/users/123' }).candidates
-    assert.equal(internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', relativeOnly), false)
+    assert.equal(
+      internals.urlPatternMatchesCandidates('https://api.example.com/v1/users', relativeOnly),
+      false
+    )
     assert.equal(internals.urlPatternMatchesCandidates('/v1/users', relativeOnly), true)
   })
 
@@ -103,7 +128,13 @@ describe('urlPatternMatchesCandidates', () => {
     assert.equal(matches('/v1/user'), false)
     // trailing slash on the pattern requires that exact path or a deeper one
     assert.equal(matches('/v1/users/123/'), false)
-    assert.equal(internals.urlPatternMatchesCandidates('/v1/users/123/', internals.buildUrlMatchContext({ fullUrl: 'https://h/v1/users/123/' }).candidates), true)
+    assert.equal(
+      internals.urlPatternMatchesCandidates(
+        '/v1/users/123/',
+        internals.buildUrlMatchContext({ fullUrl: 'https://h/v1/users/123/' }).candidates
+      ),
+      true
+    )
   })
 
   test('other patterns are case-insensitive substrings of the raw values', () => {
@@ -120,7 +151,10 @@ describe('urlPatternMatchesCandidates', () => {
   })
 
   test('urlPatternMatchesContext builds the candidates itself', () => {
-    assert.equal(internals.urlPatternMatchesContext('/v1/users', { requestUrl: '/v1/users/9' }), true)
+    assert.equal(
+      internals.urlPatternMatchesContext('/v1/users', { requestUrl: '/v1/users/9' }),
+      true
+    )
     assert.equal(internals.urlPatternMatchesContext('/v1/users', {}), false)
   })
 })
@@ -140,14 +174,20 @@ describe('textRuleMatchesUrl / jsonPathRuleMatchesUrl', () => {
     assert.equal(internals.textRuleMatchesUrl({ url: '/v1' }, { requestUrl: '/v1/x' }), true)
     assert.equal(internals.textRuleMatchesUrl({ url: '/v1' }, {}), false)
     assert.equal(internals.jsonPathRuleMatchesUrl({ url: 'users' }, context), true)
-    assert.equal(internals.jsonPathRuleMatchesUrl({ url: 'users' }, { requestUrl: '/v1/users' }), true)
+    assert.equal(
+      internals.jsonPathRuleMatchesUrl({ url: 'users' }, { requestUrl: '/v1/users' }),
+      true
+    )
     assert.equal(internals.jsonPathRuleMatchesUrl({ url: 'users' }, { requestUrl: '/v1/x' }), false)
   })
 })
 
 describe('deriveDisplayNameFromUrlPattern', () => {
   test('uses the last two host labels, capitalized; paths give an empty name', () => {
-    assert.equal(internals.deriveDisplayNameFromUrlPattern('https://api.example.com/v1/users'), 'Example.com')
+    assert.equal(
+      internals.deriveDisplayNameFromUrlPattern('https://api.example.com/v1/users'),
+      'Example.com'
+    )
     assert.equal(internals.deriveDisplayNameFromUrlPattern('example.com'), 'Example.com')
     assert.equal(internals.deriveDisplayNameFromUrlPattern('api.example.co.uk/path'), 'Co.uk')
     assert.equal(internals.deriveDisplayNameFromUrlPattern('localhost:3000/foo'), 'Localhost')

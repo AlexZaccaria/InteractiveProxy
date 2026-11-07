@@ -128,7 +128,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  *
  * @param {HttpFlowDeps} deps
  */
-function createHttpFlow ({
+function createHttpFlow({
   configStore,
   router,
   upstream,
@@ -149,10 +149,12 @@ function createHttpFlow ({
   const { performUpstreamRequest, attachAbortOnClose } = upstream
   const { applyHeaderRewrites } = httpJson
   const { applyConnectRewritesForBypass } = connect
-  const { processRequestBodyWithRewrites, handleBufferedUpstreamResponseWithRewrites } = bodyRewriter
+  const { processRequestBodyWithRewrites, handleBufferedUpstreamResponseWithRewrites } =
+    bodyRewriter
 
   /** @param {import('./upstream').UpstreamErrorParams} params */
-  const handleUpstreamError = params => handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
+  const handleUpstreamError = params =>
+    handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
 
   /**
    * Shared helper for direct/bypass HTTP flows. Handles log entry creation,
@@ -161,9 +163,20 @@ function createHttpFlow ({
    * @param {DirectHttpFlowParams} params
    * @returns {Promise<void>}
    */
-  async function handleDirectHttpFlow ({
-    req, res, targetUrl, requestUrl, fullUrl, targetHost, requestStart, clientIp,
-    omitHeaders, body, applyRewrites = false, bufferResponse = false, handleHead = false
+  async function handleDirectHttpFlow({
+    req,
+    res,
+    targetUrl,
+    requestUrl,
+    fullUrl,
+    targetHost,
+    requestStart,
+    clientIp,
+    omitHeaders,
+    body,
+    applyRewrites = false,
+    bufferResponse = false,
+    handleHead = false
   }) {
     const method = /** @type {string} */ (req.method)
     const hasLogging = configStore.interactiveModeEnabled === true
@@ -187,7 +200,11 @@ function createHttpFlow ({
 
     if (applyRewrites) {
       headersToForward = stripIdentifyingHeaders(headersToForward)
-      headersToForward = applyHeaderRewrites(headersToForward, { requestUrl, fullUrl, phase: 'request' }, logEntry)
+      headersToForward = applyHeaderRewrites(
+        headersToForward,
+        { requestUrl, fullUrl, phase: 'request' },
+        logEntry
+      )
     }
 
     if (body && Buffer.isBuffer(body) && body.length > 0) {
@@ -200,13 +217,16 @@ function createHttpFlow ({
           let responseBuffer = buffer
 
           if (responseBuffer) {
-            upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
-
-            const connectResult = applyConnectRewritesForBypass(
-              responseBuffer,
+            upstreamHeaders = applyHeaderRewrites(
               upstreamHeaders,
-              { requestUrl, fullUrl }
+              { requestUrl, fullUrl, phase: 'response' },
+              logEntry
             )
+
+            const connectResult = applyConnectRewritesForBypass(responseBuffer, upstreamHeaders, {
+              requestUrl,
+              fullUrl
+            })
             responseBuffer = connectResult.buffer
           }
 
@@ -249,7 +269,7 @@ function createHttpFlow ({
    * @param {import('http').ServerResponse} res
    * @returns {Promise<boolean>}
    */
-  async function tryHandleHttpBypass (req, res) {
+  async function tryHandleHttpBypass(req, res) {
     if (req.method === 'CONNECT') return false
     const connectionHeader = safeString(req.headers?.connection).toLowerCase()
     const wantsUpgrade = Boolean(req.headers?.upgrade) || connectionHeader.includes('upgrade')
@@ -342,7 +362,7 @@ function createHttpFlow ({
    * @param {ForwardDirectHttpParams} params
    * @returns {Promise<{response: UpstreamResponse|null, buffer: Buffer|null}>}
    */
-  async function forwardDirectHttp ({
+  async function forwardDirectHttp({
     req,
     res,
     url,
@@ -364,28 +384,30 @@ function createHttpFlow ({
     try {
       const upstreamStart = Date.now()
 
-      const { response: upstreamResponse, buffer: responseBufferRaw } = await performUpstreamRequest({
-        url,
-        method,
-        headers,
-        body,
-        abortSignal: abortController.signal,
-        bufferResponse
-      })
+      const { response: upstreamResponse, buffer: responseBufferRaw } =
+        await performUpstreamRequest({
+          url,
+          method,
+          headers,
+          body,
+          abortSignal: abortController.signal,
+          bufferResponse
+        })
 
       /** @type {Record<string, any>} */
       let upstreamHeaders = upstreamResponse.headers
       let responseBuffer = responseBufferRaw
 
       if (typeof transformUpstream === 'function') {
-        const transformed = await transformUpstream({
-          upstreamResponse,
-          headers: upstreamHeaders,
-          buffer: responseBuffer,
-          requestUrl,
-          fullUrl,
-          logEntry
-        }) || /** @type {{ headers?: Record<string, any>, buffer?: Buffer | null }} */ ({})
+        const transformed =
+          (await transformUpstream({
+            upstreamResponse,
+            headers: upstreamHeaders,
+            buffer: responseBuffer,
+            requestUrl,
+            fullUrl,
+            logEntry
+          })) || /** @type {{ headers?: Record<string, any>, buffer?: Buffer | null }} */ ({})
 
         if (transformed.headers) {
           upstreamHeaders = transformed.headers
@@ -416,7 +438,12 @@ function createHttpFlow ({
       }
       res.writeHead(upstreamResponse.statusCode, filteredHeaders)
 
-      if (bufferResponse && responseBuffer && Buffer.isBuffer(responseBuffer) && responseBuffer.length > 0) {
+      if (
+        bufferResponse &&
+        responseBuffer &&
+        Buffer.isBuffer(responseBuffer) &&
+        responseBuffer.length > 0
+      ) {
         res.end(responseBuffer)
       } else if (handleHead && req.method === 'HEAD') {
         res.end()
@@ -431,7 +458,12 @@ function createHttpFlow ({
 
       return { response: upstreamResponse, buffer: responseBuffer }
     } catch (error) {
-      handleUpstreamError({ logEntry, error: /** @type {Error} */ (error), res, message: 'Bypass proxy error' })
+      handleUpstreamError({
+        logEntry,
+        error: /** @type {Error} */ (error),
+        res,
+        message: 'Bypass proxy error'
+      })
       return { response: null, buffer: null }
     } finally {
       res.removeListener('close', onClose)
@@ -447,7 +479,7 @@ function createHttpFlow ({
    * @param {import('express').Response} res
    * @returns {Promise<void>}
    */
-  async function handleProxiedHttpRequest (req, res) {
+  async function handleProxiedHttpRequest(req, res) {
     const requestUrl = req.originalUrl
     // Proxy-style requests carry an absolute request line already.
     const fullUrl = /^https?:\/\//i.test(requestUrl)
@@ -526,7 +558,11 @@ function createHttpFlow ({
           // Actively proxied HTTP requests drop identifying tracing headers
           // before any further header rewrites are applied.
           headersToForward = stripIdentifyingHeaders(headersToForward)
-          headersToForward = applyHeaderRewrites(headersToForward, { requestUrl, fullUrl, phase: 'request' }, logEntry)
+          headersToForward = applyHeaderRewrites(
+            headersToForward,
+            { requestUrl, fullUrl, phase: 'request' },
+            logEntry
+          )
 
           /** @type {Buffer | string | undefined} */
           let body
@@ -539,7 +575,8 @@ function createHttpFlow ({
               headersToForward['content-length'] = body.length
             } else if (req.body !== undefined) {
               const isJson = getContentType(headersToForward).includes('application/json')
-              const rawBodyString = isJson && typeof req.body !== 'string' ? JSON.stringify(req.body) : req.body
+              const rawBodyString =
+                isJson && typeof req.body !== 'string' ? JSON.stringify(req.body) : req.body
               const textBody = safeString(rawBodyString)
               const rewriteResult = textRules.applyEditRulesToText(textBody, {
                 requestUrl,
@@ -571,17 +608,27 @@ function createHttpFlow ({
 
           /** @type {Record<string, any>} */
           let upstreamHeaders = upstreamResponse.headers
-          upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
+          upstreamHeaders = applyHeaderRewrites(
+            upstreamHeaders,
+            { requestUrl, fullUrl, phase: 'response' },
+            logEntry
+          )
 
           // Stream when no rule can touch the body and nothing needs it for
           // logging; otherwise buffer it for rewrites and previews.
-          const canStream = upstreamResponse.body && shouldStreamResponse({
-            method: req.method,
-            contentType: getContentType(upstreamHeaders),
-            contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
-            hasRules: hasApplicableRules(ruleStore, { requestUrl, fullUrl: resolvedTargetUrl, phase: 'response' }),
-            interactive: configStore.interactiveModeEnabled === true
-          })
+          const canStream =
+            upstreamResponse.body &&
+            shouldStreamResponse({
+              method: req.method,
+              contentType: getContentType(upstreamHeaders),
+              contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
+              hasRules: hasApplicableRules(ruleStore, {
+                requestUrl,
+                fullUrl: resolvedTargetUrl,
+                phase: 'response'
+              }),
+              interactive: configStore.interactiveModeEnabled === true
+            })
 
           if (canStream) {
             if (logEntry) {
@@ -620,22 +667,20 @@ function createHttpFlow ({
             ? Buffer.from(await upstreamResponse.body.arrayBuffer())
             : Buffer.alloc(0)
 
-          const {
-            finalResponseBuffer,
-            upstreamHeaders: rewrittenHeaders
-          } = handleBufferedUpstreamResponseWithRewrites({
-            responseBuffer,
-            upstreamHeaders,
-            requestUrl,
-            jsonPathFullUrl: resolvedTargetUrl,
-            logEntry,
-            source: 'proxied',
-            targetUrlForLog: resolvedTargetUrl,
-            overrideFullUrlOnLog: true,
-            allowUnaryConnectText: false,
-            statusCode: upstreamResponse.statusCode,
-            enableConnectFrameTextRewrites: false
-          })
+          const { finalResponseBuffer, upstreamHeaders: rewrittenHeaders } =
+            handleBufferedUpstreamResponseWithRewrites({
+              responseBuffer,
+              upstreamHeaders,
+              requestUrl,
+              jsonPathFullUrl: resolvedTargetUrl,
+              logEntry,
+              source: 'proxied',
+              targetUrlForLog: resolvedTargetUrl,
+              overrideFullUrlOnLog: true,
+              allowUnaryConnectText: false,
+              statusCode: upstreamResponse.statusCode,
+              enableConnectFrameTextRewrites: false
+            })
 
           res.status(upstreamResponse.statusCode)
 

@@ -23,7 +23,7 @@ const { coerceJsonPathScalarFromText } = require('../rules/schema')
  * @param {EditRulesRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createEditRulesRoutes ({ ruleStore, storageDir, upload }) {
+function createEditRulesRoutes({ ruleStore, storageDir, upload }) {
   const router = express.Router()
 
   router.get('/edit-rule-presets', (req, res) => {
@@ -31,7 +31,8 @@ function createEditRulesRoutes ({ ruleStore, storageDir, upload }) {
   })
 
   router.post('/edit-rule-presets', async (req, res) => {
-    const raw = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
+    const raw =
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null
 
     if (!raw) {
       return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
@@ -98,7 +99,8 @@ function createEditRulesRoutes ({ ruleStore, storageDir, upload }) {
     // Allow both legacy text rules and new jsonPath rules. The normalizeEditRule
     // helper is responsible for interpreting the payload and ensuring a
     // consistent internal representation.
-    const raw = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
+    const raw =
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null
 
     if (!raw) {
       return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })
@@ -116,7 +118,8 @@ function createEditRulesRoutes ({ ruleStore, storageDir, upload }) {
       return res.status(404).json({ error: 'Rule not found' })
     }
 
-    const patch = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : null
+    const patch =
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null
 
     if (!patch) {
       return res.status(400).json({ error: 'Invalid payload: expected JSON object.' })

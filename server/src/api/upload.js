@@ -17,7 +17,7 @@ const multer = require('multer')
  * @param {string} storageDir Directory that receives the uploaded files.
  * @returns {import('multer').Multer}
  */
-function createUpload (storageDir) {
+function createUpload(storageDir) {
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
       cb(null, storageDir)

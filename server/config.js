@@ -11,7 +11,7 @@ const fs = require('fs')
  *
  * @returns {{ uiPort?: number, backendPort?: number }} Parsed config, or {} when unavailable.
  */
-function loadRootPortsConfig () {
+function loadRootPortsConfig() {
   try {
     const configPath = path.join(__dirname, '..', 'ports.config.json')
     const raw = fs.readFileSync(configPath, 'utf8')
@@ -37,9 +37,12 @@ const rootPortsConfig = loadRootPortsConfig()
  */
 const envPort = Number(process.env.PROXY_PORT)
 const configPort = Number(rootPortsConfig.backendPort)
-const PORT = Number.isFinite(envPort) && envPort > 0
-  ? envPort
-  : (Number.isFinite(configPort) && configPort > 0 ? configPort : 8050)
+const PORT =
+  Number.isFinite(envPort) && envPort > 0
+    ? envPort
+    : Number.isFinite(configPort) && configPort > 0
+      ? configPort
+      : 8050
 
 /**
  * Interface the proxy listens on. Defaults to the loopback address so that
@@ -48,9 +51,10 @@ const PORT = Number.isFinite(envPort) && envPort > 0
  *
  * @type {string}
  */
-const HOST = typeof process.env.PROXY_HOST === 'string' && process.env.PROXY_HOST.trim()
-  ? process.env.PROXY_HOST.trim()
-  : '127.0.0.1'
+const HOST =
+  typeof process.env.PROXY_HOST === 'string' && process.env.PROXY_HOST.trim()
+    ? process.env.PROXY_HOST.trim()
+    : '127.0.0.1'
 
 /**
  * Port where the web UI is served in development (from ports.config.json).
@@ -75,13 +79,18 @@ const defaultOriginHosts = ['localhost', '127.0.0.1']
 if (HOST && HOST !== '0.0.0.0' && HOST !== '::' && !defaultOriginHosts.includes(HOST)) {
   defaultOriginHosts.push(HOST)
 }
-const extraUiOrigins = typeof process.env.PROXY_UI_ORIGINS === 'string'
-  ? process.env.PROXY_UI_ORIGINS.split(',').map(value => value.trim()).filter(Boolean)
-  : []
-const UI_ORIGINS = Array.from(new Set([
-  ...defaultOriginHosts.flatMap(host => [`http://${host}:${UI_PORT}`, `http://${host}:${PORT}`]),
-  ...extraUiOrigins
-]))
+const extraUiOrigins =
+  typeof process.env.PROXY_UI_ORIGINS === 'string'
+    ? process.env.PROXY_UI_ORIGINS.split(',')
+        .map(value => value.trim())
+        .filter(Boolean)
+    : []
+const UI_ORIGINS = Array.from(
+  new Set([
+    ...defaultOriginHosts.flatMap(host => [`http://${host}:${UI_PORT}`, `http://${host}:${PORT}`]),
+    ...extraUiOrigins
+  ])
+)
 
 // Directories
 const ROOT_DIR = __dirname
@@ -143,12 +152,15 @@ const WS_MAX_TEXT_BYTES = Number.isFinite(Number(process.env.PROXY_WS_MAX_TEXT_B
 // Optional flag to disable WebSocket body capture and rewrites for high-throughput
 // channels. When false, connection events and basic metadata are still logged,
 // but message bodies are not decoded or rewritten.
-const WS_LOG_BODY_ENABLED = typeof process.env.PROXY_WS_LOG_BODY_ENABLED === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_WS_LOG_BODY_ENABLED.toLowerCase())
-  : true
+const WS_LOG_BODY_ENABLED =
+  typeof process.env.PROXY_WS_LOG_BODY_ENABLED === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_WS_LOG_BODY_ENABLED.toLowerCase())
+    : true
 
 // Upstream HTTP client timeouts (0 = use Undici defaults)
-const UPSTREAM_HEADERS_TIMEOUT_MS = Number.isFinite(Number(process.env.PROXY_UPSTREAM_HEADERS_TIMEOUT_MS))
+const UPSTREAM_HEADERS_TIMEOUT_MS = Number.isFinite(
+  Number(process.env.PROXY_UPSTREAM_HEADERS_TIMEOUT_MS)
+)
   ? Math.max(0, Number(process.env.PROXY_UPSTREAM_HEADERS_TIMEOUT_MS))
   : 0
 
@@ -160,18 +172,20 @@ const UPSTREAM_BODY_TIMEOUT_MS = Number.isFinite(Number(process.env.PROXY_UPSTRE
 // plain http upstreams stay HTTP/1.1). Off by default: h1-only upstreams are
 // not affected either way, but h2 changes the header semantics
 // (pseudo-headers, no connection-specific headers), so it is opt-in.
-const UPSTREAM_H2 = typeof process.env.PROXY_UPSTREAM_H2 === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_UPSTREAM_H2.toLowerCase())
-  : false
+const UPSTREAM_H2 =
+  typeof process.env.PROXY_UPSTREAM_H2 === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_UPSTREAM_H2.toLowerCase())
+    : false
 
 // Streaming: responses that no rule can rewrite and that need no inspection
 // for logging (interactive mode off, clearly binary content, event streams,
 // bodies larger than STREAM_THRESHOLD_BYTES) are piped to the client as they
 // arrive instead of being buffered. Applies to the plain HTTP and the HTTPS
 // MITM paths; set to false to buffer every response as older versions did.
-const STREAM_UNINSPECTED_RESPONSES = typeof process.env.PROXY_STREAM_UNINSPECTED_RESPONSES === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_STREAM_UNINSPECTED_RESPONSES.toLowerCase())
-  : true
+const STREAM_UNINSPECTED_RESPONSES =
+  typeof process.env.PROXY_STREAM_UNINSPECTED_RESPONSES === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_STREAM_UNINSPECTED_RESPONSES.toLowerCase())
+    : true
 
 // Declared content-length above which a response is streamed even with
 // interactive logging on (0 = never stream by size alone). Default 1 MiB.
@@ -183,46 +197,57 @@ const STREAM_THRESHOLD_BYTES = Number.isFinite(Number(process.env.PROXY_STREAM_T
 // (Connect/JSONPath/text). Defaults to true to preserve existing behaviour;
 // when disabled, direct MITM traffic is forwarded with minimal processing,
 // similar to the plain HTTP bypass path.
-const MITM_BYPASS_REWRITES_ENABLED = typeof process.env.PROXY_MITM_BYPASS_REWRITES_ENABLED === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_MITM_BYPASS_REWRITES_ENABLED.toLowerCase())
-  : true
+const MITM_BYPASS_REWRITES_ENABLED =
+  typeof process.env.PROXY_MITM_BYPASS_REWRITES_ENABLED === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_MITM_BYPASS_REWRITES_ENABLED.toLowerCase())
+    : true
 
 // Debug/diagnostic logging (false by default to preserve current behaviour).
-const DEBUG_LOG_ENABLED = typeof process.env.PROXY_DEBUG_LOG === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_DEBUG_LOG.toLowerCase())
-  : false
+const DEBUG_LOG_ENABLED =
+  typeof process.env.PROXY_DEBUG_LOG === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_DEBUG_LOG.toLowerCase())
+    : false
 
 // Level of the structured logger (pino): PROXY_LOG_LEVEL wins, otherwise
 // PROXY_DEBUG_LOG=true means debug and the default is info.
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']
-const envLogLevel = typeof process.env.PROXY_LOG_LEVEL === 'string'
-  ? process.env.PROXY_LOG_LEVEL.trim().toLowerCase()
-  : ''
+const envLogLevel =
+  typeof process.env.PROXY_LOG_LEVEL === 'string'
+    ? process.env.PROXY_LOG_LEVEL.trim().toLowerCase()
+    : ''
 const LOG_LEVEL = LOG_LEVELS.includes(envLogLevel)
   ? envLogLevel
-  : (DEBUG_LOG_ENABLED ? 'debug' : 'info')
+  : DEBUG_LOG_ENABLED
+    ? 'debug'
+    : 'info'
 
 // Output of the logger: `json` (one object per line, for pino-pretty and log
 // collectors) or `pretty` (`[proxy][scope] message` lines through the
 // console). Default: pretty on a terminal, json when stdout is piped.
-const envLogFormat = typeof process.env.PROXY_LOG_FORMAT === 'string'
-  ? process.env.PROXY_LOG_FORMAT.trim().toLowerCase()
-  : ''
-const LOG_FORMAT = envLogFormat === 'json' || envLogFormat === 'pretty'
-  ? envLogFormat
-  : (process.stdout.isTTY ? 'pretty' : 'json')
+const envLogFormat =
+  typeof process.env.PROXY_LOG_FORMAT === 'string'
+    ? process.env.PROXY_LOG_FORMAT.trim().toLowerCase()
+    : ''
+const LOG_FORMAT =
+  envLogFormat === 'json' || envLogFormat === 'pretty'
+    ? envLogFormat
+    : process.stdout.isTTY
+      ? 'pretty'
+      : 'json'
 
 // TLS strictness for upstream connections (false by default to preserve current dev behaviour).
-const STRICT_TLS_ENABLED = typeof process.env.PROXY_STRICT_TLS === 'string'
-  ? ['1', 'true', 'yes'].includes(process.env.PROXY_STRICT_TLS.toLowerCase())
-  : false
+const STRICT_TLS_ENABLED =
+  typeof process.env.PROXY_STRICT_TLS === 'string'
+    ? ['1', 'true', 'yes'].includes(process.env.PROXY_STRICT_TLS.toLowerCase())
+    : false
 
 // Optional CA bundle path for strict TLS mode (PEM file). When provided and
 // STRICT_TLS_ENABLED is true, it will be used as an additional trust anchor
 // for upstream TLS connections (HTTPS / WSS / raw TLS tunnels).
-const STRICT_TLS_CA_FILE = typeof process.env.PROXY_STRICT_TLS_CA_FILE === 'string'
-  ? process.env.PROXY_STRICT_TLS_CA_FILE
-  : ''
+const STRICT_TLS_CA_FILE =
+  typeof process.env.PROXY_STRICT_TLS_CA_FILE === 'string'
+    ? process.env.PROXY_STRICT_TLS_CA_FILE
+    : ''
 
 // Body size limit for parsers (Express bodyParser & raw)
 // Keep default at 50mb to match current behavior.

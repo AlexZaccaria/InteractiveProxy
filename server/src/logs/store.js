@@ -48,7 +48,14 @@ const { logDebug, logError } = require('../util/logger')
  * @param {LogStoreOptions} options
  * @returns {LogStore}
  */
-function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatterns, onAdd, onRemove }) {
+function createLogStore({
+  maxEntries,
+  ruleStore,
+  isInteractive,
+  getBlockedPatterns,
+  onAdd,
+  onRemove
+}) {
   const capacity = Math.max(1, Math.floor(Number(maxEntries)) || 1)
 
   // Ring buffer: `head` is the slot the next entry is written to. When the
@@ -73,15 +80,16 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
    * @param {LogEntry | undefined} entry
    * @returns {string | null}
    */
-  function idKey (entry) {
-    if (!entry || typeof entry !== 'object' || entry.id === undefined || entry.id === null) return null
+  function idKey(entry) {
+    if (!entry || typeof entry !== 'object' || entry.id === undefined || entry.id === null)
+      return null
     return String(entry.id)
   }
 
   /**
    * @param {LogEntry} entry
    */
-  function add (entry) {
+  function add(entry) {
     if (!isInteractive()) return
     if (entry && typeof entry === 'object') {
       // Precompute whether this log should be hidden by blocked URL rules. This
@@ -164,12 +172,12 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
    * @param {unknown} id
    * @returns {LogEntry | undefined}
    */
-  function findById (id) {
+  function findById(id) {
     if (id === undefined || id === null) return undefined
     return byId.get(String(id))
   }
 
-  function clear () {
+  function clear() {
     slots = new Array(capacity)
     head = 0
     count = 0
@@ -188,24 +196,28 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
    * @param {(entry: LogEntry) => void} listener
    * @returns {() => void}
    */
-  function onEntryAdded (listener) {
+  function onEntryAdded(listener) {
     entryListeners.add(listener)
-    return () => { entryListeners.delete(listener) }
+    return () => {
+      entryListeners.delete(listener)
+    }
   }
 
   /**
    * @param {() => void} listener
    * @returns {() => void}
    */
-  function onCleared (listener) {
+  function onCleared(listener) {
     clearListeners.add(listener)
-    return () => { clearListeners.delete(listener) }
+    return () => {
+      clearListeners.delete(listener)
+    }
   }
 
   /**
    * @param {(entry: LogEntry) => void} fn
    */
-  function forEachOldestFirst (fn) {
+  function forEachOldestFirst(fn) {
     const start = (head - count + capacity) % capacity
     for (let i = 0; i < count; i++) {
       fn(/** @type {LogEntry} */ (slots[(start + i) % capacity]))
@@ -215,7 +227,7 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
   /**
    * @param {(entry: LogEntry) => void} fn
    */
-  function forEachNewestFirst (fn) {
+  function forEachNewestFirst(fn) {
     for (let i = 1; i <= count; i++) {
       fn(/** @type {LogEntry} */ (slots[(head - i + capacity) % capacity]))
     }
@@ -224,10 +236,12 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
   /**
    * @returns {LogEntry[]}
    */
-  function toArrayNewestFirst () {
+  function toArrayNewestFirst() {
     /** @type {LogEntry[]} */
     const result = []
-    forEachNewestFirst(entry => { result.push(entry) })
+    forEachNewestFirst(entry => {
+      result.push(entry)
+    })
     return result
   }
 
@@ -237,7 +251,7 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
    * boolean per log instead of scanning the blocked patterns list for every
    * entry on each request.
    */
-  function recomputeBlockedVisibility () {
+  function recomputeBlockedVisibility() {
     if (count === 0) return
 
     const blockedPatterns = getBlockedPatterns()

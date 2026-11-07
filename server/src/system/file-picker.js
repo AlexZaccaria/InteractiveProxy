@@ -15,7 +15,7 @@ const { spawn } = require('child_process')
  * @param {unknown} value
  * @returns {string}
  */
-const escapePowerShellString = (value) => {
+const escapePowerShellString = value => {
   const raw = value == null ? '' : String(value)
   if (!raw) return ''
   return raw.replace(/`/g, '``').replace(/"/g, '`"')
@@ -27,7 +27,7 @@ const escapePowerShellString = (value) => {
  * @param {{ title?: string, filter?: string }} [options]
  * @returns {Promise<string | null>} The selected path, or null when the dialog was cancelled.
  */
-function showNativeFilePicker (options = {}) {
+function showNativeFilePicker(options = {}) {
   return new Promise((resolve, reject) => {
     const title = escapePowerShellString(options.title || 'Select a file')
     const filter = escapePowerShellString(options.filter || 'All files (*.*)|*.*')

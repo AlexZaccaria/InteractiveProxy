@@ -19,7 +19,7 @@ let upstream
 let upstreamPort
 
 /** Self-signed certificate for the test upstream (native key generation, forge for the X.509 part). */
-function createSelfSignedCert (commonName) {
+function createSelfSignedCert(commonName) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   const keyPem = privateKey.export({ type: 'pkcs1', format: 'pem' })
   const forgeKey = forge.pki.privateKeyFromPem(keyPem)
@@ -35,7 +35,13 @@ function createSelfSignedCert (commonName) {
   cert.setIssuer(attrs)
   cert.setExtensions([
     { name: 'basicConstraints', cA: false },
-    { name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }, { type: 2, value: commonName }] }
+    {
+      name: 'subjectAltName',
+      altNames: [
+        { type: 7, ip: '127.0.0.1' },
+        { type: 2, value: commonName }
+      ]
+    }
   ])
   cert.sign(forgeKey, forge.md.sha256.create())
 
@@ -46,7 +52,7 @@ function createSelfSignedCert (commonName) {
  * Open a CONNECT tunnel through the proxy and return the raw socket once the
  * proxy has answered, together with the status line it sent.
  */
-function openTunnel (target) {
+function openTunnel(target) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, '127.0.0.1', () => {
       socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`)
@@ -69,37 +75,46 @@ function openTunnel (target) {
 }
 
 /** TLS handshake with the proxy over an established tunnel. */
-function secureTunnel (socket, servername) {
+function secureTunnel(socket, servername) {
   return new Promise((resolve, reject) => {
     socket.resume()
-    const secure = tls.connect({ socket, servername, rejectUnauthorized: false }, () => resolve(secure))
+    const secure = tls.connect({ socket, servername, rejectUnauthorized: false }, () =>
+      resolve(secure)
+    )
     secure.on('error', reject)
   })
 }
 
 /** One HTTP request written over an already established TLS socket. */
-function requestOverSocket (secureSocket, options) {
+function requestOverSocket(secureSocket, options) {
   return new Promise((resolve, reject) => {
     const req = http.request({ ...options, createConnection: () => secureSocket }, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks).toString('utf8')
-      }))
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf8')
+        })
+      )
     })
     req.on('error', reject)
     req.end()
   })
 }
 
-function api (method, apiPath) {
+function api(method, apiPath) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: proxyPort, method, path: apiPath }, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }))
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          json: JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        })
+      )
     })
     req.on('error', reject)
     req.end()
@@ -119,12 +134,14 @@ before(async () => {
     req.on('data', chunk => chunks.push(chunk))
     req.on('end', () => {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({
-        method: req.method,
-        url: req.url,
-        headers: req.headers,
-        body: Buffer.concat(chunks).toString('utf8')
-      }))
+      res.end(
+        JSON.stringify({
+          method: req.method,
+          url: req.url,
+          headers: req.headers,
+          body: Buffer.concat(chunks).toString('utf8')
+        })
+      )
     })
   })
   await new Promise(resolve => upstream.listen(upstreamPort, '127.0.0.1', resolve))
@@ -136,7 +153,11 @@ after(async () => {
 })
 
 test('the CA is generated lazily on the first CONNECT and signs a per-host leaf', async () => {
-  assert.equal(fs.existsSync(path.join(certsDir, 'ca-cert.pem')), false, 'no CA before the first CONNECT')
+  assert.equal(
+    fs.existsSync(path.join(certsDir, 'ca-cert.pem')),
+    false,
+    'no CA before the first CONNECT'
+  )
 
   const { socket, statusLine } = await openTunnel(`127.0.0.1:${upstreamPort}`)
   assert.equal(statusLine, 'HTTP/1.1 200 Connection Established')
@@ -146,7 +167,11 @@ test('the CA is generated lazily on the first CONNECT and signs a per-host leaf'
   assert.equal(peer.issuer.CN, 'Cascade Proxy CA')
   assert.equal(peer.subject.CN, 'localhost')
   assert.match(peer.subjectaltname, /DNS:localhost/)
-  assert.equal(secure.authorized, false, 'the leaf is signed by the proxy CA, which Node does not trust')
+  assert.equal(
+    secure.authorized,
+    false,
+    'the leaf is signed by the proxy CA, which Node does not trust'
+  )
 
   assert.equal(fs.existsSync(path.join(certsDir, 'ca-cert.pem')), true)
   assert.equal(fs.existsSync(path.join(certsDir, 'ca-key.pem')), true)
@@ -285,7 +310,9 @@ test('a non-WebSocket Upgrade request inside a tunnel is forwarded as a plain re
   assert.equal(echoed.headers.host, `127.0.0.1:${upstreamPort}`)
 
   const logs = await api('GET', '/api/logs?sources=mitm&limit=200')
-  assert.ok(logs.json.items.some(item => item.fullUrl === `https://127.0.0.1:${upstreamPort}/plain`))
+  assert.ok(
+    logs.json.items.some(item => item.fullUrl === `https://127.0.0.1:${upstreamPort}/plain`)
+  )
 
   secure.destroy()
 })
@@ -298,23 +325,26 @@ let streamUpstream
 let streamUpstreamPort
 
 /** Management API call with a JSON payload against the proxy's own origin. */
-function apiJson (method, apiPath, payload) {
+function apiJson(method, apiPath, payload) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload)
-    const req = http.request({
-      host: '127.0.0.1',
-      port: proxyPort,
-      method,
-      path: apiPath,
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }
-    }, res => {
-      const chunks = []
-      res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8')
-        resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null })
-      })
-    })
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: proxyPort,
+        method,
+        path: apiPath,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }
+      },
+      res => {
+        const chunks = []
+        res.on('data', chunk => chunks.push(chunk))
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8')
+          resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null })
+        })
+      }
+    )
     req.on('error', reject)
     req.end(body)
   })
@@ -324,7 +354,7 @@ function apiJson (method, apiPath, payload) {
  * One request over an established TLS socket, returning the raw body and
  * the arrival time of every chunk.
  */
-function requestOverSocketTimed (secureSocket, options) {
+function requestOverSocketTimed(secureSocket, options) {
   return new Promise((resolve, reject) => {
     const req = http.request({ ...options, createConnection: () => secureSocket }, res => {
       const chunks = []
@@ -333,13 +363,15 @@ function requestOverSocketTimed (secureSocket, options) {
         chunks.push(chunk)
         chunkTimes.push(Date.now())
       })
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks),
-        chunkTimes,
-        endAt: Date.now()
-      }))
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks),
+          chunkTimes,
+          endAt: Date.now()
+        })
+      )
     })
     req.on('error', reject)
     req.end()
@@ -347,7 +379,7 @@ function requestOverSocketTimed (secureSocket, options) {
 }
 
 /** Poll the logs until the entry of `fullUrl` has a numeric responseSize (the pipe may still be finishing). */
-async function waitForStreamedEntry (fullUrl) {
+async function waitForStreamedEntry(fullUrl) {
   const deadline = Date.now() + 2000
   let entry = null
   while (Date.now() < deadline) {
@@ -363,7 +395,10 @@ before(async () => {
   streamUpstreamPort = await getFreePort()
   streamUpstream = https.createServer(createSelfSignedCert('stream.test'), (req, res) => {
     if (req.url === '/big.bin') {
-      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': BIG_BINARY.length
+      })
       res.end(BIG_BINARY)
       return
     }
@@ -377,7 +412,10 @@ before(async () => {
       return
     }
     if (req.url === '/big.json') {
-      res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(BIG_JSON) })
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(BIG_JSON)
+      })
       res.end(BIG_JSON)
       return
     }
@@ -450,7 +488,10 @@ test('an event stream through MITM reaches the client incrementally', async () =
   assert.equal(res.status, 200)
   assert.match(res.headers['content-type'], /text\/event-stream/)
   assert.equal(res.body.toString('utf8'), 'data: event-1\n\ndata: event-2\n\ndata: event-3\n\n')
-  assert.ok(res.chunkTimes.length >= 2, `events arrived in ${res.chunkTimes.length} chunk(s): the stream was buffered`)
+  assert.ok(
+    res.chunkTimes.length >= 2,
+    `events arrived in ${res.chunkTimes.length} chunk(s): the stream was buffered`
+  )
   assert.ok(
     res.endAt - res.chunkTimes[0] >= 150,
     `first event arrived ${res.endAt - res.chunkTimes[0]} ms before the end: the stream was buffered`

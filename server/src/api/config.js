@@ -23,7 +23,7 @@ const { handleBooleanToggleEndpoint } = require('./toggles')
  * @param {ConfigRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createConfigRoutes ({ configStore, ruleStore, router: proxyRouter, bypassCounter }) {
+function createConfigRoutes({ configStore, ruleStore, router: proxyRouter, bypassCounter }) {
   const router = express.Router()
 
   // Get config
@@ -37,21 +37,53 @@ function createConfigRoutes ({ configStore, ruleStore, router: proxyRouter, bypa
   // Toggle endpoints for boolean config flags
   /** @type {Array<{ path: string, field: string, set: (value: boolean) => void }>} */
   const toggles = [
-    { path: '/interactive-mode', field: 'interactiveModeEnabled', set: v => { configStore.interactiveModeEnabled = v } },
-    { path: '/edit-rules-mode', field: 'editRulesEnabled', set: v => { ruleStore.setEnabled(v) } },
-    { path: '/local-resources-mode', field: 'localResourcesEnabled', set: v => { configStore.localResourcesEnabled = v } },
-    { path: '/filter-rules-mode', field: 'filterRulesEnabled', set: v => { configStore.filterRulesEnabled = v } },
-    { path: '/blocked-rules-mode', field: 'blockedRulesEnabled', set: v => { configStore.blockedRulesEnabled = v } }
+    {
+      path: '/interactive-mode',
+      field: 'interactiveModeEnabled',
+      set: v => {
+        configStore.interactiveModeEnabled = v
+      }
+    },
+    {
+      path: '/edit-rules-mode',
+      field: 'editRulesEnabled',
+      set: v => {
+        ruleStore.setEnabled(v)
+      }
+    },
+    {
+      path: '/local-resources-mode',
+      field: 'localResourcesEnabled',
+      set: v => {
+        configStore.localResourcesEnabled = v
+      }
+    },
+    {
+      path: '/filter-rules-mode',
+      field: 'filterRulesEnabled',
+      set: v => {
+        configStore.filterRulesEnabled = v
+      }
+    },
+    {
+      path: '/blocked-rules-mode',
+      field: 'blockedRulesEnabled',
+      set: v => {
+        configStore.blockedRulesEnabled = v
+      }
+    }
   ]
   toggles.forEach(({ path, field, set }) => {
-    router.post(path, (req, res) => handleBooleanToggleEndpoint({
-      req,
-      res,
-      assignValue: set,
-      responseFieldName: field,
-      defaultEnabled: true,
-      persist: () => configStore.persist()
-    }))
+    router.post(path, (req, res) =>
+      handleBooleanToggleEndpoint({
+        req,
+        res,
+        assignValue: set,
+        responseFieldName: field,
+        defaultEnabled: true,
+        persist: () => configStore.persist()
+      })
+    )
   })
 
   // Get filter mode

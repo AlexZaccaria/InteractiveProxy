@@ -30,7 +30,7 @@ const STREAMED_BODY_MARKER = '[streamed response]'
  * @param {{ requestUrl?: string, fullUrl?: string, phase: 'request' | 'response' }} context
  * @returns {boolean}
  */
-function hasApplicableRules (ruleStore, context) {
+function hasApplicableRules(ruleStore, context) {
   const matchContext = buildUrlMatchContext(context)
   if (ruleStore.getCompiledRulesForContext(matchContext).length > 0) return true
 
@@ -60,7 +60,7 @@ function hasApplicableRules (ruleStore, context) {
  * @param {StreamDecisionInput} input
  * @returns {boolean}
  */
-function shouldStreamResponse ({ method, contentType, contentLength, hasRules, interactive }) {
+function shouldStreamResponse({ method, contentType, contentLength, hasRules, interactive }) {
   if (!STREAM_UNINSPECTED_RESPONSES) return false
   if (method === 'HEAD') return false
   if (hasRules) return false
@@ -85,10 +85,10 @@ function shouldStreamResponse ({ method, contentType, contentLength, hasRules, i
  * @param {import('http').ServerResponse} res
  * @returns {Promise<{ bytes: number, error: Error | null }>}
  */
-function pipeUpstreamBody (body, res) {
+function pipeUpstreamBody(body, res) {
   let bytes = 0
   const counter = new Transform({
-    transform (chunk, _encoding, callback) {
+    transform(chunk, _encoding, callback) {
       bytes += chunk.length
       callback(null, chunk)
     }

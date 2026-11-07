@@ -23,7 +23,10 @@ describe('readVarint', () => {
   it('decodes single and multi-byte varints and reports the consumed length', () => {
     assert.deepEqual(I.readVarint(Buffer.from([0x05]), 0), { value: 5, length: 1 })
     assert.deepEqual(I.readVarint(Buffer.from([0xac, 0x02]), 0), { value: 300, length: 2 })
-    assert.deepEqual(I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f]), 0), { value: 4294967295, length: 5 })
+    assert.deepEqual(I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f]), 0), {
+      value: 4294967295,
+      length: 5
+    })
   })
 
   it('honours the offset argument', () => {
@@ -32,12 +35,18 @@ describe('readVarint', () => {
 
   it('throws on a truncated varint and after 10 continuation bytes', () => {
     assert.throws(() => I.readVarint(Buffer.from([0x80]), 0), /Invalid varint encoding/)
-    assert.throws(() => I.readVarint(Buffer.from(new Array(11).fill(0x80)), 0), /Invalid varint encoding/)
+    assert.throws(
+      () => I.readVarint(Buffer.from(new Array(11).fill(0x80)), 0),
+      /Invalid varint encoding/
+    )
   })
 
   it('reads varints wider than 32 bits (exact up to 2^53, Number precision beyond)', () => {
     // 2^32 encoded as a 5-byte varint.
-    assert.deepEqual(I.readVarint(Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]), 0), { value: 4294967296, length: 5 })
+    assert.deepEqual(I.readVarint(Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]), 0), {
+      value: 4294967296,
+      length: 5
+    })
     // 2^53 - 1 (Number.MAX_SAFE_INTEGER) round-trips exactly.
     assert.deepEqual(
       I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f]), 0),
@@ -45,7 +54,10 @@ describe('readVarint', () => {
     )
     // A 10-byte varint of all ones (2^64 - 1) is accepted; the value is the
     // nearest Number, not a BigInt.
-    const allOnes = I.readVarint(Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]), 0)
+    const allOnes = I.readVarint(
+      Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]),
+      0
+    )
     assert.equal(allOnes.length, 10)
     assert.ok(allOnes.value === Number(2n ** 64n - 1n))
   })
@@ -60,7 +72,7 @@ describe('encodeVarint32 / encodeProtobufKey / encodeLengthDelimitedField', () =
     assert.equal(hex(I.encodeVarint32(4294967295)), 'ffffffff0f')
   })
 
-  it('encodes values of any width, negatives as 64-bit two\'s complement, and accepts BigInt', () => {
+  it("encodes values of any width, negatives as 64-bit two's complement, and accepts BigInt", () => {
     assert.equal(hex(I.encodeVarint32(4294967296)), '8080808010')
     assert.equal(hex(I.encodeVarint32(Number.MAX_SAFE_INTEGER)), 'ffffffffffffff0f')
     // -1 is the 10-byte encoding protobuf uses for negative int32/int64.
@@ -83,13 +95,14 @@ describe('encodeVarint32 / encodeProtobufKey / encodeLengthDelimitedField', () =
 })
 
 describe('parseMessageDetailed / parseProtobuf', () => {
-  const buildMessage = () => Buffer.concat([
-    Buffer.from([0x08, 0x2a]), // f1 varint 42
-    ld(2, 'hello'), // f2 string
-    Buffer.from([0x19, 1, 2, 3, 4, 5, 6, 7, 8]), // f3 fixed64
-    Buffer.from([0x25, 9, 10, 11, 12]), // f4 fixed32
-    ld(5, ld(1, 'x')) // f5 nested message
-  ])
+  const buildMessage = () =>
+    Buffer.concat([
+      Buffer.from([0x08, 0x2a]), // f1 varint 42
+      ld(2, 'hello'), // f2 string
+      Buffer.from([0x19, 1, 2, 3, 4, 5, 6, 7, 8]), // f3 fixed64
+      Buffer.from([0x25, 9, 10, 11, 12]), // f4 fixed32
+      ld(5, ld(1, 'x')) // f5 nested message
+    ])
 
   it('parses every supported wire type and keeps the raw bytes per field', () => {
     const msg = buildMessage()
@@ -98,7 +111,13 @@ describe('parseMessageDetailed / parseProtobuf', () => {
     const { fields } = I.parseMessageDetailed(msg)
     assert.equal(fields.length, 5)
 
-    assert.deepEqual(fields[0], { fieldNumber: 1, wireType: 0, value: 42, data: null, raw: Buffer.from([0x08, 0x2a]) })
+    assert.deepEqual(fields[0], {
+      fieldNumber: 1,
+      wireType: 0,
+      value: 42,
+      data: null,
+      raw: Buffer.from([0x08, 0x2a])
+    })
     assert.equal(fields[1].wireType, 2)
     assert.equal(fields[1].data.toString(), 'hello')
     assert.equal(hex(fields[1].raw), '120568656c6c6f')
@@ -119,13 +138,19 @@ describe('parseMessageDetailed / parseProtobuf', () => {
 
   it('returns no fields for an empty buffer and rejects non-buffers', () => {
     assert.deepEqual(I.parseProtobuf(Buffer.alloc(0)), { fields: [] })
-    assert.throws(() => I.parseMessageDetailed('nope'), { name: 'TypeError', message: 'Expected Buffer' })
+    assert.throws(() => I.parseMessageDetailed('nope'), {
+      name: 'TypeError',
+      message: 'Expected Buffer'
+    })
   })
 
   it('throws on unsupported wire types, field number 0 and truncated payloads', () => {
     assert.throws(() => I.parseMessageDetailed(Buffer.from([0x0b])), /Unsupported wire type 3/)
     assert.throws(() => I.parseMessageDetailed(Buffer.from([0x02, 0x05])), /Invalid field number/)
-    assert.throws(() => I.parseMessageDetailed(Buffer.from([0x0a, 0x05, 0x41])), /Truncated length-delimited field/)
+    assert.throws(
+      () => I.parseMessageDetailed(Buffer.from([0x0a, 0x05, 0x41])),
+      /Truncated length-delimited field/
+    )
     assert.throws(() => I.parseMessageDetailed(Buffer.from([0x09, 0x01])), /Truncated 64-bit field/)
     assert.throws(() => I.parseMessageDetailed(Buffer.from([0x0d, 0x01])), /Truncated 32-bit field/)
   })
@@ -180,9 +205,22 @@ describe('encodeJsonToProtobuf', () => {
       '0a0568656c6c6f102a180122030a01782a077b2261223a317d3201613201624101020304050607084d0102030452030001025800'
     )
     const { fields } = I.parseProtobuf(enc)
-    assert.deepEqual(fields.map(f => [f.fieldNumber, f.wireType]), [
-      [1, 2], [2, 0], [3, 0], [4, 2], [5, 2], [6, 2], [6, 2], [8, 1], [9, 5], [10, 2], [11, 0]
-    ])
+    assert.deepEqual(
+      fields.map(f => [f.fieldNumber, f.wireType]),
+      [
+        [1, 2],
+        [2, 0],
+        [3, 0],
+        [4, 2],
+        [5, 2],
+        [6, 2],
+        [6, 2],
+        [8, 1],
+        [9, 5],
+        [10, 2],
+        [11, 0]
+      ]
+    )
     assert.equal(fields[4].data.toString(), '{"a":1}')
   })
 
@@ -221,16 +259,22 @@ describe('printableRatio', () => {
 })
 
 describe('rewriteProtobufFields', () => {
-  const rewriter = text => text.includes('hello')
-    ? { text: text.split('hello').join('hi there, friend'), changed: true, appliedRuleIds: ['r1'] }
-    : { text, changed: false }
+  const rewriter = text =>
+    text.includes('hello')
+      ? {
+          text: text.split('hello').join('hi there, friend'),
+          changed: true,
+          appliedRuleIds: ['r1']
+        }
+      : { text, changed: false }
 
-  const buildMessage = () => Buffer.concat([
-    ld(1, 'hello world'),
-    Buffer.from([0x10, 0x07]),
-    ld(3, ld(1, 'hello nested')),
-    ld(4, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe]))
-  ])
+  const buildMessage = () =>
+    Buffer.concat([
+      ld(1, 'hello world'),
+      Buffer.from([0x10, 0x07]),
+      ld(3, ld(1, 'hello nested')),
+      ld(4, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe]))
+    ])
 
   it('rewrites printable string fields (top level and nested) and re-encodes lengths', () => {
     const result = I.rewriteProtobufFields(buildMessage(), rewriter)
@@ -253,7 +297,11 @@ describe('rewriteProtobufFields', () => {
   })
 
   it('passes through non-buffers, missing rewriters and invalid protobuf', () => {
-    assert.deepEqual(I.rewriteProtobufFields('x', rewriter), { buffer: 'x', appliedRuleIds: [], changed: false })
+    assert.deepEqual(I.rewriteProtobufFields('x', rewriter), {
+      buffer: 'x',
+      appliedRuleIds: [],
+      changed: false
+    })
     assert.equal(I.rewriteProtobufFields(buildMessage(), null).changed, false)
     assert.equal(I.rewriteProtobufFields(Buffer.from([0x0b]), rewriter).changed, false)
   })

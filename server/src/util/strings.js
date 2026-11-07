@@ -13,7 +13,7 @@
  * @param {unknown} value
  * @returns {string}
  */
-function safeTrim (value) {
+function safeTrim(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
@@ -24,7 +24,7 @@ function safeTrim (value) {
  * @param {unknown} value
  * @returns {boolean}
  */
-function queryBool (value) {
+function queryBool(value) {
   return String(value || '').toLowerCase() === 'true'
 }
 
@@ -35,7 +35,7 @@ function queryBool (value) {
  * @param {unknown} value
  * @returns {string}
  */
-function safeString (value) {
+function safeString(value) {
   return typeof value === 'string' ? value : ''
 }
 
@@ -48,7 +48,7 @@ function safeString (value) {
  * @param {string[]} [defaultList]
  * @returns {string[]}
  */
-function parseListQuery (value, defaultList = []) {
+function parseListQuery(value, defaultList = []) {
   if (Array.isArray(value)) {
     const parts = value
       .flatMap(v => String(v || '').split(','))
@@ -74,7 +74,7 @@ function parseListQuery (value, defaultList = []) {
  * @param {unknown} id
  * @returns {id is string}
  */
-function isValidId (id) {
+function isValidId(id) {
   return typeof id === 'string' && id.trim().length > 0
 }
 

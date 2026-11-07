@@ -16,13 +16,11 @@ const { isEmptyBuffer } = require('./compression')
 
 // Normalised limits computed once at startup to avoid repeated ternaries and
 // allocations on hot paths.
-const PROTOBUF_MAX_FIELDS_LIMIT = PROTOBUF_MAX_FIELDS > 0
-  ? PROTOBUF_MAX_FIELDS
-  : Number.POSITIVE_INFINITY
+const PROTOBUF_MAX_FIELDS_LIMIT =
+  PROTOBUF_MAX_FIELDS > 0 ? PROTOBUF_MAX_FIELDS : Number.POSITIVE_INFINITY
 
-const PROTOBUF_MAX_BYTES_LIMIT = PROTOBUF_MAX_BYTES > 0
-  ? PROTOBUF_MAX_BYTES
-  : Number.POSITIVE_INFINITY
+const PROTOBUF_MAX_BYTES_LIMIT =
+  PROTOBUF_MAX_BYTES > 0 ? PROTOBUF_MAX_BYTES : Number.POSITIVE_INFINITY
 
 /**
  * A parsed field with its raw bytes, as returned by parseMessageDetailed.
@@ -74,14 +72,14 @@ const PROTOBUF_MAX_BYTES_LIMIT = PROTOBUF_MAX_BYTES > 0
  * @param {number} offset
  * @returns {{ value: number, length: number }}
  */
-function readVarint (buffer, offset) {
+function readVarint(buffer, offset) {
   let result = 0
   let multiplier = 1
   let length = 0
 
   while (offset < buffer.length && length < 10) {
     const byte = buffer[offset++]
-    result += (byte & 0x7F) * multiplier
+    result += (byte & 0x7f) * multiplier
     length++
     if ((byte & 0x80) === 0) {
       return { value: result, length }
@@ -98,7 +96,7 @@ function readVarint (buffer, offset) {
  * @param {Buffer} buffer
  * @returns {{ fields: DetailedField[] }}
  */
-function parseMessageDetailed (buffer) {
+function parseMessageDetailed(buffer) {
   if (!Buffer.isBuffer(buffer)) {
     throw new TypeError('Expected Buffer')
   }
@@ -172,7 +170,7 @@ function parseMessageDetailed (buffer) {
  * @param {Buffer} buffer
  * @returns {{ fields: ProtobufField[] }}
  */
-function parseProtobuf (buffer) {
+function parseProtobuf(buffer) {
   const { fields } = parseMessageDetailed(buffer)
   return {
     fields: fields.map(field => ({
@@ -191,12 +189,12 @@ function parseProtobuf (buffer) {
  * @param {number | bigint} value
  * @returns {Buffer}
  */
-function encodeVarint32 (value) {
+function encodeVarint32(value) {
   let v = typeof value === 'bigint' ? value : BigInt(Math.trunc(Number(value) || 0))
   v = BigInt.asUintN(64, v)
   const bytes = []
   while (v > 127n) {
-    bytes.push(Number(v & 0x7Fn) | 0x80)
+    bytes.push(Number(v & 0x7fn) | 0x80)
     v >>= 7n
   }
   bytes.push(Number(v))
@@ -210,7 +208,7 @@ function encodeVarint32 (value) {
  * @param {number} wireType
  * @returns {Buffer}
  */
-function encodeProtobufKey (fieldNumber, wireType) {
+function encodeProtobufKey(fieldNumber, wireType) {
   if (!Number.isInteger(fieldNumber) || fieldNumber <= 0) {
     throw new Error('Invalid field number')
   }
@@ -224,7 +222,7 @@ function encodeProtobufKey (fieldNumber, wireType) {
  * @param {Buffer} dataBuffer
  * @returns {Buffer}
  */
-function encodeLengthDelimitedField (fieldNumber, dataBuffer) {
+function encodeLengthDelimitedField(fieldNumber, dataBuffer) {
   const key = encodeProtobufKey(fieldNumber, 2)
   const lenBuf = encodeVarint32(dataBuffer.length >>> 0)
   return Buffer.concat([key, lenBuf, dataBuffer])
@@ -236,7 +234,7 @@ function encodeLengthDelimitedField (fieldNumber, dataBuffer) {
  * @param {Buffer | null | undefined} buffer
  * @returns {number}
  */
-function printableRatio (buffer) {
+function printableRatio(buffer) {
   if (!buffer || buffer.length === 0) return 0
   let printable = 0
   for (let i = 0; i < buffer.length; i++) {
@@ -259,7 +257,7 @@ function printableRatio (buffer) {
  * @param {number} maxDepth - Maximum allowed recursion depth.
  * @returns {BufferRewriteResult}
  */
-function rewriteMessage (buffer, textRewriter, depth, maxDepth) {
+function rewriteMessage(buffer, textRewriter, depth, maxDepth) {
   const maxFields = PROTOBUF_MAX_FIELDS_LIMIT
   const maxBytes = PROTOBUF_MAX_BYTES_LIMIT
 
@@ -368,7 +366,7 @@ function rewriteMessage (buffer, textRewriter, depth, maxDepth) {
  * @param {TextRewriter} textRewriter
  * @returns {BufferRewriteResult}
  */
-function rewriteProtobufFields (buffer, textRewriter) {
+function rewriteProtobufFields(buffer, textRewriter) {
   if (!Buffer.isBuffer(buffer) || typeof textRewriter !== 'function') {
     return { buffer, appliedRuleIds: [], changed: false }
   }
@@ -396,7 +394,7 @@ function rewriteProtobufFields (buffer, textRewriter) {
  * @param {ProtobufField[]} fields
  * @returns {Buffer}
  */
-function encodeProtobufFromFields (fields) {
+function encodeProtobufFromFields(fields) {
   if (!Array.isArray(fields) || fields.length === 0) {
     return Buffer.alloc(0)
   }
@@ -429,9 +427,7 @@ function encodeProtobufFromFields (fields) {
       chunks.push(lenBuf, data)
     } else if (wireType === 1 || wireType === 5) {
       // Fixed 64/32-bit
-      const data = Buffer.isBuffer(field.data)
-        ? field.data
-        : Buffer.alloc(wireType === 1 ? 8 : 4)
+      const data = Buffer.isBuffer(field.data) ? field.data : Buffer.alloc(wireType === 1 ? 8 : 4)
       chunks.push(data)
     } else {
       // Unsupported wire type; drop the field entirely.
@@ -455,7 +451,7 @@ function encodeProtobufFromFields (fields) {
  * @param {unknown} json - The JSON object to encode.
  * @returns {Buffer} - The encoded Protobuf message.
  */
-function encodeJsonToProtobuf (json) {
+function encodeJsonToProtobuf(json) {
   if (!json || typeof json !== 'object') {
     return Buffer.alloc(0)
   }
@@ -469,7 +465,7 @@ function encodeJsonToProtobuf (json) {
    * @param {unknown} obj
    * @returns {boolean}
    */
-  const isProtobufObject = (obj) => {
+  const isProtobufObject = obj => {
     if (!obj || typeof obj !== 'object') return false
     const keys = Object.keys(obj)
     if (keys.length === 0) return false
@@ -546,7 +542,7 @@ function encodeJsonToProtobuf (json) {
  * @returns {Record<string, unknown> | null} Lightweight JSON view of the message, or null when the
  * payload cannot be safely represented.
  */
-function extractJsonFromProtobufBuffer (buffer) {
+function extractJsonFromProtobufBuffer(buffer) {
   if (isEmptyBuffer(buffer) || !buffer) return null
   if (buffer.length > PROTOBUF_MAX_BYTES_LIMIT) return null
 
@@ -705,7 +701,7 @@ function extractJsonFromProtobufBuffer (buffer) {
  * @param {any} value - Arbitrary JSON value to clean.
  * @returns {any} Cleaned JSON value with trivial blobs removed.
  */
-function stripTrivialBinaryBlobs (value) {
+function stripTrivialBinaryBlobs(value) {
   if (value === null || value === undefined) return value
 
   if (Array.isArray(value)) {
@@ -732,9 +728,11 @@ function stripTrivialBinaryBlobs (value) {
     const base64 = value.base64
     const length = value.length
 
-    if ((base64 === '' || base64 === null || base64 === undefined) &&
-        typeof length === 'number' &&
-        length === 0) {
+    if (
+      (base64 === '' || base64 === null || base64 === undefined) &&
+      typeof length === 'number' &&
+      length === 0
+    ) {
       // Returning undefined here signals to the caller that this node should
       // be removed from its parent container.
       return undefined

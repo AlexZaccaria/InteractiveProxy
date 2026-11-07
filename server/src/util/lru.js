@@ -24,13 +24,13 @@
  * @param {number} maxEntries
  * @returns {LruCache<K, V>}
  */
-function createLruCache (maxEntries) {
+function createLruCache(maxEntries) {
   const capacity = Number.isFinite(maxEntries) && maxEntries > 0 ? Math.floor(maxEntries) : 1
   /** @type {Map<K, V>} */
   const entries = new Map()
 
   return {
-    get (key) {
+    get(key) {
       if (!entries.has(key)) return undefined
       const value = /** @type {V} */ (entries.get(key))
       // Re-insert so the entry becomes the most recently used one.
@@ -38,10 +38,10 @@ function createLruCache (maxEntries) {
       entries.set(key, value)
       return value
     },
-    has (key) {
+    has(key) {
       return entries.has(key)
     },
-    set (key, value) {
+    set(key, value) {
       if (entries.has(key)) {
         entries.delete(key)
       } else if (entries.size >= capacity) {
@@ -52,13 +52,13 @@ function createLruCache (maxEntries) {
       }
       entries.set(key, value)
     },
-    delete (key) {
+    delete(key) {
       return entries.delete(key)
     },
-    clear () {
+    clear() {
       entries.clear()
     },
-    size () {
+    size() {
       return entries.size
     }
   }

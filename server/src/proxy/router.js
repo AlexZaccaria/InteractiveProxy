@@ -91,7 +91,7 @@ const {
  * @param {{ port: number, host: string, uiOrigins: string[] }} params
  * @returns {Set<string>}
  */
-function buildOwnAuthorities ({ port, host, uiOrigins }) {
+function buildOwnAuthorities({ port, host, uiOrigins }) {
   /** @type {(string | null)[]} */
   const hosts = ['localhost', '127.0.0.1', '[::1]', host]
   for (const origin of uiOrigins) {
@@ -118,14 +118,12 @@ function buildOwnAuthorities ({ port, host, uiOrigins }) {
  * @param {RoutableRequest} req
  * @returns {string}
  */
-function getAssumedProtocol (req) {
+function getAssumedProtocol(req) {
   const forwarded = req.headers['x-forwarded-proto']
   const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded
   const socket = /** @type {{ encrypted?: boolean } | undefined} */ (req.socket)
   return (
-    forwardedValue?.split(',')[0]?.trim() ||
-    req.protocol ||
-    (socket?.encrypted ? 'https' : 'http')
+    forwardedValue?.split(',')[0]?.trim() || req.protocol || (socket?.encrypted ? 'https' : 'http')
   )
 }
 
@@ -138,16 +136,18 @@ function getAssumedProtocol (req) {
  * @param {Record<string, any>} [extraDefaults] - Additional default properties to merge.
  * @returns {BlockedRule & Record<string, any>} Normalised rule object.
  */
-function normalizeRuleBase (rule, idPrefix, extraDefaults = {}) {
+function normalizeRuleBase(rule, idPrefix, extraDefaults = {}) {
   const source = rule && typeof rule === 'object' ? rule : {}
   const url = safeString(source.url)
-  const name = (typeof source.name === 'string' && source.name.trim())
-    ? source.name.trim()
-    : deriveDisplayNameFromUrlPattern(url)
+  const name =
+    typeof source.name === 'string' && source.name.trim()
+      ? source.name.trim()
+      : deriveDisplayNameFromUrlPattern(url)
 
-  const id = (typeof source.id === 'string' && source.id.trim())
-    ? source.id
-    : `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const id =
+    typeof source.id === 'string' && source.id.trim()
+      ? source.id
+      : `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
   return { id, enabled: source.enabled !== false, name, url, ...extraDefaults }
 }
@@ -158,7 +158,7 @@ function normalizeRuleBase (rule, idPrefix, extraDefaults = {}) {
  * @param {Record<string, any> | null | undefined} [rule]
  * @returns {BypassRule}
  */
-function normalizeBypassRule (rule = {}) {
+function normalizeBypassRule(rule = {}) {
   const mode = rule && rule.mode === 'focus' ? 'focus' : 'ignore'
   return /** @type {BypassRule} */ (normalizeRuleBase(rule, 'bypass', { mode }))
 }
@@ -169,7 +169,7 @@ function normalizeBypassRule (rule = {}) {
  * @param {Record<string, any> | null | undefined} [rule]
  * @returns {BlockedRule}
  */
-function normalizeBlockedRule (rule = {}) {
+function normalizeBlockedRule(rule = {}) {
   return normalizeRuleBase(rule, 'blocked')
 }
 
@@ -180,11 +180,11 @@ function normalizeBlockedRule (rule = {}) {
  * @param {RoutingInput} [params]
  * @returns {RoutingContext}
  */
-function buildRoutingContext ({ requestUrl, fullUrl, host, path, targetUrl, method } = {}) {
+function buildRoutingContext({ requestUrl, fullUrl, host, path, targetUrl, method } = {}) {
   return {
     requestUrl: typeof requestUrl === 'string' ? requestUrl : '/',
     fullUrl: typeof fullUrl === 'string' ? fullUrl : null,
-    host: typeof host === 'string' ? host : (host ? String(host) : null),
+    host: typeof host === 'string' ? host : host ? String(host) : null,
     path: typeof path === 'string' ? path : null,
     targetUrl: typeof targetUrl === 'string' ? targetUrl : null,
     method
@@ -198,7 +198,7 @@ function buildRoutingContext ({ requestUrl, fullUrl, host, path, targetUrl, meth
  * @param {RoutingInput} [params]
  * @returns {{hostCandidates: string[], valueCandidates: string[]}}
  */
-function createBypassContext ({ requestUrl, fullUrl, host, path, targetUrl } = {}) {
+function createBypassContext({ requestUrl, fullUrl, host, path, targetUrl } = {}) {
   /** @type {string[]} */
   const hostCandidates = []
   /** @type {string[]} */
@@ -258,7 +258,7 @@ function createBypassContext ({ requestUrl, fullUrl, host, path, targetUrl } = {
  *
  * @param {RouterOptions} options
  */
-function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPatternsChanged }) {
+function createRouter({ configStore, files, port, host, uiOrigins, onBlockedPatternsChanged }) {
   const { blockedFile, filterFile, legacyBypassFile } = files
   const ownAuthorities = buildOwnAuthorities({ port, host, uiOrigins })
 
@@ -272,13 +272,15 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {(change: RouterChange) => void} listener
    * @returns {() => void} Unsubscribe.
    */
-  function onChange (listener) {
+  function onChange(listener) {
     changeListeners.add(listener)
-    return () => { changeListeners.delete(listener) }
+    return () => {
+      changeListeners.delete(listener)
+    }
   }
 
   /** @param {RouterChange['kind']} kind */
-  function notifyChange (kind) {
+  function notifyChange(kind) {
     for (const listener of changeListeners) {
       try {
         listener({ kind })
@@ -306,25 +308,27 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   let blockedUrlSubstringsForFilter = []
 
   /** @returns {FilterMode} */
-  function getBypassMode () {
+  function getBypassMode() {
     return configStore.filterMode === 'focus' ? 'focus' : 'ignore'
   }
 
-  function isIgnoreMode () {
+  function isIgnoreMode() {
     return getBypassMode() === 'ignore'
   }
 
-  function isFocusMode () {
+  function isFocusMode() {
     return getBypassMode() === 'focus'
   }
 
-  function buildBypassMatchers () {
+  function buildBypassMatchers() {
     bypassMatchers = bypassUrls
       .map(pattern => safeTrim(pattern))
       .filter(pattern => pattern)
       .map(pattern => {
         const lower = pattern.toLowerCase()
-        const isHostPattern = lower.startsWith('.') || (lower.includes('.') && !lower.includes('/') && !lower.includes(':'))
+        const isHostPattern =
+          lower.startsWith('.') ||
+          (lower.includes('.') && !lower.includes('/') && !lower.includes(':'))
 
         return {
           raw: pattern,
@@ -338,7 +342,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * Rebuild the list of bypass URLs and matchers for the current mode from the
    * already-normalised bypassRules array.
    */
-  function rebuildBypassUrlsForCurrentMode () {
+  function rebuildBypassUrlsForCurrentMode() {
     const mode = getBypassMode()
     bypassUrls = bypassRules
       .filter(rule => rule && rule.enabled && rule.mode === mode)
@@ -352,11 +356,9 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * (enabled and disabled) to preserve the legacy behaviour where any blocked
    * pattern hides matching entries from the log view.
    */
-  function recomputeBlockedUrlSubstringsForFilter () {
+  function recomputeBlockedUrlSubstringsForFilter() {
     blockedUrlSubstringsForFilter = Array.isArray(blockedRules)
-      ? blockedRules
-          .map(rule => safeString(rule?.url))
-          .filter(Boolean)
+      ? blockedRules.map(rule => safeString(rule?.url)).filter(Boolean)
       : []
 
     // Keep per-log visibility flags in sync with the latest blocked patterns so
@@ -368,7 +370,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   }
 
   // Load blocked URLs from file
-  function loadBlockedUrls () {
+  function loadBlockedUrls() {
     try {
       if (fs.existsSync(blockedFile)) {
         const data = fs.readFileSync(blockedFile, 'utf8')
@@ -384,7 +386,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
     }
   }
 
-  function loadBypassUrls () {
+  function loadBypassUrls() {
     try {
       let fileToRead = null
 
@@ -414,7 +416,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   }
 
   // Save blocked URLs to file
-  async function saveBlockedUrls () {
+  async function saveBlockedUrls() {
     // Activate the rules in memory before the (asynchronous) write so that a
     // request arriving right after the API call already sees them.
     blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
@@ -436,13 +438,13 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * Note: bypassRules are stored in normalised form. They are normalised on
    * load (loadBypassUrls) and when mutated via the /api/filters endpoint.
    */
-  function buildBypassRulesSnapshot () {
+  function buildBypassRulesSnapshot() {
     const payload = JSON.stringify(bypassRules, null, 2)
     rebuildBypassUrlsForCurrentMode()
     return payload
   }
 
-  function saveBypassUrlsSync () {
+  function saveBypassUrlsSync() {
     try {
       const payload = buildBypassRulesSnapshot()
       notifyChange('filter')
@@ -452,7 +454,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
     }
   }
 
-  async function saveBypassUrls () {
+  async function saveBypassUrls() {
     try {
       const payload = buildBypassRulesSnapshot()
       notifyChange('filter')
@@ -467,7 +469,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {unknown} fullUrl
    * @returns {boolean}
    */
-  function isRequestBlocked (requestUrl, fullUrl) {
+  function isRequestBlocked(requestUrl, fullUrl) {
     if (!configStore.blockedRulesEnabled) return false
     if (!Array.isArray(blockedUrls) || blockedUrls.length === 0) return false
 
@@ -487,7 +489,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutingInput | null | undefined} [rawInput]
    * @returns {boolean}
    */
-  function isInternalProxyRequest (rawInput = {}) {
+  function isInternalProxyRequest(rawInput = {}) {
     const input = rawInput && typeof rawInput === 'object' ? rawInput : {}
     const hostValue = normalizeHostValue(input.host) || ''
     if (
@@ -522,7 +524,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutingInput | null | undefined} input
    * @returns {boolean}
    */
-  function shouldBypassRequest (input) {
+  function shouldBypassRequest(input) {
     if (!configStore.filterRulesEnabled) return false
     if (!bypassMatchers.length) return false
 
@@ -555,7 +557,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutingInput | null | undefined} input
    * @returns {boolean}
    */
-  function shouldUseDirectConnection (input) {
+  function shouldUseDirectConnection(input) {
     // Never bypass internal proxy requests (API calls, UI, etc.)
     if (isInternalProxyRequest(input)) {
       return false
@@ -588,7 +590,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutingInput | null | undefined} rawContext
    * @returns {'block'|'direct'|'proxy'}
    */
-  function decideHttpHandling (rawContext) {
+  function decideHttpHandling(rawContext) {
     const context = rawContext && typeof rawContext === 'object' ? rawContext : {}
     const requestUrl = context.requestUrl || '/'
     const fullUrl = context.fullUrl || null
@@ -608,7 +610,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutingInput | null | undefined} routingContext
    * @returns {{action: 'block'|'direct'|'mitm', requestUrl: string, fullUrl: (string|null)}}
    */
-  function decideWebSocketHandling (routingContext) {
+  function decideWebSocketHandling(routingContext) {
     const requestUrl = routingContext?.requestUrl || '/'
     const fullUrl = routingContext?.fullUrl || null
     const httpDecision = decideHttpHandling(routingContext)
@@ -632,7 +634,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutableRequest} req
    * @returns {ResolvedTarget}
    */
-  function resolveTargetFromRequest (req) {
+  function resolveTargetFromRequest(req) {
     const targetHeaderValue = req.headers['x-target-url']
     const targetHeader = parseUrlCandidate(targetHeaderValue)
     if (targetHeader) {
@@ -680,7 +682,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {ResolvedTarget | null | undefined} resolvedTarget
    * @returns {RoutingContext}
    */
-  function buildBypassInputFromHttpRequest (req, resolvedTarget) {
+  function buildBypassInputFromHttpRequest(req, resolvedTarget) {
     const requestUrl = safeString(req.url) || '/'
     const hostHeader = safeString(req.headers?.host)
     const hostValue = resolvedTarget?.host || normalizeHostValue(hostHeader)
@@ -726,7 +728,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
    * @param {RoutableRequest} req
    * @returns {boolean}
    */
-  function isProxyTargetedRequest (req) {
+  function isProxyTargetedRequest(req) {
     if (safeString(req.headers['x-target-url'])) return true
 
     const rawUrl = safeString(req.originalUrl) || safeString(req.url)
@@ -751,13 +753,17 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
     /** @returns {BlockedRule[]} The live array (callers may push into it). */
     getBlockedRules: () => blockedRules,
     /** @param {BlockedRule[]} next */
-    setBlockedRules: next => { blockedRules = next },
+    setBlockedRules: next => {
+      blockedRules = next
+    },
     getBlockedUrls: () => blockedUrls,
     getBlockedPatterns: () => blockedUrlSubstringsForFilter,
     /** @returns {BypassRule[]} The live array (callers may push into it). */
     getBypassRules: () => bypassRules,
     /** @param {BypassRule[]} next */
-    setBypassRules: next => { bypassRules = next },
+    setBypassRules: next => {
+      bypassRules = next
+    },
     getBypassUrls: () => bypassUrls,
     getBypassMatchers: () => bypassMatchers,
     normalizeRuleBase,

@@ -38,7 +38,7 @@ const ASCII_SEGMENT_REGEX = /[\x20-\x7E]{4,}/g
  * @param {string | null | undefined} text
  * @returns {string}
  */
-function applyLogPreviewLimit (text) {
+function applyLogPreviewLimit(text) {
   if (!text) return ''
   if (!Number.isFinite(LOG_PREVIEW_MAX_BYTES) || LOG_PREVIEW_MAX_BYTES <= 0) {
     return text
@@ -63,7 +63,7 @@ function applyLogPreviewLimit (text) {
  * @param {Buffer | null | undefined} buffer
  * @returns {string}
  */
-function bufferToTextPreview (buffer) {
+function bufferToTextPreview(buffer) {
   if (!buffer || buffer.length === 0) return ''
 
   let source = buffer
@@ -108,7 +108,7 @@ function bufferToTextPreview (buffer) {
  * @param {string | null | undefined} text
  * @returns {any} Parsed value, or null when no candidate parses.
  */
-function tryParseJsonString (text) {
+function tryParseJsonString(text) {
   if (!text) return null
   const trimmed = text.trim()
   if (!trimmed) return null
@@ -155,7 +155,7 @@ function tryParseJsonString (text) {
  * @param {any} root
  * @returns {any}
  */
-function normalizeNestedJsonStrings (root) {
+function normalizeNestedJsonStrings(root) {
   if (!root || typeof root !== 'object') return root
 
   /** @type {any[]} */
@@ -218,7 +218,7 @@ function normalizeNestedJsonStrings (root) {
  * @param {string} text
  * @returns {string}
  */
-function stripSocketIoPrefix (text) {
+function stripSocketIoPrefix(text) {
   if (!text) return text
   let body = text
 
@@ -258,7 +258,7 @@ function stripSocketIoPrefix (text) {
  * @param {string | null | undefined} text
  * @returns {any} Parsed (and nested-JSON normalised) value, or null.
  */
-function tryParseWebSocketJson (text) {
+function tryParseWebSocketJson(text) {
   if (!text || typeof text !== 'string') return null
 
   // Skip placeholder bodies that are clearly not JSON payloads.
@@ -289,7 +289,7 @@ function tryParseWebSocketJson (text) {
  * @param {unknown} data
  * @returns {Buffer}
  */
-function normalizeWebSocketPayload (data) {
+function normalizeWebSocketPayload(data) {
   if (Buffer.isBuffer(data)) return data
   if (typeof data === 'string') return Buffer.from(data, 'utf8')
   if (data == null) return Buffer.alloc(0)
@@ -304,12 +304,13 @@ function normalizeWebSocketPayload (data) {
  * @param {unknown[] | null | undefined} parts Non-string entries are skipped.
  * @returns {string} lower-cased snapshot or an empty string
  */
-function buildSearchSnapshot (parts) {
+function buildSearchSnapshot(parts) {
   if (!Array.isArray(parts) || parts.length === 0) return ''
 
-  const maxBytes = Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
-    ? SEARCH_SNAPSHOT_MAX_BYTES
-    : 0
+  const maxBytes =
+    Number.isFinite(SEARCH_SNAPSHOT_MAX_BYTES) && SEARCH_SNAPSHOT_MAX_BYTES > 0
+      ? SEARCH_SNAPSHOT_MAX_BYTES
+      : 0
 
   /** @type {string[]} */
   const result = []
@@ -358,7 +359,7 @@ function buildSearchSnapshot (parts) {
  * @param {unknown} value
  * @returns {string} search snapshot or an empty string
  */
-function buildJsonSearchSnapshot (value) {
+function buildJsonSearchSnapshot(value) {
   if (!value) return ''
 
   // Fast path for flat objects (common case: headers)

@@ -56,7 +56,7 @@ const { createEventsRoutes } = require('./events')
  * @param {string[]} uiOrigins
  * @returns {import('express').RequestHandler}
  */
-function createCrossSiteGuard (uiOrigins) {
+function createCrossSiteGuard(uiOrigins) {
   return (req, res, next) => {
     if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
       return next()
@@ -77,7 +77,7 @@ function createCrossSiteGuard (uiOrigins) {
  * @param {ApiDeps} deps
  * @returns {import('express').Router}
  */
-function createApiRouter (deps) {
+function createApiRouter(deps) {
   const {
     logStore,
     stats,
@@ -104,17 +104,21 @@ function createApiRouter (deps) {
   router.use(createEditRulesRoutes({ ruleStore, storageDir, upload }))
   router.use(createBlockedRoutes({ router: proxyRouter }))
   router.use(createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }))
-  router.use(createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter }))
-  router.use(createEventsRoutes({
-    logStore,
-    stats,
-    configStore,
-    ruleStore,
-    router: proxyRouter,
-    resourceStore,
-    bypassCounter,
-    keepAliveMs: eventsKeepAliveMs
-  }))
+  router.use(
+    createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter })
+  )
+  router.use(
+    createEventsRoutes({
+      logStore,
+      stats,
+      configStore,
+      ruleStore,
+      router: proxyRouter,
+      resourceStore,
+      bypassCounter,
+      keepAliveMs: eventsKeepAliveMs
+    })
+  )
 
   return router
 }

@@ -16,12 +16,28 @@
 // Hop-by-hop headers never travel upstream: undici rejects `keep-alive`,
 // `upgrade` and `http2-settings` outright, and `connection` is managed by
 // the dispatcher.
-const OMIT_HEADERS_BASE = ['proxy-connection', 'connection', 'keep-alive', 'upgrade', 'http2-settings']
-const OMIT_HEADERS_CONDITIONAL = ['if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since']
+const OMIT_HEADERS_BASE = [
+  'proxy-connection',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'http2-settings'
+]
+const OMIT_HEADERS_CONDITIONAL = [
+  'if-none-match',
+  'if-modified-since',
+  'if-match',
+  'if-unmodified-since'
+]
 
 // Composed header omission sets used across different upstream flows to keep
 // behaviour consistent while avoiding inline array duplication.
-const OMIT_HEADERS_PROXY = ['x-target-url', ...OMIT_HEADERS_BASE, 'content-length', ...OMIT_HEADERS_CONDITIONAL]
+const OMIT_HEADERS_PROXY = [
+  'x-target-url',
+  ...OMIT_HEADERS_BASE,
+  'content-length',
+  ...OMIT_HEADERS_CONDITIONAL
+]
 const OMIT_HEADERS_MITM = [...OMIT_HEADERS_BASE, ...OMIT_HEADERS_CONDITIONAL]
 
 // Precomputed omit sets for hot-path header forwarding helpers to avoid
@@ -51,13 +67,16 @@ const customOmitSetCache = new Map()
  * @param {string[]|undefined} omit
  * @returns {Set<string>}
  */
-function getOmitSet (omit) {
+function getOmitSet(omit) {
   if (omit === OMIT_HEADERS_PROXY) return OMIT_HEADERS_PROXY_SET
   if (omit === OMIT_HEADERS_MITM) return OMIT_HEADERS_MITM_SET
   if (omit === OMIT_HEADERS_BASE) return OMIT_HEADERS_BASE_SET
   if (!Array.isArray(omit) || omit.length === 0) return new Set()
 
-  const key = omit.map(h => h.toLowerCase()).sort().join(',')
+  const key = omit
+    .map(h => h.toLowerCase())
+    .sort()
+    .join(',')
   const cached = customOmitSetCache.get(key)
   if (cached) return cached
 
@@ -75,7 +94,7 @@ function getOmitSet (omit) {
  * @param {HeaderMap} [overrides]
  * @returns {HeaderMap}
  */
-function createForwardHeaders (sourceHeaders, omit = [], overrides = {}) {
+function createForwardHeaders(sourceHeaders, omit = [], overrides = {}) {
   /** @type {HeaderMap} */
   const result = {}
   const omitSet = getOmitSet(omit)
@@ -126,7 +145,7 @@ const IDENTIFYING_HEADER_PREFIXES = ['sentry-']
  * @param {HeaderMap} [headers]
  * @returns {HeaderMap}
  */
-function stripIdentifyingHeaders (headers = {}) {
+function stripIdentifyingHeaders(headers = {}) {
   if (!headers || typeof headers !== 'object') return {}
 
   /** @type {HeaderMap} */
@@ -170,7 +189,7 @@ const sanitizedHeadersCache = new WeakMap()
  * @param {string[]} [omit]
  * @returns {HeaderMap}
  */
-function sanitizeHeaders (headers = {}, omit = []) {
+function sanitizeHeaders(headers = {}, omit = []) {
   if (!headers || typeof headers !== 'object') return {}
 
   let omitKey = ''
@@ -239,7 +258,7 @@ function sanitizeHeaders (headers = {}, omit = []) {
  * @param {string[]} [omit]
  * @returns {HeaderMap}
  */
-function sanitizeAndStripIdentifyingHeaders (headers = {}, omit = []) {
+function sanitizeAndStripIdentifyingHeaders(headers = {}, omit = []) {
   if (!headers || typeof headers !== 'object') return {}
 
   /** @type {Set<string>|null} */
@@ -281,7 +300,7 @@ function sanitizeAndStripIdentifyingHeaders (headers = {}, omit = []) {
  * @param {import('http').ServerResponse} res
  * @param {string} [sourceTag]
  */
-function applyCacheBypassHeadersToResponse (res, sourceTag) {
+function applyCacheBypassHeadersToResponse(res, sourceTag) {
   if (!res || typeof res.setHeader !== 'function') return
   try {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -301,7 +320,7 @@ function applyCacheBypassHeadersToResponse (res, sourceTag) {
  *
  * @param {HeaderMap} headers
  */
-function applyCacheBypassHeadersToObject (headers) {
+function applyCacheBypassHeadersToObject(headers) {
   if (!headers || typeof headers !== 'object') return
   headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate'
   headers.Pragma = 'no-cache'
@@ -317,7 +336,7 @@ function applyCacheBypassHeadersToObject (headers) {
  * @param {HeaderMap} headers
  * @param {Buffer} buffer
  */
-function setContentLength (headers, buffer) {
+function setContentLength(headers, buffer) {
   if (!headers || typeof headers !== 'object' || !Buffer.isBuffer(buffer)) return
   const keys = Object.keys(headers).filter(key => key.toLowerCase() === 'content-length')
   if (!keys.length) return

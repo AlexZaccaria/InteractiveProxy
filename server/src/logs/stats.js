@@ -44,7 +44,7 @@ const DASHBOARD_PROXIED_SOURCES = new Set(['proxied', 'tunnel', 'mitm', 'websock
  *
  * @returns {DashboardStats} Fresh stats with all counters set to zero.
  */
-function createEmptyDashboardStats () {
+function createEmptyDashboardStats() {
   return {
     total: 0,
     served: 0,
@@ -76,7 +76,7 @@ function createEmptyDashboardStats () {
  *
  * @returns {DashboardPerformanceStats}
  */
-function createEmptyPerformanceStats () {
+function createEmptyPerformanceStats() {
   return {
     upstream: { count: 0, totalMs: 0, maxMs: 0 },
     total: { count: 0, totalMs: 0, maxMs: 0 },
@@ -137,7 +137,7 @@ function createEmptyPerformanceStats () {
  * @param {unknown} path
  * @returns {string}
  */
-function sanitizePathForSuggestions (path) {
+function sanitizePathForSuggestions(path) {
   if (!path || typeof path !== 'string') return '/'
   const base = path.split('?')[0] || '/'
   const segments = base.split('/').filter(Boolean).slice(0, 2)
@@ -151,22 +151,21 @@ function sanitizePathForSuggestions (path) {
  * @param {LogEntry | null | undefined} logEntry
  * @returns {HostInfo | null}
  */
-function extractHostInfoFromLog (logEntry) {
+function extractHostInfoFromLog(logEntry) {
   if (!logEntry || typeof logEntry !== 'object') return null
 
   if (logEntry._hostInfo && logEntry._hostInfo.host) {
     return logEntry._hostInfo
   }
 
-  const headerHost = typeof logEntry.headers?.host === 'string'
-    ? logEntry.headers.host.toLowerCase()
-    : null
+  const headerHost =
+    typeof logEntry.headers?.host === 'string' ? logEntry.headers.host.toLowerCase() : null
 
   /**
    * @param {unknown} candidate
    * @returns {HostInfo | null}
    */
-  const tryParseUrl = (candidate) => {
+  const tryParseUrl = candidate => {
     if (!candidate || typeof candidate !== 'string') return null
     const trimmed = candidate.trim()
     if (!trimmed) return null
@@ -250,7 +249,7 @@ function extractHostInfoFromLog (logEntry) {
  * @param {(Error & { code?: string, name?: string, type?: string }) | null | undefined} error
  * @returns {string} One of: 'timeout', 'aborted', 'connection', 'protocol', 'upstream', 'unknown'.
  */
-function classifyUpstreamError (error) {
+function classifyUpstreamError(error) {
   if (!error || typeof error !== 'object') return 'unknown'
 
   const code = typeof error.code === 'string' ? error.code.toUpperCase() : ''
@@ -263,18 +262,23 @@ function classifyUpstreamError (error) {
   if (combined.includes('TIMEOUT')) return 'timeout'
   if (combined.includes('ABORT') || combined.includes('CANCEL')) return 'aborted'
 
-  if (code.startsWith('E') && (
-    code.includes('CONN') ||
-    code.includes('REFUSED') ||
-    code.includes('RESET') ||
-    code.includes('UNREACH') ||
-    code.includes('PIPE') ||
-    code.includes('ADDR')
-  )) {
+  if (
+    code.startsWith('E') &&
+    (code.includes('CONN') ||
+      code.includes('REFUSED') ||
+      code.includes('RESET') ||
+      code.includes('UNREACH') ||
+      code.includes('PIPE') ||
+      code.includes('ADDR'))
+  ) {
     return 'connection'
   }
 
-  if (combined.includes('PROTOCOL') || combined.includes('HTTP_PARSER') || combined.includes('UND_ERR')) {
+  if (
+    combined.includes('PROTOCOL') ||
+    combined.includes('HTTP_PARSER') ||
+    combined.includes('UND_ERR')
+  ) {
     return 'protocol'
   }
 
@@ -288,12 +292,15 @@ function classifyUpstreamError (error) {
  *
  * @param {LogEntry | null | undefined} logEntry
  */
-function computeLogEntryMetrics (logEntry) {
+function computeLogEntryMetrics(logEntry) {
   if (!logEntry || typeof logEntry !== 'object') return
 
   try {
     // Timing metrics
-    if (typeof logEntry.requestStartTs === 'number' && typeof logEntry.totalDurationMs !== 'number') {
+    if (
+      typeof logEntry.requestStartTs === 'number' &&
+      typeof logEntry.totalDurationMs !== 'number'
+    ) {
       logEntry.totalDurationMs = Date.now() - logEntry.requestStartTs
     }
 
@@ -335,7 +342,10 @@ function computeLogEntryMetrics (logEntry) {
 
       if (typeof logEntry.responseSize === 'number' && logEntry.responseSize >= 0) {
         responseBytes = logEntry.responseSize
-      } else if (typeof logEntry.rawResponseBodyBase64 === 'string' && logEntry.rawResponseBodyBase64) {
+      } else if (
+        typeof logEntry.rawResponseBodyBase64 === 'string' &&
+        logEntry.rawResponseBodyBase64
+      ) {
         try {
           responseBytes = Buffer.from(logEntry.rawResponseBodyBase64, 'base64').length
         } catch {
@@ -380,13 +390,11 @@ function computeLogEntryMetrics (logEntry) {
  * @param {RouteStat} route
  * @returns {RouteSnapshot}
  */
-function buildRouteSnapshot (route) {
+function buildRouteSnapshot(route) {
   const avgMs = route.totalMs / route.count
   const totalBytes = typeof route.totalResponseBytes === 'number' ? route.totalResponseBytes : 0
   const avgBytes = route.count > 0 ? totalBytes / route.count : 0
-  const kbPerSecond = route.totalMs > 0
-    ? (totalBytes * 1000) / (1024 * route.totalMs)
-    : 0
+  const kbPerSecond = route.totalMs > 0 ? (totalBytes * 1000) / (1024 * route.totalMs) : 0
 
   // Derive an effective handling mode for this route from the *observed*
   // traffic sources recorded in routeStats. This powers the audit panel
@@ -428,7 +436,7 @@ function buildRouteSnapshot (route) {
  * @param {RouteSnapshot} b
  * @returns {number}
  */
-function sortRouteSnapshots (a, b) {
+function sortRouteSnapshots(a, b) {
   if (b.avgMs !== a.avgMs) return b.avgMs - a.avgMs
   if (b.maxMs !== a.maxMs) return b.maxMs - a.maxMs
   return b.count - a.count
@@ -473,7 +481,7 @@ function sortRouteSnapshots (a, b) {
  *
  * @returns {Stats}
  */
-function createStats () {
+function createStats() {
   /**
    * In-memory dashboard statistics derived from the current log window.
    * Always updated incrementally when logs are added, removed, or cleared.
@@ -504,7 +512,7 @@ function createStats () {
    * @param {LogEntry | null | undefined} logEntry - The log entry to apply.
    * @param {1|-1} direction - +1 when adding, -1 when removing.
    */
-  function applyDashboardStatsDelta (logEntry, direction) {
+  function applyDashboardStatsDelta(logEntry, direction) {
     if (!logEntry || typeof logEntry !== 'object') return
     if (direction !== 1 && direction !== -1) return
 
@@ -562,7 +570,10 @@ function createStats () {
       performanceStats.payloads.request.count += dir
       performanceStats.payloads.request.totalBytes += dir * value
       if (dir === 1) {
-        performanceStats.payloads.request.maxBytes = Math.max(performanceStats.payloads.request.maxBytes, value)
+        performanceStats.payloads.request.maxBytes = Math.max(
+          performanceStats.payloads.request.maxBytes,
+          value
+        )
       }
     }
 
@@ -571,7 +582,10 @@ function createStats () {
       performanceStats.payloads.response.count += dir
       performanceStats.payloads.response.totalBytes += dir * value
       if (dir === 1) {
-        performanceStats.payloads.response.maxBytes = Math.max(performanceStats.payloads.response.maxBytes, value)
+        performanceStats.payloads.response.maxBytes = Math.max(
+          performanceStats.payloads.response.maxBytes,
+          value
+        )
       }
     }
 
@@ -609,7 +623,8 @@ function createStats () {
       // traffic for this host/path instead of re-running routing on a truncated
       // path. Counts are adjusted symmetrically when logs roll out of the
       // in-memory window.
-      const src = typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
+      const src =
+        typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
       const sourceCounts = route.sourceCounts || (route.sourceCounts = Object.create(null))
       const prevSourceCount = sourceCounts[src] || 0
       const nextSourceCount = prevSourceCount + dir
@@ -638,12 +653,14 @@ function createStats () {
    * @param {() => void} listener
    * @returns {() => void} Unsubscribe.
    */
-  function onChange (listener) {
+  function onChange(listener) {
     changeListeners.add(listener)
-    return () => { changeListeners.delete(listener) }
+    return () => {
+      changeListeners.delete(listener)
+    }
   }
 
-  function notifyChange () {
+  function notifyChange() {
     for (const listener of changeListeners) {
       try {
         listener()
@@ -664,7 +681,7 @@ function createStats () {
    * @param {LogEntry | null | undefined} logEntry
    * @param {number} bytes
    */
-  function recordStreamedResponseSize (logEntry, bytes) {
+  function recordStreamedResponseSize(logEntry, bytes) {
     if (!logEntry || typeof logEntry !== 'object') return
     if (!Number.isFinite(bytes) || bytes < 0) return
     if (typeof logEntry.responseBytes === 'number') return
@@ -674,7 +691,10 @@ function createStats () {
 
     performanceStats.payloads.response.count += 1
     performanceStats.payloads.response.totalBytes += bytes
-    performanceStats.payloads.response.maxBytes = Math.max(performanceStats.payloads.response.maxBytes, bytes)
+    performanceStats.payloads.response.maxBytes = Math.max(
+      performanceStats.payloads.response.maxBytes,
+      bytes
+    )
 
     const hostInfo = extractHostInfoFromLog(logEntry)
     if (hostInfo && hostInfo.host) {
@@ -685,7 +705,8 @@ function createStats () {
         // The entry's route was dropped at add time because its duration
         // rounded to 0 ms (routes exist only with a positive total); recreate
         // it with this entry so the streamed bytes stay visible.
-        const src = typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
+        const src =
+          typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
         const totalMs = typeof logEntry.totalDurationMs === 'number' ? logEntry.totalDurationMs : 0
         route = {
           host: hostInfo.host,
@@ -705,7 +726,7 @@ function createStats () {
     notifyChange()
   }
 
-  function reset () {
+  function reset() {
     dashboardStats = createEmptyDashboardStats()
     performanceStats = createEmptyPerformanceStats()
     routeStats = new Map()
@@ -714,7 +735,7 @@ function createStats () {
   /**
    * @returns {DashboardSnapshot}
    */
-  function getDashboardSnapshot () {
+  function getDashboardSnapshot() {
     const { editedRequests, ...stats } = dashboardStats
 
     const perf = performanceStats
@@ -756,16 +777,25 @@ function createStats () {
       .filter(route => route.count > 0)
       .map(buildRouteSnapshot)
 
-    const slowestRoutes = allRouteSnapshots
-      .slice()
-      .sort(sortRouteSnapshots)
-      .slice(0, 10)
+    const slowestRoutes = allRouteSnapshots.slice().sort(sortRouteSnapshots).slice(0, 10)
 
     const routesByHandling = {
-      processed: allRouteSnapshots.filter(route => route.handling === 'processed').sort(sortRouteSnapshots).slice(0, 10),
-      redirected: allRouteSnapshots.filter(route => route.handling === 'redirected').sort(sortRouteSnapshots).slice(0, 10),
-      blocked: allRouteSnapshots.filter(route => route.handling === 'blocked').sort(sortRouteSnapshots).slice(0, 10),
-      served: allRouteSnapshots.filter(route => route.handling === 'served').sort(sortRouteSnapshots).slice(0, 10)
+      processed: allRouteSnapshots
+        .filter(route => route.handling === 'processed')
+        .sort(sortRouteSnapshots)
+        .slice(0, 10),
+      redirected: allRouteSnapshots
+        .filter(route => route.handling === 'redirected')
+        .sort(sortRouteSnapshots)
+        .slice(0, 10),
+      blocked: allRouteSnapshots
+        .filter(route => route.handling === 'blocked')
+        .sort(sortRouteSnapshots)
+        .slice(0, 10),
+      served: allRouteSnapshots
+        .filter(route => route.handling === 'served')
+        .sort(sortRouteSnapshots)
+        .slice(0, 10)
     }
 
     return {
@@ -789,7 +819,7 @@ function createStats () {
    * @param {LogStore} store
    * @returns {AuditSnapshot}
    */
-  function buildAuditSnapshot (store) {
+  function buildAuditSnapshot(store) {
     /** @type {Record<string, number>} */
     const errorBuckets = Object.create(null)
     /** @type {Map<string, { host: string, count: number, totalDuration: number }>} */

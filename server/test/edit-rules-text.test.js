@@ -40,19 +40,22 @@ describe('normalizeEditRule (text)', () => {
   test('fills defaults and generates a UUID id', () => {
     const rule = internals.normalizeEditRule({})
     assert.match(rule.id, /^[0-9a-f-]{36}$/)
-    assert.deepEqual({ ...rule, id: 'x' }, {
-      id: 'x',
-      enabled: true,
-      kind: 'text',
-      name: '',
-      replacement: '',
-      useRegex: false,
-      caseSensitive: false,
-      url: '',
-      startVariants: [],
-      endVariants: [],
-      target: 'both'
-    })
+    assert.deepEqual(
+      { ...rule, id: 'x' },
+      {
+        id: 'x',
+        enabled: true,
+        kind: 'text',
+        name: '',
+        replacement: '',
+        useRegex: false,
+        caseSensitive: false,
+        url: '',
+        startVariants: [],
+        endVariants: [],
+        target: 'both'
+      }
+    )
   })
 
   test('trims variants, drops empty and non-string entries, keeps strict booleans only', () => {
@@ -89,7 +92,12 @@ describe('normalizeEditRule (text)', () => {
     assert.deepEqual(rule.endVariants, ['x'])
 
     // explicit variants win over the legacy fields; blank legacy fields are dropped
-    const mixed = internals.normalizeEditRule({ start: 'legacy', end: 'x', startVariants: ['v'], endVariants: [] })
+    const mixed = internals.normalizeEditRule({
+      start: 'legacy',
+      end: 'x',
+      startVariants: ['v'],
+      endVariants: []
+    })
     assert.deepEqual(mixed.startVariants, ['v'])
     assert.deepEqual(mixed.endVariants, ['x'])
     assert.deepEqual(internals.normalizeEditRule({ start: '  ', end: '' }).startVariants, [])
@@ -130,7 +138,12 @@ describe('normalizeEditRulePreset', () => {
 
   test('presets load from disk and are exposed by GET /api/edit-rule-presets', async () => {
     writeStorageFile('edit-rule-presets.json', [
-      { id: 'p1', name: 'One', kind: 'jsonPath', rule: { path: 'root.a', value: 'v', url: '/x', id: 'rid', enabled: false } }
+      {
+        id: 'p1',
+        name: 'One',
+        kind: 'jsonPath',
+        rule: { path: 'root.a', value: 'v', url: '/x', id: 'rid', enabled: false }
+      }
     ])
     internals.loadEditRulePresets()
     const response = await fetch(`${baseUrl}/api/edit-rule-presets`)
@@ -145,13 +158,25 @@ describe('normalizeEditRulePreset', () => {
 
 describe('serialization to disk', () => {
   test('splitLongStringIntoSegments splits on whitespace within maxLen', () => {
-    assert.deepEqual(internals.splitLongStringIntoSegments('aaaa bbbb cccc dddd', 9), ['aaaa bbbb', 'cccc dddd'])
-    assert.deepEqual(internals.splitLongStringIntoSegments('aaaaaaaaaaaa bb', 5), ['aaaaaaaaaaaa', 'bb'])
+    assert.deepEqual(internals.splitLongStringIntoSegments('aaaa bbbb cccc dddd', 9), [
+      'aaaa bbbb',
+      'cccc dddd'
+    ])
+    assert.deepEqual(internals.splitLongStringIntoSegments('aaaaaaaaaaaa bb', 5), [
+      'aaaaaaaaaaaa',
+      'bb'
+    ])
     assert.deepEqual(internals.splitLongStringIntoSegments('', 5), [])
   })
 
   test('text rules: replacement trimmed, legacy start/end dropped, short strings kept flat', () => {
-    const out = internals.serializeEditRuleForDisk({ kind: 'text', replacement: '  r  ', start: 's', end: 'e', startVariants: ['s'] })
+    const out = internals.serializeEditRuleForDisk({
+      kind: 'text',
+      replacement: '  r  ',
+      start: 's',
+      end: 'e',
+      startVariants: ['s']
+    })
     assert.deepEqual(out, { kind: 'text', replacement: 'r', startVariants: ['s'] })
   })
 
@@ -165,26 +190,56 @@ describe('serialization to disk', () => {
 
   test('deserializeEditRuleFromDisk joins segment arrays of known string fields only', () => {
     const out = internals.deserializeEditRuleFromDisk({
-      value: ['a', 'b'], replacement: ['x'], name: ['n', 'm'], path: ['p'], url: ['u'], other: ['keep']
+      value: ['a', 'b'],
+      replacement: ['x'],
+      name: ['n', 'm'],
+      path: ['p'],
+      url: ['u'],
+      other: ['keep']
     })
-    assert.deepEqual(out, { value: 'a b', replacement: 'x', name: 'n m', path: 'p', url: 'u', other: ['keep'] })
+    assert.deepEqual(out, {
+      value: 'a b',
+      replacement: 'x',
+      name: 'n m',
+      path: 'p',
+      url: 'u',
+      other: ['keep']
+    })
   })
 })
 
 describe('replaceTextLiteral', () => {
   test('between mode replaces every start..end span', () => {
-    assert.deepEqual(internals.replaceTextLiteral('a<x>b<y>c', '<', '>', '#', true), { text: 'a#b#c', count: 2 })
+    assert.deepEqual(internals.replaceTextLiteral('a<x>b<y>c', '<', '>', '#', true), {
+      text: 'a#b#c',
+      count: 2
+    })
   })
 
   test('single marker mode replaces every occurrence, case-insensitive unless asked', () => {
-    assert.deepEqual(internals.replaceTextLiteral('Foo foo FOO', 'foo', null, '_', false), { text: '_ _ _', count: 3 })
-    assert.deepEqual(internals.replaceTextLiteral('Foo foo FOO', 'foo', null, '_', true), { text: 'Foo _ FOO', count: 1 })
-    assert.deepEqual(internals.replaceTextLiteral('a.b.c', null, '.', '-', true), { text: 'a-b-c', count: 2 })
+    assert.deepEqual(internals.replaceTextLiteral('Foo foo FOO', 'foo', null, '_', false), {
+      text: '_ _ _',
+      count: 3
+    })
+    assert.deepEqual(internals.replaceTextLiteral('Foo foo FOO', 'foo', null, '_', true), {
+      text: 'Foo _ FOO',
+      count: 1
+    })
+    assert.deepEqual(internals.replaceTextLiteral('a.b.c', null, '.', '-', true), {
+      text: 'a-b-c',
+      count: 2
+    })
   })
 
   test('no markers or unterminated span leave the text untouched', () => {
-    assert.deepEqual(internals.replaceTextLiteral('abc', '', '', 'x', true), { text: 'abc', count: 0 })
-    assert.deepEqual(internals.replaceTextLiteral('a<x b', '<', '>', '#', true), { text: 'a<x b', count: 0 })
+    assert.deepEqual(internals.replaceTextLiteral('abc', '', '', 'x', true), {
+      text: 'abc',
+      count: 0
+    })
+    assert.deepEqual(internals.replaceTextLiteral('a<x b', '<', '>', '#', true), {
+      text: 'a<x b',
+      count: 0
+    })
   })
 })
 
@@ -195,12 +250,22 @@ describe('compileEditRule', () => {
   })
 
   test('regex rules build a global regex, lazy between-span, i flag unless case sensitive', () => {
-    const between = internals.compileEditRule({ enabled: true, start: 'a', end: 'b', useRegex: true })
+    const between = internals.compileEditRule({
+      enabled: true,
+      start: 'a',
+      end: 'b',
+      useRegex: true
+    })
     assert.equal(between.mode, 'between')
     assert.equal(between.regex.source, 'a[\\s\\S]*?b')
     assert.equal(between.regex.flags, 'gi')
 
-    const prefix = internals.compileEditRule({ enabled: true, start: 'a', useRegex: true, caseSensitive: true })
+    const prefix = internals.compileEditRule({
+      enabled: true,
+      start: 'a',
+      useRegex: true,
+      caseSensitive: true
+    })
     assert.equal(prefix.mode, 'prefix')
     assert.equal(prefix.regex.flags, 'g')
 
@@ -208,7 +273,10 @@ describe('compileEditRule', () => {
   })
 
   test('an invalid regex throws SyntaxError', () => {
-    assert.throws(() => internals.compileEditRule({ enabled: true, start: '(', useRegex: true }), SyntaxError)
+    assert.throws(
+      () => internals.compileEditRule({ enabled: true, start: '(', useRegex: true }),
+      SyntaxError
+    )
   })
 
   test('rebuildEditRuleCache skips an invalid regex rule with a warning and keeps the others', () => {
@@ -218,20 +286,37 @@ describe('compileEditRule', () => {
     try {
       loadRules([
         { id: 'ok1', kind: 'text', startVariants: ['a'], replacement: 'b' },
-        { id: 'bad', name: 'Broken', kind: 'text', startVariants: ['('], replacement: 'x', useRegex: true },
+        {
+          id: 'bad',
+          name: 'Broken',
+          kind: 'text',
+          startVariants: ['('],
+          replacement: 'x',
+          useRegex: true
+        },
         { id: 'ok2', kind: 'text', startVariants: ['c'], replacement: 'd' }
       ])
     } finally {
       console.warn = originalWarn
     }
-    assert.deepEqual(internals.getCompiledRules().map(c => c.rule.id), ['ok1', 'ok2'])
+    assert.deepEqual(
+      internals.getCompiledRules().map(c => c.rule.id),
+      ['ok1', 'ok2']
+    )
     assert.equal(warnings.length, 1)
-    assert.match(warnings[0], /^\[proxy\]\[edit-rules\] Skipping rule bad "Broken": Invalid regular expression/)
+    assert.match(
+      warnings[0],
+      /^\[proxy\]\[edit-rules\] Skipping rule bad "Broken": Invalid regular expression/
+    )
   })
 })
 
 describe('rule cache and application', () => {
-  const context = (phase, fullUrl = 'https://api.example.com/v1/x') => ({ requestUrl: '/v1/x', fullUrl, phase })
+  const context = (phase, fullUrl = 'https://api.example.com/v1/x') => ({
+    requestUrl: '/v1/x',
+    fullUrl,
+    phase
+  })
 
   before(() => {
     loadRules([
@@ -242,9 +327,21 @@ describe('rule cache and application', () => {
       { id: 'off', kind: 'text', startVariants: ['never'], replacement: 'x', enabled: false },
       { id: 'req', kind: 'text', startVariants: ['phase'], replacement: 'REQ', target: 'request' },
       { id: 'res', kind: 'text', startVariants: ['phase'], replacement: 'RES', target: 'response' },
-      { id: 'scoped', kind: 'text', startVariants: ['scoped'], replacement: 'S', url: 'https://api.example.com/v1' },
+      {
+        id: 'scoped',
+        kind: 'text',
+        startVariants: ['scoped'],
+        replacement: 'S',
+        url: 'https://api.example.com/v1'
+      },
       { id: 'legacy', kind: 'text', start: 'legacy', replacement: 'L' },
-      { id: 'variants', kind: 'text', startVariants: ['[a]', '[b]'], endVariants: ['(1)', '(2)'], replacement: 'V' },
+      {
+        id: 'variants',
+        kind: 'text',
+        startVariants: ['[a]', '[b]'],
+        endVariants: ['(1)', '(2)'],
+        replacement: 'V'
+      },
       { id: 'suffix', kind: 'text', endVariants: ['END'], replacement: 'E' }
     ])
   })
@@ -272,46 +369,107 @@ describe('rule cache and application', () => {
   })
 
   test('without a context every compiled rule applies in order, ignoring target and URL', () => {
-    const result = internals.applyEditRulesToText('foo <x> Hello hello 42 phase scoped legacy [a]..(2) zEND')
+    const result = internals.applyEditRulesToText(
+      'foo <x> Hello hello 42 phase scoped legacy [a]..(2) zEND'
+    )
     // the regex rule turned "(2)" into "(N)" before the variants rule ran,
     // so the between span never matched: rules see the output of earlier rules
     assert.equal(result.text, 'bar # Hi hello N REQ S L [a]..(N) zE')
-    assert.deepEqual(result.appliedRuleIds, ['plain', 'between', 'cs', 'rx', 'req', 'scoped', 'legacy', 'suffix'])
+    assert.deepEqual(result.appliedRuleIds, [
+      'plain',
+      'between',
+      'cs',
+      'rx',
+      'req',
+      'scoped',
+      'legacy',
+      'suffix'
+    ])
     assert.equal(result.changed, true)
   })
 
   test('phase selects request/response targets; both-rules always apply', () => {
-    assert.deepEqual(internals.applyEditRulesToText('foo phase scoped', context('request')),
-      { text: 'bar REQ S', appliedRuleIds: ['plain', 'req', 'scoped'], changed: true })
-    assert.deepEqual(internals.applyEditRulesToText('foo phase scoped', context('response')),
-      { text: 'bar RES S', appliedRuleIds: ['plain', 'res', 'scoped'], changed: true })
+    assert.deepEqual(internals.applyEditRulesToText('foo phase scoped', context('request')), {
+      text: 'bar REQ S',
+      appliedRuleIds: ['plain', 'req', 'scoped'],
+      changed: true
+    })
+    assert.deepEqual(internals.applyEditRulesToText('foo phase scoped', context('response')), {
+      text: 'bar RES S',
+      appliedRuleIds: ['plain', 'res', 'scoped'],
+      changed: true
+    })
     // a context without phase counts as request
-    assert.deepEqual(internals.applyEditRulesToText('phase', { requestUrl: '/x' }),
-      { text: 'REQ', appliedRuleIds: ['req'], changed: true })
+    assert.deepEqual(internals.applyEditRulesToText('phase', { requestUrl: '/x' }), {
+      text: 'REQ',
+      appliedRuleIds: ['req'],
+      changed: true
+    })
   })
 
   test('URL-scoped rules skip other hosts/paths', () => {
-    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/other', fullUrl: 'https://other.com/other', phase: 'request' }),
-      { text: 'scoped', appliedRuleIds: [], changed: false })
+    assert.deepEqual(
+      internals.applyEditRulesToText('scoped', {
+        requestUrl: '/other',
+        fullUrl: 'https://other.com/other',
+        phase: 'request'
+      }),
+      { text: 'scoped', appliedRuleIds: [], changed: false }
+    )
     // the host of an absolute pattern must match: the relative requestUrl
     // candidate (no host) cannot satisfy it on its own
-    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', fullUrl: 'https://other.com/v1/x', phase: 'request' }),
-      { text: 'scoped', appliedRuleIds: [], changed: false })
-    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', phase: 'request' }),
-      { text: 'scoped', appliedRuleIds: [], changed: false })
-    assert.deepEqual(internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', fullUrl: 'https://api.example.com/v1/x', phase: 'request' }),
-      { text: 'S', appliedRuleIds: ['scoped'], changed: true })
+    assert.deepEqual(
+      internals.applyEditRulesToText('scoped', {
+        requestUrl: '/v1/x',
+        fullUrl: 'https://other.com/v1/x',
+        phase: 'request'
+      }),
+      { text: 'scoped', appliedRuleIds: [], changed: false }
+    )
+    assert.deepEqual(
+      internals.applyEditRulesToText('scoped', { requestUrl: '/v1/x', phase: 'request' }),
+      { text: 'scoped', appliedRuleIds: [], changed: false }
+    )
+    assert.deepEqual(
+      internals.applyEditRulesToText('scoped', {
+        requestUrl: '/v1/x',
+        fullUrl: 'https://api.example.com/v1/x',
+        phase: 'request'
+      }),
+      { text: 'S', appliedRuleIds: ['scoped'], changed: true }
+    )
   })
 
   test('getCompiledRulesForContext filters by phase and URL; null context returns everything', () => {
     const ids = internals.getCompiledRulesForContext(context('response')).map(c => c.rule.id)
-    assert.deepEqual(ids, ['plain', 'between', 'cs', 'rx', 'res', 'scoped', 'legacy', 'variants', 'variants', 'variants', 'variants', 'suffix'])
+    assert.deepEqual(ids, [
+      'plain',
+      'between',
+      'cs',
+      'rx',
+      'res',
+      'scoped',
+      'legacy',
+      'variants',
+      'variants',
+      'variants',
+      'variants',
+      'suffix'
+    ])
     assert.equal(internals.getCompiledRulesForContext(null).length, 13)
   })
 
   test('empty or non-string input is returned untouched', () => {
-    assert.deepEqual(internals.applyEditRulesToText(''), { text: '', appliedRuleIds: [], changed: false })
-    assert.deepEqual(internals.applyEditRulesToText(5), { text: 5, appliedRuleIds: [], changed: false })
+    assert.deepEqual(internals.applyEditRulesToText(''), {
+      text: '',
+      appliedRuleIds: [],
+      changed: false
+    })
+    assert.deepEqual(internals.applyEditRulesToText(5), {
+      text: 5,
+      appliedRuleIds: [],
+      changed: false
+    })
   })
 
   test('applyEditRulesToHeaders rewrites string and array values, passes other types through', () => {
@@ -324,12 +482,18 @@ describe('rule cache and application', () => {
       appliedRuleIds: ['plain'],
       changed: true
     })
-    assert.deepEqual(internals.applyEditRulesToHeaders({ 'x-a': 'phase' }),
-      { headers: { 'x-a': 'REQ' }, appliedRuleIds: ['req'], changed: true })
+    assert.deepEqual(internals.applyEditRulesToHeaders({ 'x-a': 'phase' }), {
+      headers: { 'x-a': 'REQ' },
+      appliedRuleIds: ['req'],
+      changed: true
+    })
   })
 
   test('applyEditRulesToBuffer decodes UTF-8, rewrites and reports before/after text', () => {
-    const result = internals.applyEditRulesToBuffer(Buffer.from('foo è <x>'), { requestUrl: '/x', phase: 'request' })
+    const result = internals.applyEditRulesToBuffer(Buffer.from('foo è <x>'), {
+      requestUrl: '/x',
+      phase: 'request'
+    })
     assert.equal(result.buffer.toString('utf8'), 'bar è #')
     assert.deepEqual(result.appliedRuleIds, ['plain', 'between'])
     assert.equal(result.changed, true)
@@ -353,7 +517,16 @@ describe('rule cache and application', () => {
   })
 
   test('regex between spans, case-insensitive default and whitespace-only variants', () => {
-    loadRules([{ id: 'rb', kind: 'text', startVariants: ['<b>'], endVariants: ['</b>'], replacement: 'X', useRegex: true }])
+    loadRules([
+      {
+        id: 'rb',
+        kind: 'text',
+        startVariants: ['<b>'],
+        endVariants: ['</b>'],
+        replacement: 'X',
+        useRegex: true
+      }
+    ])
     assert.equal(internals.applyEditRulesToText('a <b>1</b> b <b>2</b>').text, 'a X b X')
 
     loadRules([{ id: 'ci', kind: 'text', startVariants: ['ABC'], replacement: 'x' }])
@@ -363,7 +536,10 @@ describe('rule cache and application', () => {
       { id: 'ws', kind: 'text', startVariants: ['  '], replacement: 'x' },
       { id: 'ws2', kind: 'text', startVariants: [' a '], replacement: 'x' }
     ])
-    assert.deepEqual(internals.getCompiledRules().map(c => [c.rule.id, c.start]), [['ws2', 'a']])
+    assert.deepEqual(
+      internals.getCompiledRules().map(c => [c.rule.id, c.start]),
+      [['ws2', 'a']]
+    )
   })
 
   test('the global edit-rules switch empties the compiled views without touching the rules', async () => {
@@ -393,12 +569,18 @@ describe('rule cache and application', () => {
 describe('loadEditRules from disk', () => {
   test('a file that is not JSON resets the rules; a non-array file keeps the previous ones', () => {
     loadRules([{ id: 'x', kind: 'text', startVariants: ['a'], replacement: 'b' }])
-    assert.deepEqual(internals.getCompiledRules().map(c => c.rule.id), ['x'])
+    assert.deepEqual(
+      internals.getCompiledRules().map(c => c.rule.id),
+      ['x']
+    )
 
     writeStorageFile('edit-rules.json', { not: 'array' })
     internals.loadEditRules()
     internals.rebuildEditRuleCache()
-    assert.deepEqual(internals.getCompiledRules().map(c => c.rule.id), ['x'])
+    assert.deepEqual(
+      internals.getCompiledRules().map(c => c.rule.id),
+      ['x']
+    )
 
     require('fs').writeFileSync(proxy.files.EDIT_RULES_FILE, '{not json')
     internals.loadEditRules()

@@ -51,7 +51,7 @@ const {
  *
  * @param {BodyRewriterDeps} deps
  */
-function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isInteractive, addLog }) {
+function createBodyRewriter({ ruleStore, textRules, httpJson, connect, isInteractive, addLog }) {
   /**
    * @param {LogEntry|null|undefined} logEntry
    * @param {string[]} appliedRuleIds
@@ -75,7 +75,7 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
    * @param {Buffer|null} [params.decompressedBuffer]
    * @returns {{ body: string }}
    */
-  function buildHttpResponseLoggingView ({
+  function buildHttpResponseLoggingView({
     logEntry,
     buffer,
     contentType,
@@ -115,20 +115,20 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
 
     const hasConnect = !!connectResponse
     const isEnvelope = hasConnect && !!connectResponse.envelope
-    const allowConnectText =
-      !hasConnect || (allowUnaryConnectText && hasConnect && !isEnvelope)
+    const allowConnectText = !hasConnect || (allowUnaryConnectText && hasConnect && !isEnvelope)
 
     const lowerType = safeString(contentType).toLowerCase()
 
     // Treat any "*json"-like content-type (including application/manifest+json
     // and other +json variants) as textual so that we can safely log and parse
     // it for the UI.
-    const shouldTryText = allowConnectText && !isBinary && (
-      lowerType.includes('json') ||
-      lowerType.includes('text/') ||
-      lowerType.includes('javascript') ||
-      (contentEncoding && dataToLog !== buffer)
-    )
+    const shouldTryText =
+      allowConnectText &&
+      !isBinary &&
+      (lowerType.includes('json') ||
+        lowerType.includes('text/') ||
+        lowerType.includes('javascript') ||
+        (contentEncoding && dataToLog !== buffer))
 
     if (shouldTryText) {
       try {
@@ -166,7 +166,11 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
         const parsed = JSON.parse(responseBody)
         responseBodyJson = normalizeNestedJsonStrings(parsed)
       } catch (error) {
-        logDebug('buildHttpResponseLoggingView', 'Failed to parse HTTP JSON response for logging', error)
+        logDebug(
+          'buildHttpResponseLoggingView',
+          'Failed to parse HTTP JSON response for logging',
+          error
+        )
       }
     }
 
@@ -194,7 +198,7 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
    * @param {boolean} [params.logNonJsonBody=false] - Log non-JSON body text.
    * @returns {{ buffer: Buffer, connectRequest: DecodedConnectPayload|null }}
    */
-  function processRequestBodyWithRewrites ({
+  function processRequestBodyWithRewrites({
     buffer,
     headers,
     requestUrl,
@@ -210,25 +214,19 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
     const input = /** @type {Buffer} */ (buffer)
 
     const shouldTouchConnect =
-      (isInteractive() && !!logEntry) ||
-      ruleStore.hasAnyEditOrJsonPathRules()
+      (isInteractive() && !!logEntry) || ruleStore.hasAnyEditOrJsonPathRules()
 
     let workingBuffer = input
     /** @type {DecodedConnectPayload|null} */
     let connectRequest = null
 
     if (shouldTouchConnect) {
-      const connectResult = connect.applyConnectRewritesAndDecode(
-        logEntry,
-        input,
-        headers,
-        {
-          role: 'request',
-          allowBodyRewriteFallback,
-          updateContentEncoding: true,
-          urlContext: { requestUrl, fullUrl }
-        }
-      )
+      const connectResult = connect.applyConnectRewritesAndDecode(logEntry, input, headers, {
+        role: 'request',
+        allowBodyRewriteFallback,
+        updateContentEncoding: true,
+        urlContext: { requestUrl, fullUrl }
+      })
       workingBuffer = connectResult.buffer
       connectRequest = connectResult.connect
     }
@@ -237,13 +235,16 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
       const hasJsonPathRules = ruleStore.hasCompiledJsonPathRules()
 
       if (hasJsonPathRules || isInteractive()) {
-        const { buffer: nextBuffer } = httpJson.applyJsonRequestRewritesForLog({
-          buffer: workingBuffer,
-          headers,
-          requestUrl,
-          fullUrl,
-          logEntry
-        }, { logNonJsonBody })
+        const { buffer: nextBuffer } = httpJson.applyJsonRequestRewritesForLog(
+          {
+            buffer: workingBuffer,
+            headers,
+            requestUrl,
+            fullUrl,
+            logEntry
+          },
+          { logNonJsonBody }
+        )
         workingBuffer = nextBuffer
       }
     }
@@ -288,7 +289,7 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
    *   isBinary: boolean
    * }}
    */
-  function handleBufferedUpstreamResponseWithRewrites (options = {}) {
+  function handleBufferedUpstreamResponseWithRewrites(options = {}) {
     const {
       responseBuffer,
       upstreamHeaders,
@@ -316,20 +317,13 @@ function createBodyRewriter ({ ruleStore, textRules, httpJson, connect, isIntera
     const contentEncoding = getContentEncoding(headers)
     const isBinary = isClearlyBinaryContentType(contentType)
 
-    const {
-      buffer: effectiveResponseBuffer,
-      connect: connectResponse
-    } = connect.applyConnectRewritesAndDecode(
-      logEntry,
-      bodyBuffer,
-      headers,
-      {
+    const { buffer: effectiveResponseBuffer, connect: connectResponse } =
+      connect.applyConnectRewritesAndDecode(logEntry, bodyBuffer, headers, {
         role: 'response',
         allowBodyRewriteFallback: true,
         updateContentEncoding: true,
         urlContext: { requestUrl, fullUrl: jsonPathFullUrl }
-      }
-    )
+      })
 
     let finalResponseBuffer = effectiveResponseBuffer
     /** @type {Buffer|null} */

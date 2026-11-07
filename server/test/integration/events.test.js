@@ -32,11 +32,14 @@ const openStreams = new Set()
 /** A response large enough to be streamed instead of previewed (above the 1 MiB threshold). */
 const BIG_BINARY = Buffer.alloc(3 * 1024 * 1024, 0xab)
 
-function startUpstream () {
+function startUpstream() {
   return new Promise((resolve, reject) => {
     upstream = http.createServer((req, res) => {
       if (req.url === '/big.bin') {
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': BIG_BINARY.length
+        })
         res.end(BIG_BINARY)
         return
       }
@@ -54,28 +57,35 @@ function startUpstream () {
  * @param {{ method?: string, path: string, body?: unknown, headers?: Record<string, string> }} options
  * @returns {Promise<{ status: number, headers: import('http').IncomingHttpHeaders, body: string, json: any }>}
  */
-function request ({ method = 'GET', path, body, headers = {} }) {
+function request({ method = 'GET', path, body, headers = {} }) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body)
-    const req = http.request({
-      host: '127.0.0.1',
-      port: proxyPort,
-      method,
-      path,
-      headers: {
-        ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}),
-        ...headers
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: proxyPort,
+        method,
+        path,
+        headers: {
+          ...(payload
+            ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
+            : {}),
+          ...headers
+        }
+      },
+      res => {
+        const chunks = []
+        res.on('data', chunk => chunks.push(chunk))
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8')
+          let json = null
+          try {
+            json = JSON.parse(text)
+          } catch {}
+          resolve({ status: res.statusCode || 0, headers: res.headers, body: text, json })
+        })
       }
-    }, res => {
-      const chunks = []
-      res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8')
-        let json = null
-        try { json = JSON.parse(text) } catch {}
-        resolve({ status: res.statusCode || 0, headers: res.headers, body: text, json })
-      })
-    })
+    )
     req.on('error', reject)
     if (payload) req.write(payload)
     req.end()
@@ -89,7 +99,7 @@ function request ({ method = 'GET', path, body, headers = {} }) {
  *
  * @param {Record<string, string>} [headers]
  */
-function openStream (headers = {}) {
+function openStream(headers = {}) {
   /** @type {{ id: number | null, name: string, data: any }[]} */
   const received = []
   /** @type {string[]} */
@@ -106,7 +116,7 @@ function openStream (headers = {}) {
    * @param {{ from: number, name: string, predicate: (data: any, event: any) => boolean, resolve: (event: any) => void }} waiter
    * @returns {boolean}
    */
-  const tryResolve = (waiter) => {
+  const tryResolve = waiter => {
     for (let i = waiter.from; i < received.length; i++) {
       const event = received[i]
       if (event.name === waiter.name && waiter.predicate(event.data, event)) {
@@ -127,7 +137,7 @@ function openStream (headers = {}) {
   }
 
   /** @param {string} block */
-  const parseBlock = (block) => {
+  const parseBlock = block => {
     let id = null
     let name = 'message'
     const dataLines = []
@@ -151,70 +161,74 @@ function openStream (headers = {}) {
   let closedOnPurpose = false
 
   return new Promise((resolve, reject) => {
-    const req = http.request({
-      host: '127.0.0.1',
-      port: proxyPort,
-      method: 'GET',
-      path: '/api/events',
-      headers: { accept: 'text/event-stream', ...headers }
-    }, res => {
-      res.setEncoding('utf8')
-      res.on('data', chunk => {
-        buffer += chunk
-        let index
-        while ((index = buffer.indexOf('\n\n')) !== -1) {
-          const block = buffer.slice(0, index)
-          buffer = buffer.slice(index + 2)
-          parseBlock(block)
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: proxyPort,
+        method: 'GET',
+        path: '/api/events',
+        headers: { accept: 'text/event-stream', ...headers }
+      },
+      res => {
+        res.setEncoding('utf8')
+        res.on('data', chunk => {
+          buffer += chunk
+          let index
+          while ((index = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, index)
+            buffer = buffer.slice(index + 2)
+            parseBlock(block)
+          }
+        })
+        const stream = {
+          response: res,
+          received,
+          comments,
+          /**
+           * @param {string} name
+           * @param {(data: any, event: any) => boolean} [predicate]
+           * @param {number} [timeoutMs]
+           */
+          next(name, predicate = () => true, timeoutMs = 3000) {
+            return new Promise((resolveNext, rejectNext) => {
+              const timer = setTimeout(() => {
+                const idx = waiters.findIndex(w => w.resolve === resolver)
+                if (idx !== -1) waiters.splice(idx, 1)
+                rejectNext(new Error(`Timed out waiting for "${name}" event`))
+              }, timeoutMs)
+              /** @param {any} event */
+              const resolver = event => {
+                clearTimeout(timer)
+                resolveNext(event)
+              }
+              const waiter = { from: cursor, name, predicate, resolve: resolver }
+              if (!tryResolve(waiter)) waiters.push(waiter)
+            })
+          },
+          /** @param {number} [timeoutMs] */
+          nextComment(timeoutMs = 2000) {
+            const from = comments.length
+            return new Promise((resolveComment, rejectComment) => {
+              const started = Date.now()
+              const poll = () => {
+                if (comments.length > from) return resolveComment(comments[from])
+                if (Date.now() - started > timeoutMs)
+                  return rejectComment(new Error('Timed out waiting for a keep-alive comment'))
+                setTimeout(poll, 10)
+              }
+              poll()
+            })
+          },
+          close() {
+            closedOnPurpose = true
+            openStreams.delete(stream)
+            req.destroy()
+          }
         }
-      })
-      const stream = {
-        response: res,
-        received,
-        comments,
-        /**
-         * @param {string} name
-         * @param {(data: any, event: any) => boolean} [predicate]
-         * @param {number} [timeoutMs]
-         */
-        next (name, predicate = () => true, timeoutMs = 3000) {
-          return new Promise((resolveNext, rejectNext) => {
-            const timer = setTimeout(() => {
-              const idx = waiters.findIndex(w => w.resolve === resolver)
-              if (idx !== -1) waiters.splice(idx, 1)
-              rejectNext(new Error(`Timed out waiting for "${name}" event`))
-            }, timeoutMs)
-            /** @param {any} event */
-            const resolver = event => {
-              clearTimeout(timer)
-              resolveNext(event)
-            }
-            const waiter = { from: cursor, name, predicate, resolve: resolver }
-            if (!tryResolve(waiter)) waiters.push(waiter)
-          })
-        },
-        /** @param {number} [timeoutMs] */
-        nextComment (timeoutMs = 2000) {
-          const from = comments.length
-          return new Promise((resolveComment, rejectComment) => {
-            const started = Date.now()
-            const poll = () => {
-              if (comments.length > from) return resolveComment(comments[from])
-              if (Date.now() - started > timeoutMs) return rejectComment(new Error('Timed out waiting for a keep-alive comment'))
-              setTimeout(poll, 10)
-            }
-            poll()
-          })
-        },
-        close () {
-          closedOnPurpose = true
-          openStreams.delete(stream)
-          req.destroy()
-        }
+        openStreams.add(stream)
+        resolve(stream)
       }
-      openStreams.add(stream)
-      resolve(stream)
-    })
+    )
     req.on('error', error => {
       // A destroyed request reports an error on some Node versions; ignore
       // once the stream was closed on purpose.
@@ -254,7 +268,10 @@ describe('GET /api/events', () => {
     assert.match(String(stream.response.headers['content-type']), /^text\/event-stream/)
     assert.equal(stream.response.headers['cache-control'], 'no-cache, no-transform')
     assert.equal(stream.response.headers['x-accel-buffering'], 'no')
-    assert.equal(stream.response.headers['access-control-allow-origin'], `http://localhost:${proxyPort}`)
+    assert.equal(
+      stream.response.headers['access-control-allow-origin'],
+      `http://localhost:${proxyPort}`
+    )
 
     const hello = await stream.next('hello')
     assert.equal(hello.id, null)
@@ -324,9 +341,11 @@ describe('GET /api/events', () => {
 
     const firstStats = stream.next('stats')
     const burst = 5
-    await Promise.all(Array.from({ length: burst }, (_, i) =>
-      request({ path: `http://127.0.0.1:${upstreamPort}/burst/${i}` })
-    ))
+    await Promise.all(
+      Array.from({ length: burst }, (_, i) =>
+        request({ path: `http://127.0.0.1:${upstreamPort}/burst/${i}` })
+      )
+    )
     const stats = await firstStats
     // Every request produced a log event, but the burst produced a single
     // stats event (trailing timer) within the coalescing window.
@@ -344,7 +363,11 @@ describe('GET /api/events', () => {
     await stream.next('hello')
 
     const offEvent = stream.next('config', data => data.interactiveModeEnabled === false)
-    const off = await request({ method: 'POST', path: '/api/interactive-mode', body: { enabled: false } })
+    const off = await request({
+      method: 'POST',
+      path: '/api/interactive-mode',
+      body: { enabled: false }
+    })
     assert.equal(off.status, 200)
     const offConfig = await offEvent
     assert.equal(offConfig.data.interactiveModeEnabled, false)
@@ -375,23 +398,42 @@ describe('GET /api/events', () => {
     await stream.next('hello')
 
     const blockedEvent = stream.next('rules', data => data.kind === 'blocked')
-    const added = await request({ method: 'POST', path: '/api/blocked', body: { action: 'add', url: 'https://events.test/blocked' } })
+    const added = await request({
+      method: 'POST',
+      path: '/api/blocked',
+      body: { action: 'add', url: 'https://events.test/blocked' }
+    })
     assert.equal(added.status, 200)
     assert.deepEqual((await blockedEvent).data, { kind: 'blocked' })
-    const blockedRule = added.json.blockedRules.find(rule => rule.url === 'https://events.test/blocked')
+    const blockedRule = added.json.blockedRules.find(
+      rule => rule.url === 'https://events.test/blocked'
+    )
     const blockedRemoved = stream.next('rules', data => data.kind === 'blocked')
-    await request({ method: 'POST', path: '/api/blocked', body: { action: 'remove', id: blockedRule.id } })
+    await request({
+      method: 'POST',
+      path: '/api/blocked',
+      body: { action: 'remove', id: blockedRule.id }
+    })
     await blockedRemoved
 
     const filterEvent = stream.next('rules', data => data.kind === 'filter')
-    const filterAdded = await request({ method: 'POST', path: '/api/filters', body: { action: 'add', url: 'https://events.test/filtered' } })
+    const filterAdded = await request({
+      method: 'POST',
+      path: '/api/filters',
+      body: { action: 'add', url: 'https://events.test/filtered' }
+    })
     assert.equal(filterAdded.status, 200)
     assert.deepEqual((await filterEvent).data, { kind: 'filter' })
-    const filterRules = filterAdded.json.filterRules || filterAdded.json.bypassRules || filterAdded.json.rules || []
+    const filterRules =
+      filterAdded.json.filterRules || filterAdded.json.bypassRules || filterAdded.json.rules || []
     const filterRule = filterRules.find(rule => rule.url === 'https://events.test/filtered')
     if (filterRule) {
       const filterRemoved = stream.next('rules', data => data.kind === 'filter')
-      await request({ method: 'POST', path: '/api/filters', body: { action: 'remove', id: filterRule.id } })
+      await request({
+        method: 'POST',
+        path: '/api/filters',
+        body: { action: 'remove', id: filterRule.id }
+      })
       await filterRemoved
     }
 
@@ -417,7 +459,10 @@ describe('GET /api/events', () => {
     assert.equal(resource.status, 200)
     assert.deepEqual((await resourceEvent).data, { kind: 'resources' })
     const resourceRemoved = stream.next('rules', data => data.kind === 'resources')
-    await request({ method: 'DELETE', path: `/api/resources/${encodeURIComponent('/events/resource')}` })
+    await request({
+      method: 'DELETE',
+      path: `/api/resources/${encodeURIComponent('/events/resource')}`
+    })
     await resourceRemoved
     stream.close()
   })
@@ -488,7 +533,10 @@ describe('event helpers', () => {
   })
 
   it('formatEvent writes id, event and data lines; the id line is optional', () => {
-    assert.equal(events.formatEvent({ id: 7, name: 'config', data: { a: 1 } }), 'id: 7\nevent: config\ndata: {"a":1}\n\n')
+    assert.equal(
+      events.formatEvent({ id: 7, name: 'config', data: { a: 1 } }),
+      'id: 7\nevent: config\ndata: {"a":1}\n\n'
+    )
     assert.equal(events.formatEvent({ name: 'hello', data: null }), 'event: hello\ndata: null\n\n')
   })
 
@@ -502,6 +550,9 @@ describe('event helpers', () => {
     bus.publish('c', 3)
     assert.equal(first.id, 1)
     assert.equal(second.id, 2)
-    assert.deepEqual(seen.map(e => e.name), ['a', 'b'])
+    assert.deepEqual(
+      seen.map(e => e.name),
+      ['a', 'b']
+    )
   })
 })

@@ -30,9 +30,10 @@ const http = require('http')
  *
  * @param {ProxyServerDeps} deps
  */
-function createProxyServer ({ app, httpFlow, webSocketProxy, mitm, upstream, defaults }) {
+function createProxyServer({ app, httpFlow, webSocketProxy, mitm, upstream, defaults }) {
   const server = http.createServer((req, res) => {
-    httpFlow.tryHandleHttpBypass(req, res)
+    httpFlow
+      .tryHandleHttpBypass(req, res)
       .then(handled => {
         if (!handled && !res.writableEnded) {
           app(req, res)
@@ -62,7 +63,7 @@ function createProxyServer ({ app, httpFlow, webSocketProxy, mitm, upstream, def
    * @param {{ port?: number, host?: string }} [options]
    * @returns {Promise<import('net').AddressInfo>}
    */
-  function start ({ port = defaults.port, host = defaults.host } = {}) {
+  function start({ port = defaults.port, host = defaults.host } = {}) {
     return new Promise((resolve, reject) => {
       server.once('error', reject)
       server.listen(port, host, () => {
@@ -80,7 +81,7 @@ function createProxyServer ({ app, httpFlow, webSocketProxy, mitm, upstream, def
    *
    * @returns {Promise<void>}
    */
-  async function stop () {
+  async function stop() {
     await new Promise(resolve => {
       if (typeof server.closeAllConnections === 'function') {
         server.closeAllConnections()

@@ -24,7 +24,7 @@ const { buildClientLogView, filterLogsForApiRequest } = require('../logs/views')
  * @param {LogsRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createLogsRoutes ({ logStore, stats, suggestions, ruleStore, bypassCounter }) {
+function createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCounter }) {
   const router = express.Router()
 
   router.get('/logs', (req, res) => {

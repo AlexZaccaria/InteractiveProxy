@@ -39,7 +39,7 @@ const { logError } = require('../util/logger')
  *
  * @param {ResourceStoreOptions} options
  */
-function createResourceStore ({ file, storageDir, configStore }) {
+function createResourceStore({ file, storageDir, configStore }) {
   /** @type {Map<string, LocalResource>} */
   let localResources = new Map()
   /** @type {Set<() => void>} */
@@ -51,12 +51,14 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {() => void} listener
    * @returns {() => void} Unsubscribe.
    */
-  function onChange (listener) {
+  function onChange(listener) {
     changeListeners.add(listener)
-    return () => { changeListeners.delete(listener) }
+    return () => {
+      changeListeners.delete(listener)
+    }
   }
 
-  function notifyChange () {
+  function notifyChange() {
     for (const listener of changeListeners) {
       try {
         listener()
@@ -69,7 +71,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
   /**
    * Load existing local resources on startup.
    */
-  function load () {
+  function load() {
     if (fs.existsSync(file)) {
       try {
         const data = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -80,7 +82,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
     }
   }
 
-  async function save () {
+  async function save() {
     // Subscribers learn about the change before the write lands on disk, so
     // the UI reflects it as soon as the API answers.
     notifyChange()
@@ -95,7 +97,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
   /**
    * @returns {LocalResourceListItem[]}
    */
-  function list () {
+  function list() {
     return Array.from(localResources.entries()).map(([url, data]) => ({
       url,
       ...data
@@ -106,7 +108,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {string} url
    * @returns {boolean}
    */
-  function has (url) {
+  function has(url) {
     return localResources.has(url)
   }
 
@@ -114,7 +116,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {string} url
    * @returns {LocalResource | undefined}
    */
-  function get (url) {
+  function get(url) {
     return localResources.get(url)
   }
 
@@ -122,7 +124,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {string} url
    * @param {LocalResource} resource
    */
-  function set (url, resource) {
+  function set(url, resource) {
     localResources.set(url, resource)
   }
 
@@ -133,7 +135,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {boolean} enabled
    * @returns {LocalResource | null} The updated resource, or null when unknown.
    */
-  function toggle (url, enabled) {
+  function toggle(url, enabled) {
     if (!localResources.has(url)) return null
     const resource = localResources.get(url) || /** @type {LocalResource} */ ({})
     const updated = {
@@ -151,7 +153,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {string} url
    * @returns {Promise<boolean>} False when the URL was not a resource.
    */
-  async function remove (url) {
+  async function remove(url) {
     const resource = localResources.get(url)
     if (!resource) return false
 
@@ -180,7 +182,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {unknown} fullUrl
    * @returns {{ url: string, resource: LocalResource } | null}
    */
-  function findMatching (requestUrl, fullUrl) {
+  function findMatching(requestUrl, fullUrl) {
     if (!configStore.localResourcesEnabled || localResources.size === 0) return null
 
     const req = safeString(requestUrl)
@@ -206,7 +208,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
    * @param {{ filename: string, contentType: string }} resource
    * @param {{ sourceTag: string, errorPrefix: string }} options
    */
-  function serveStream (res, resource, { sourceTag, errorPrefix }) {
+  function serveStream(res, resource, { sourceTag, errorPrefix }) {
     const filePath = path.join(storageDir, resource.filename)
 
     const sendError = () => {
@@ -268,7 +270,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
     findMatching,
     serveStream,
     onChange,
-    get size () {
+    get size() {
       return localResources.size
     }
   }

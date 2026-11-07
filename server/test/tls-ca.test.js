@@ -19,10 +19,11 @@ before(async () => {
 })
 
 /** DER SubjectPublicKeyInfo of a certificate PEM. */
-const spkiDer = pem => new crypto.X509Certificate(pem).publicKey.export({ type: 'spki', format: 'der' })
+const spkiDer = pem =>
+  new crypto.X509Certificate(pem).publicKey.export({ type: 'spki', format: 'der' })
 
 /** A certificate for `hostname` carrying a fresh key, signed by the CA. */
-function certWithForeignKey (hostname, material) {
+function certWithForeignKey(hostname, material) {
   const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   const cert = forge.pki.createCertificate()
   cert.publicKey = forge.pki.publicKeyFromPem(publicKey.export({ type: 'spki', format: 'pem' }))
@@ -67,7 +68,10 @@ describe('host certificates', () => {
 
     const beta = ca.generateCertForHost('beta.test', material)
     assert.equal(beta.key, alpha.key)
-    assert.ok(spkiDer(alpha.cert).equals(spkiDer(beta.cert)), 'same public key in both certificates')
+    assert.ok(
+      spkiDer(alpha.cert).equals(spkiDer(beta.cert)),
+      'same public key in both certificates'
+    )
 
     const caCert = new crypto.X509Certificate(material.certPem)
     const xa = new crypto.X509Certificate(alpha.cert)
@@ -84,9 +88,13 @@ describe('host certificates', () => {
   test('get a random positive serial number each', () => {
     const material = ca.getCA()
     const serials = ['s1.test', 's2.test', 's3.test'].map(host => {
-      const serial = new crypto.X509Certificate(ca.generateCertForHost(host, material).cert).serialNumber
+      const serial = new crypto.X509Certificate(ca.generateCertForHost(host, material).cert)
+        .serialNumber
       assert.match(serial, /^[0-9A-F]{1,32}$/)
-      assert.ok(BigInt(`0x${serial}`) > 0n && BigInt(`0x${serial}`) < 2n ** 127n, 'positive 128-bit integer')
+      assert.ok(
+        BigInt(`0x${serial}`) > 0n && BigInt(`0x${serial}`) < 2n ** 127n,
+        'positive 128-bit integer'
+      )
       return serial
     })
     assert.equal(new Set(serials).size, 3)

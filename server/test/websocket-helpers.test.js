@@ -28,7 +28,10 @@ describe('URL helpers', () => {
   })
 
   test('httpUrlToWebSocketUrl rewrites only the leading scheme, case-insensitively', () => {
-    assert.equal(I.httpUrlToWebSocketUrl('https://a.example/?u=http://b.example'), 'wss://a.example/?u=http://b.example')
+    assert.equal(
+      I.httpUrlToWebSocketUrl('https://a.example/?u=http://b.example'),
+      'wss://a.example/?u=http://b.example'
+    )
     assert.equal(I.httpUrlToWebSocketUrl('HTTPS://a/x'), 'wss://a/x')
     assert.equal(I.httpUrlToWebSocketUrl('WSS://a/x'), 'WSS://a/x')
     assert.equal(I.httpUrlToWebSocketUrl('Ws://a/x'), 'Ws://a/x')
@@ -68,7 +71,10 @@ describe('Socket.IO prefix handling', () => {
   })
 
   test('tryParseWebSocketJson parses Socket.IO frames and expands nested JSON strings', () => {
-    assert.deepEqual(I.tryParseWebSocketJson('42["event",{"a":"{\\"b\\":1}"}]'), ['event', { a: { b: 1 } }])
+    assert.deepEqual(I.tryParseWebSocketJson('42["event",{"a":"{\\"b\\":1}"}]'), [
+      'event',
+      { a: { b: 1 } }
+    ])
     assert.deepEqual(I.tryParseWebSocketJson('42/ws/ns,["e",{"d":"[1,2]"}]'), ['e', { d: [1, 2] }])
     assert.deepEqual(I.tryParseWebSocketJson('0{"sid":"abc"}'), { sid: 'abc' })
     assert.deepEqual(I.tryParseWebSocketJson('  {"a":1}  '), { a: 1 })
@@ -77,7 +83,10 @@ describe('Socket.IO prefix handling', () => {
   test('tryParseWebSocketJson returns null for placeholders, non-JSON and non-strings', () => {
     assert.equal(I.tryParseWebSocketJson('[Binary data: 3 bytes]'), null)
     assert.equal(I.tryParseWebSocketJson('[WS summary] x'), null)
-    assert.equal(I.tryParseWebSocketJson('[WebSocket text frame too large for rewrite: 1 bytes, limit=1]'), null)
+    assert.equal(
+      I.tryParseWebSocketJson('[WebSocket text frame too large for rewrite: 1 bytes, limit=1]'),
+      null
+    )
     assert.equal(I.tryParseWebSocketJson('hello'), null)
     assert.equal(I.tryParseWebSocketJson('2'), null)
     assert.equal(I.tryParseWebSocketJson('{"a":1}trailing'), null)
@@ -121,7 +130,11 @@ describe('normalizeNestedJsonStrings', () => {
 describe('rewriteWebSocketPayload without edit rules', () => {
   test('text frames come back as the same Buffer with no applied rules', () => {
     const text = Buffer.from('{"a":1}')
-    const result = I.rewriteWebSocketPayload(text, false, { requestUrl: '/x', fullUrl: 'ws://a/x', phase: 'request' })
+    const result = I.rewriteWebSocketPayload(text, false, {
+      requestUrl: '/x',
+      fullUrl: 'ws://a/x',
+      phase: 'request'
+    })
     assert.equal(result.buffer, text)
     assert.deepEqual(result, { buffer: text, appliedRuleIds: [], changed: false })
   })
@@ -136,9 +149,21 @@ describe('rewriteWebSocketPayload without edit rules', () => {
   })
 
   test('empty or non-Buffer payloads yield an empty Buffer', () => {
-    assert.deepEqual(I.rewriteWebSocketPayload(Buffer.alloc(0), false, {}), { buffer: Buffer.alloc(0), appliedRuleIds: [], changed: false })
-    assert.deepEqual(I.rewriteWebSocketPayload(null, false, {}), { buffer: Buffer.alloc(0), appliedRuleIds: [], changed: false })
-    assert.deepEqual(I.rewriteWebSocketPayload('str', false, {}), { buffer: Buffer.alloc(0), appliedRuleIds: [], changed: false })
+    assert.deepEqual(I.rewriteWebSocketPayload(Buffer.alloc(0), false, {}), {
+      buffer: Buffer.alloc(0),
+      appliedRuleIds: [],
+      changed: false
+    })
+    assert.deepEqual(I.rewriteWebSocketPayload(null, false, {}), {
+      buffer: Buffer.alloc(0),
+      appliedRuleIds: [],
+      changed: false
+    })
+    assert.deepEqual(I.rewriteWebSocketPayload('str', false, {}), {
+      buffer: Buffer.alloc(0),
+      appliedRuleIds: [],
+      changed: false
+    })
   })
 
   test('printableRatio counts tab, LF, CR and 0x20..0x7e as printable', () => {

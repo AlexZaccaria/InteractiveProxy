@@ -49,7 +49,7 @@ const fsPromises = fs.promises
  * @param {unknown} value
  * @returns {FilterMode | null}
  */
-function normalizeFilterMode (value) {
+function normalizeFilterMode(value) {
   const normalized = typeof value === 'string' ? value.toLowerCase() : ''
   if (normalized === 'focus' || normalized === 'ignore') return normalized
   return null
@@ -61,7 +61,7 @@ function normalizeFilterMode (value) {
  * @param {ConfigStoreOptions} options
  * @returns {ConfigStore}
  */
-function createConfigStore ({ file, ruleStore }) {
+function createConfigStore({ file, ruleStore }) {
   let interactiveModeEnabled = true // interactive mode flag
   let localResourcesEnabled = true // global local resources flag
   let filterRulesEnabled = true // global filter rules flag
@@ -78,7 +78,7 @@ function createConfigStore ({ file, ruleStore }) {
    * Tell the subscribers that a flag changed (setters only; `load()` restores
    * the persisted state and is not a change).
    */
-  function notifyChange () {
+  function notifyChange() {
     if (changeListeners.size === 0) return
     const current = snapshot()
     for (const listener of changeListeners) {
@@ -94,15 +94,17 @@ function createConfigStore ({ file, ruleStore }) {
    * @param {(snapshot: ConfigSnapshot) => void} listener
    * @returns {() => void}
    */
-  function onChange (listener) {
+  function onChange(listener) {
     changeListeners.add(listener)
-    return () => { changeListeners.delete(listener) }
+    return () => {
+      changeListeners.delete(listener)
+    }
   }
 
   /**
    * Load interactive mode, filter mode, and global feature modes from disk.
    */
-  function load () {
+  function load() {
     try {
       if (fs.existsSync(file)) {
         const config = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -142,7 +144,7 @@ function createConfigStore ({ file, ruleStore }) {
    * Persist the flags. A write already in progress is not duplicated: the
    * request is queued and a single follow-up write runs when it finishes.
    */
-  function persist () {
+  function persist() {
     if (persistWritePromise) {
       persistQueued = true
       return
@@ -195,7 +197,7 @@ function createConfigStore ({ file, ruleStore }) {
   /**
    * @returns {ConfigSnapshot}
    */
-  function snapshot () {
+  function snapshot() {
     return {
       interactiveModeEnabled,
       editRulesEnabled: ruleStore.isEnabled(),
@@ -208,46 +210,46 @@ function createConfigStore ({ file, ruleStore }) {
 
   /** @type {ConfigStore} */
   const store = {
-    get interactiveModeEnabled () {
+    get interactiveModeEnabled() {
       return interactiveModeEnabled
     },
-    set interactiveModeEnabled (value) {
+    set interactiveModeEnabled(value) {
       const next = value === true
       if (next === interactiveModeEnabled) return
       interactiveModeEnabled = next
       notifyChange()
     },
-    get localResourcesEnabled () {
+    get localResourcesEnabled() {
       return localResourcesEnabled
     },
-    set localResourcesEnabled (value) {
+    set localResourcesEnabled(value) {
       const next = value === true
       if (next === localResourcesEnabled) return
       localResourcesEnabled = next
       notifyChange()
     },
-    get filterRulesEnabled () {
+    get filterRulesEnabled() {
       return filterRulesEnabled
     },
-    set filterRulesEnabled (value) {
+    set filterRulesEnabled(value) {
       const next = value === true
       if (next === filterRulesEnabled) return
       filterRulesEnabled = next
       notifyChange()
     },
-    get blockedRulesEnabled () {
+    get blockedRulesEnabled() {
       return blockedRulesEnabled
     },
-    set blockedRulesEnabled (value) {
+    set blockedRulesEnabled(value) {
       const next = value === true
       if (next === blockedRulesEnabled) return
       blockedRulesEnabled = next
       notifyChange()
     },
-    get filterMode () {
+    get filterMode() {
       return filterMode
     },
-    set filterMode (value) {
+    set filterMode(value) {
       const normalized = normalizeFilterMode(value)
       if (normalized && normalized !== filterMode) {
         filterMode = normalized

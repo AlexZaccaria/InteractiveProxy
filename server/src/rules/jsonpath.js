@@ -38,7 +38,7 @@ const { resolveJsonPathValueFromSource, coerceJsonPathScalarFromText } = require
  *
  * @param {RuleStore} store
  */
-function createJsonPathRewriter (store) {
+function createJsonPathRewriter(store) {
   /**
    * Apply the JSONPath rules matching the context to an object, in place.
    *
@@ -46,7 +46,7 @@ function createJsonPathRewriter (store) {
    * @param {UrlMatchContext} [context]
    * @returns {JsonPathObjectResult}
    */
-  function applyJsonPathRulesToObject (root, context = {}) {
+  function applyJsonPathRulesToObject(root, context = {}) {
     if (!root || typeof root !== 'object') {
       return { object: root, appliedRuleIds: [], changed: false }
     }
@@ -124,8 +124,8 @@ function createJsonPathRewriter (store) {
             validPath = false
             break
           }
-          const found = parent.find(item =>
-            item && typeof item === 'object' && item[seg.key] === seg.value
+          const found = parent.find(
+            item => item && typeof item === 'object' && item[seg.key] === seg.value
           )
           if (!found) {
             validPath = false
@@ -163,8 +163,8 @@ function createJsonPathRewriter (store) {
       } else if (lastSeg.type === 'filter') {
         // Filter as last segment: find the matching element in the array and replace it
         if (!Array.isArray(container)) continue
-        const foundIndex = container.findIndex(item =>
-          item && typeof item === 'object' && item[lastSeg.key] === lastSeg.value
+        const foundIndex = container.findIndex(
+          item => item && typeof item === 'object' && item[lastSeg.key] === lastSeg.value
         )
         if (foundIndex === -1) continue
         keyOrIndex = foundIndex
@@ -244,8 +244,11 @@ function createJsonPathRewriter (store) {
       }
 
       const isSame =
-        (newValue === currentValue) ||
-        (typeof newValue === 'number' && Number.isNaN(newValue) && typeof currentValue === 'number' && Number.isNaN(currentValue))
+        newValue === currentValue ||
+        (typeof newValue === 'number' &&
+          Number.isNaN(newValue) &&
+          typeof currentValue === 'number' &&
+          Number.isNaN(currentValue))
 
       if (isSame) continue
 
@@ -281,7 +284,7 @@ function createJsonPathRewriter (store) {
    * @param {UrlMatchContext} [context] - URL/phase context used for JSONPath rule matching.
    * @returns {JsonPathBufferResult}
    */
-  function applyJsonPathRulesToProtobufBuffer (buffer, initialJson, context = {}) {
+  function applyJsonPathRulesToProtobufBuffer(buffer, initialJson, context = {}) {
     if (isEmptyBuffer(buffer)) {
       return { buffer, json: initialJson, appliedRuleIds: [], changed: false }
     }
@@ -314,7 +317,7 @@ function createJsonPathRewriter (store) {
       return {
         buffer,
         json: result ? result.object : json,
-        appliedRuleIds: result ? (result.appliedRuleIds || []) : [],
+        appliedRuleIds: result ? result.appliedRuleIds || [] : [],
         changed: false
       }
     }

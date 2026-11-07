@@ -8,31 +8,33 @@
  * server's own output (pretty on a terminal, JSON when piped).
  */
 
-const path = require('path');
-const { spawn } = require('child_process');
-const pretty = require('pino-pretty');
+const path = require('path')
+const { spawn } = require('child_process')
+const pretty = require('pino-pretty')
 
-const ROOT_DIR = path.join(__dirname, '..');
+const ROOT_DIR = path.join(__dirname, '..')
 
 const child = spawn(process.execPath, [path.join(ROOT_DIR, 'server', 'index.js')], {
   cwd: ROOT_DIR,
   env: { ...process.env, PROXY_LOG_FORMAT: 'json' },
   stdio: ['inherit', 'pipe', 'inherit']
-});
+})
 
 // pino-pretty writes the formatted lines to stdout itself (its default
 // destination); the stream it returns only consumes the JSON lines.
-child.stdout.pipe(pretty({
-  colorize: true,
-  translateTime: 'HH:MM:ss',
-  ignore: 'scope',
-  messageFormat: '[{scope}] {msg}'
-}));
+child.stdout.pipe(
+  pretty({
+    colorize: true,
+    translateTime: 'HH:MM:ss',
+    ignore: 'scope',
+    messageFormat: '[{scope}] {msg}'
+  })
+)
 
 child.on('exit', code => {
-  process.exit(code ?? 0);
-});
+  process.exit(code ?? 0)
+})
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => child.kill(signal))
 }

@@ -1,7 +1,7 @@
-import js from '@eslint/js';
-import globals from 'globals';
-import react from 'eslint-plugin-react';
-import reactHooks from 'eslint-plugin-react-hooks';
+import js from '@eslint/js'
+import globals from 'globals'
+import react from 'eslint-plugin-react'
+import reactHooks from 'eslint-plugin-react-hooks'
 
 const sharedRules = {
   'no-unused-vars': [
@@ -11,12 +11,12 @@ const sharedRules = {
       varsIgnorePattern: '^_',
       caughtErrors: 'none',
       // `const { id, enabled, ...rest } = rule` is the idiom used to omit keys.
-      ignoreRestSiblings: true,
-    },
+      ignoreRestSiblings: true
+    }
   ],
   'no-empty': ['error', { allowEmptyCatch: true }],
-  'no-control-regex': 'off',
-};
+  'no-control-regex': 'off'
+}
 
 export default [
   {
@@ -26,8 +26,8 @@ export default [
       'client/src/config/generatedPorts.js',
       'server/storage/**',
       'server/certs/**',
-      'server/logs/**',
-    ],
+      'server/logs/**'
+    ]
   },
   js.configs.recommended,
 
@@ -37,9 +37,9 @@ export default [
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'commonjs',
-      globals: globals.node,
+      globals: globals.node
     },
-    rules: sharedRules,
+    rules: sharedRules
   },
 
   // Frontend: React with JSX in .js files (Create React App convention).
@@ -50,14 +50,14 @@ export default [
       ...react.configs.flat.recommended.languageOptions,
       ecmaVersion: 2024,
       sourceType: 'module',
-      globals: globals.browser,
+      globals: globals.browser
     },
     plugins: {
       react,
-      'react-hooks': reactHooks,
+      'react-hooks': reactHooks
     },
     settings: {
-      react: { version: 'detect' },
+      react: { version: 'detect' }
     },
     rules: {
       ...react.configs.flat.recommended.rules,
@@ -69,7 +69,7 @@ export default [
       // not components; revisit when the client is split into modules.
       'react/display-name': 'off',
       'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
-    },
-  },
-];
+      'react-hooks/exhaustive-deps': 'warn'
+    }
+  }
+]

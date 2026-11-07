@@ -139,7 +139,7 @@ const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
 
 // Ensure directories exist
 try {
-  [STORAGE_DIR, LOGS_DIR].forEach(dir => {
+  ;[STORAGE_DIR, LOGS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
@@ -196,14 +196,28 @@ const router = createRouter({
   uiOrigins: UI_ORIGINS,
   onBlockedPatternsChanged: () => logStore.recomputeBlockedVisibility()
 })
-const resourceStore = createResourceStore({ file: RESOURCES_FILE, storageDir: STORAGE_DIR, configStore })
+const resourceStore = createResourceStore({
+  file: RESOURCES_FILE,
+  storageDir: STORAGE_DIR,
+  configStore
+})
 
 // Rewrite orchestration bound to the rule store. Interactive mode and the
 // log store are reached through a getter and a callback (both resolve at
 // call time).
 const isInteractive = () => configStore.interactiveModeEnabled
-const httpJsonRewriter = createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInteractive })
-const connectRewriter = createConnectRewriter({ ruleStore, textRules, jsonPathRules, isInteractive })
+const httpJsonRewriter = createHttpJsonRewriter({
+  ruleStore,
+  textRules,
+  jsonPathRules,
+  isInteractive
+})
+const connectRewriter = createConnectRewriter({
+  ruleStore,
+  textRules,
+  jsonPathRules,
+  isInteractive
+})
 const bodyRewriter = createBodyRewriter({
   ruleStore,
   textRules,
@@ -270,7 +284,9 @@ const bypassCounter = {
     if (!Number.isFinite(value) || value <= 0) return
     bypassedRequestCount += value
   },
-  reset: () => { bypassedRequestCount = 0 }
+  reset: () => {
+    bypassedRequestCount = 0
+  }
 }
 
 // Flows, management API, Express application and the listening server.

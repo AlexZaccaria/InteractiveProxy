@@ -19,7 +19,7 @@ const { normalizeBlockedRule } = require('../proxy/router')
  * @param {BlockedRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createBlockedRoutes ({ router: proxyRouter }) {
+function createBlockedRoutes({ router: proxyRouter }) {
   const router = express.Router()
 
   // Get all blocked rules
@@ -33,7 +33,9 @@ function createBlockedRoutes ({ router: proxyRouter }) {
     const blockedRules = proxyRouter.getBlockedRules()
 
     if (typeof action !== 'string') {
-      return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
     }
 
     if (action === 'add') {
@@ -91,7 +93,9 @@ function createBlockedRoutes ({ router: proxyRouter }) {
       proxyRouter.setBlockedRules(blockedRules.filter(r => r.id !== id))
       await proxyRouter.saveBlockedUrls()
     } else {
-      return res.status(400).json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Expected "add", "update" or "remove".' })
     }
 
     res.json({ success: true, blockedRules: proxyRouter.getBlockedRules() })

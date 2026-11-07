@@ -119,7 +119,7 @@ const { safeString, safeTrim } = require('../util/strings')
  * @param {any} source
  * @returns {JsonPathValueSource | null}
  */
-function normalizeJsonPathValueSource (source) {
+function normalizeJsonPathValueSource(source) {
   if (!source || typeof source !== 'object') return null
   if (source.type !== 'file') return null
   const filename = safeString(source.filename)
@@ -141,13 +141,15 @@ function normalizeJsonPathValueSource (source) {
  * @param {string} storageDir Directory that relative references are resolved against.
  * @returns {string | null}
  */
-function resolveJsonPathValueFromSource (source, storageDir) {
+function resolveJsonPathValueFromSource(source, storageDir) {
   if (!source || source.type !== 'file') return null
   const explicitPath = safeString(source.path)
   const filename = safeString(source.filename)
   if (!explicitPath && !filename) return null
   const filePath = explicitPath
-    ? (path.isAbsolute(explicitPath) ? explicitPath : path.join(storageDir, explicitPath))
+    ? path.isAbsolute(explicitPath)
+      ? explicitPath
+      : path.join(storageDir, explicitPath)
     : path.join(storageDir, filename)
   try {
     if (!fs.existsSync(filePath)) return null
@@ -163,7 +165,7 @@ function resolveJsonPathValueFromSource (source, storageDir) {
  * @param {unknown} rawText
  * @returns {{ value: any, valueType: 'boolean' | 'number' | 'json' | 'string' }}
  */
-function coerceJsonPathScalarFromText (rawText) {
+function coerceJsonPathScalarFromText(rawText) {
   const text = rawText == null ? '' : String(rawText)
   const trimmed = text.trim()
   const lower = trimmed.toLowerCase()
@@ -209,7 +211,7 @@ function coerceJsonPathScalarFromText (rawText) {
  * @param {Record<string, any>} [rule]
  * @returns {Record<string, any>}
  */
-function deserializeEditRuleFromDisk (rule = {}) {
+function deserializeEditRuleFromDisk(rule = {}) {
   const normalized = { ...rule }
 
   // Convert any multi-segment on-disk representation back into flat strings so
@@ -242,7 +244,7 @@ function deserializeEditRuleFromDisk (rule = {}) {
  * @param {Record<string, any>} [rule]
  * @returns {EditRule}
  */
-function normalizeEditRule (rule = {}) {
+function normalizeEditRule(rule = {}) {
   const kind = rule.kind === 'jsonPath' ? 'jsonPath' : 'text'
 
   if (kind === 'jsonPath') {
@@ -261,9 +263,7 @@ function normalizeEditRule (rule = {}) {
 
     /** @type {RuleTarget} */
     const normalizedTarget =
-      rule.target === 'response' || rule.target === 'both'
-        ? rule.target
-        : 'request'
+      rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
 
     return {
       id: rule.id || crypto.randomUUID(),
@@ -271,7 +271,7 @@ function normalizeEditRule (rule = {}) {
       kind,
       name: rule.name || '',
       path: safeString(rule.path),
-      value: valueSource ? '' : (Object.hasOwn(rule, 'value') ? rule.value : ''),
+      value: valueSource ? '' : Object.hasOwn(rule, 'value') ? rule.value : '',
       valueType,
       valueSource,
       // URL pattern su cui applicare la regola jsonPath; se vuoto la regola
@@ -301,11 +301,9 @@ function normalizeEditRule (rule = {}) {
    * @param {unknown} value
    * @returns {string[]}
    */
-  function normaliseVariantArray (value) {
+  function normaliseVariantArray(value) {
     if (!Array.isArray(value)) return []
-    return value
-      .map(entry => safeString(entry).trim())
-      .filter(entry => entry.length > 0)
+    return value.map(entry => safeString(entry).trim()).filter(entry => entry.length > 0)
   }
 
   // Rules written by older versions (and the documented on-disk format) carry
@@ -316,12 +314,16 @@ function normalizeEditRule (rule = {}) {
   const startVariants = normaliseVariantArray(
     Array.isArray(rule.startVariants) && rule.startVariants.length
       ? rule.startVariants
-      : (legacyStart ? [legacyStart] : [])
+      : legacyStart
+        ? [legacyStart]
+        : []
   )
   const endVariants = normaliseVariantArray(
     Array.isArray(rule.endVariants) && rule.endVariants.length
       ? rule.endVariants
-      : (legacyEnd ? [legacyEnd] : [])
+      : legacyEnd
+        ? [legacyEnd]
+        : []
   )
 
   return {
@@ -353,7 +355,7 @@ function normalizeEditRule (rule = {}) {
  * @param {Record<string, any>} [rule]
  * @returns {Record<string, any>}
  */
-function stripPresetRuntimeFields (rule = {}) {
+function stripPresetRuntimeFields(rule = {}) {
   const { id, enabled, ...rest } = rule
   return rest
 }
@@ -364,10 +366,11 @@ function stripPresetRuntimeFields (rule = {}) {
  * @param {Record<string, any>} [preset]
  * @returns {EditRulePreset}
  */
-function normalizeEditRulePreset (preset = {}) {
+function normalizeEditRulePreset(preset = {}) {
   const kind = preset.kind === 'jsonPath' ? 'jsonPath' : 'text'
   const name = safeTrim(preset.name) || 'Untitled preset'
-  const id = safeString(preset.id) || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const id =
+    safeString(preset.id) || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   const rawRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
   const normalizedRule = normalizeEditRule({ ...rawRule, kind })
 
@@ -376,7 +379,10 @@ function normalizeEditRulePreset (preset = {}) {
     name,
     kind,
     rule: stripPresetRuntimeFields(normalizedRule),
-    createdAt: typeof preset.createdAt === 'string' && preset.createdAt ? preset.createdAt : new Date().toISOString()
+    createdAt:
+      typeof preset.createdAt === 'string' && preset.createdAt
+        ? preset.createdAt
+        : new Date().toISOString()
   }
 }
 
@@ -389,7 +395,7 @@ function normalizeEditRulePreset (preset = {}) {
  * @param {number} maxLen
  * @returns {string[]}
  */
-function splitLongStringIntoSegments (text, maxLen) {
+function splitLongStringIntoSegments(text, maxLen) {
   const segments = []
   const words = String(text).split(/\s+/).filter(Boolean)
 
@@ -422,7 +428,7 @@ function splitLongStringIntoSegments (text, maxLen) {
  * @param {Record<string, any>} [rule]
  * @returns {Record<string, any>}
  */
-function serializeEditRuleForDisk (rule = {}) {
+function serializeEditRuleForDisk(rule = {}) {
   const out = { ...rule }
 
   const MAX_SEGMENT_LENGTH = 160
@@ -468,7 +474,7 @@ function serializeEditRuleForDisk (rule = {}) {
  * @param {unknown} path
  * @returns {JsonPathSegment[]}
  */
-function parseJsonPath (path) {
+function parseJsonPath(path) {
   if (!path || typeof path !== 'string') return []
 
   const trimmed = path.trim()
@@ -557,11 +563,11 @@ function parseJsonPath (path) {
  * @param {boolean} caseSensitive
  * @returns {{ text: string, count: number }}
  */
-function replaceTextLiteral (text, start, end, replacement, caseSensitive) {
+function replaceTextLiteral(text, start, end, replacement, caseSensitive) {
   if (!start && !end) return { text, count: 0 }
 
   /** @param {string} s */
-  const normalize = s => caseSensitive ? s : s.toLowerCase()
+  const normalize = s => (caseSensitive ? s : s.toLowerCase())
   const haystack = normalize(text)
   const parts = []
   let lastIndex = 0
@@ -606,7 +612,7 @@ function replaceTextLiteral (text, start, end, replacement, caseSensitive) {
  * @param {Record<string, any>|null|undefined} rule
  * @returns {CompiledTextRule|null}
  */
-function compileEditRule (rule) {
+function compileEditRule(rule) {
   if (!rule || !rule.enabled) return null
 
   const startRaw = safeString(rule.start)

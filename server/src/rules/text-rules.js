@@ -49,7 +49,7 @@ const { replaceTextLiteral } = require('./schema')
  * @param {UrlMatchContext|null} [context]
  * @returns {{ text: string, changed: boolean }}
  */
-function applyCompiledRuleToText (compiled, text, appliedSet, context) {
+function applyCompiledRuleToText(compiled, text, appliedSet, context) {
   const { rule, mode, useRegex, caseSensitive } = compiled
 
   // When a context is provided, honour per-rule target (request/response/both)
@@ -121,7 +121,7 @@ function applyCompiledRuleToText (compiled, text, appliedSet, context) {
  *
  * @param {RuleStore} store
  */
-function createTextRewriter (store) {
+function createTextRewriter(store) {
   /**
    * Apply every applicable compiled text rule, in order, to a string.
    *
@@ -129,7 +129,7 @@ function createTextRewriter (store) {
    * @param {UrlMatchContext|null} [context] Optional URL/phase context used for scoping.
    * @returns {TextRewriteResult}
    */
-  function applyEditRulesToText (text, context) {
+  function applyEditRulesToText(text, context) {
     if (typeof text !== 'string' || text.length === 0) {
       return { text, appliedRuleIds: [], changed: false }
     }
@@ -141,7 +141,9 @@ function createTextRewriter (store) {
     const rawContext = context && typeof context === 'object' ? context : null
     const matchContext = rawContext ? buildUrlMatchContext(rawContext) : null
 
-    const compiledRules = matchContext ? store.getCompiledRulesForContext(matchContext) : store.getCompiledRules()
+    const compiledRules = matchContext
+      ? store.getCompiledRulesForContext(matchContext)
+      : store.getCompiledRules()
     if (!compiledRules.length) {
       return { text, appliedRuleIds: [], changed: false }
     }
@@ -152,7 +154,12 @@ function createTextRewriter (store) {
     let changed = false
 
     for (const compiled of compiledRules) {
-      const result = applyCompiledRuleToText(compiled, current, appliedSet, matchContext || rawContext)
+      const result = applyCompiledRuleToText(
+        compiled,
+        current,
+        appliedSet,
+        matchContext || rawContext
+      )
       if (result.changed) {
         current = result.text
         changed = true
@@ -180,13 +187,17 @@ function createTextRewriter (store) {
    * @param {UrlMatchContext|null} [context]
    * @returns {{ headers: Record<string, any>, appliedRuleIds: string[], changed: boolean }}
    */
-  function applyEditRulesToHeaders (headers = {}, context) {
+  function applyEditRulesToHeaders(headers = {}, context) {
     const rawContext = context && typeof context === 'object' ? context : null
     const matchContext = rawContext
-      ? (Array.isArray(rawContext.candidates) ? rawContext : buildUrlMatchContext(rawContext))
+      ? Array.isArray(rawContext.candidates)
+        ? rawContext
+        : buildUrlMatchContext(rawContext)
       : null
 
-    const compiledRules = matchContext ? store.getCompiledRulesForContext(matchContext) : store.getCompiledRules()
+    const compiledRules = matchContext
+      ? store.getCompiledRulesForContext(matchContext)
+      : store.getCompiledRules()
     if (!compiledRules.length) {
       return { headers, appliedRuleIds: [], changed: false }
     }
@@ -257,7 +268,7 @@ function createTextRewriter (store) {
    * @param {UrlMatchContext|null} [context]
    * @returns {BufferRewriteResult}
    */
-  function applyEditRulesToBuffer (buffer, context) {
+  function applyEditRulesToBuffer(buffer, context) {
     if (isEmptyBuffer(buffer)) {
       return { buffer: /** @type {Buffer} */ (buffer), appliedRuleIds: [], changed: false }
     }

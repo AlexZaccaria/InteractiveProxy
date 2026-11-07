@@ -23,11 +23,23 @@ const { logError } = require('../util/logger')
  * @param {DashboardRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createDashboardRoutes ({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter }) {
+function createDashboardRoutes({
+  logStore,
+  stats,
+  router: proxyRouter,
+  resourceStore,
+  bypassCounter
+}) {
   const router = express.Router()
 
   router.get('/dashboard', (req, res) => {
-    const { stats: dashboard, editedRequests, performance, payloads, routes } = stats.getDashboardSnapshot()
+    const {
+      stats: dashboard,
+      editedRequests,
+      performance,
+      payloads,
+      routes
+    } = stats.getDashboardSnapshot()
 
     res.json({
       stats: dashboard,

@@ -17,13 +17,17 @@ let proxyPort
 let upstream
 let upstreamPort
 
-function request (options, body) {
+function request(options, body) {
   return new Promise((resolve, reject) => {
     const req = http.request(options, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
       res.on('end', () => {
-        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString()
+        })
       })
     })
     req.on('error', reject)

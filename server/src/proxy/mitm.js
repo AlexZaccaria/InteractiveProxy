@@ -47,7 +47,7 @@ const SECURE_CONTEXT_CACHE_MAX = 500
  * @param {import('net').Socket} socket
  * @returns {string}
  */
-function socketKey (socket) {
+function socketKey(socket) {
   return `${socket.remoteFamily || ''}|${socket.remoteAddress || ''}|${socket.remotePort || ''}`
 }
 const {
@@ -93,7 +93,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  *
  * @param {MitmDeps} deps
  */
-function createMitmHandler ({
+function createMitmHandler({
   configStore,
   router,
   upstream,
@@ -110,12 +110,14 @@ function createMitmHandler ({
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
   const { performUpstreamRequest, attachAbortOnClose } = upstream
   const { applyHeaderRewrites } = httpJson
-  const { processRequestBodyWithRewrites, handleBufferedUpstreamResponseWithRewrites } = bodyRewriter
+  const { processRequestBodyWithRewrites, handleBufferedUpstreamResponseWithRewrites } =
+    bodyRewriter
   const { handleDirectHttpFlow, hasApplicableRules } = httpFlow
   const { handleWebSocketUpgrade } = webSocketProxy
 
   /** @param {import('./upstream').UpstreamErrorParams} params */
-  const handleUpstreamError = params => handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
+  const handleUpstreamError = params =>
+    handleUpstreamErrorWithRecorder(params, recordUpstreamErrorOnLog)
 
   /** CONNECT target per open client connection (see socketKey). */
   /** @type {Map<string, TunnelTarget>} */
@@ -147,7 +149,7 @@ function createMitmHandler ({
    * @param {string} hostname
    * @returns {import('tls').SecureContext}
    */
-  function getSecureContext (hostname) {
+  function getSecureContext(hostname) {
     const cached = secureContexts.get(hostname)
     if (cached) return cached
     const cert = generateCertForHost(hostname, getCA())
@@ -162,18 +164,21 @@ function createMitmHandler ({
    *
    * @returns {import('https').Server}
    */
-  function getHttpsServer () {
+  function getHttpsServer() {
     if (!httpsServer) {
-      httpsServer = https.createServer({
-        maxHeaderSize: 16384, // 16KB header limit (default is 8KB)
-        SNICallback: (servername, cb) => {
-          try {
-            cb(null, getSecureContext(servername))
-          } catch (error) {
-            cb(/** @type {Error} */ (error))
+      httpsServer = https.createServer(
+        {
+          maxHeaderSize: 16384, // 16KB header limit (default is 8KB)
+          SNICallback: (servername, cb) => {
+            try {
+              cb(null, getSecureContext(servername))
+            } catch (error) {
+              cb(/** @type {Error} */ (error))
+            }
           }
-        }
-      }, handleDecryptedRequest)
+        },
+        handleDecryptedRequest
+      )
       // With an `upgrade` listener in place Node hands WebSocket upgrades
       // over with their socket detached from the HTTP parser, which the `ws`
       // handshake needs.
@@ -194,7 +199,7 @@ function createMitmHandler ({
    * @param {import('https').Server} server
    * @param {string} hostname
    */
-  function setDefaultContext (server, hostname) {
+  function setDefaultContext(server, hostname) {
     if (defaultContextHost === hostname) return
     const cert = generateCertForHost(hostname, getCA())
     server.setSecureContext({ key: cert.key, cert: cert.cert })
@@ -207,7 +212,7 @@ function createMitmHandler ({
    *
    * @returns {Promise<void>}
    */
-  async function close () {
+  async function close() {
     const server = httpsServer
     httpsServer = null
     defaultContextHost = null
@@ -233,7 +238,7 @@ function createMitmHandler ({
    * @param {Buffer} head
    * @returns {void}
    */
-  function handleConnect (req, clientSocket, head) {
+  function handleConnect(req, clientSocket, head) {
     const clientIp = clientSocket.remoteAddress
     /** @type {URL} */
     let targetUrl
@@ -321,7 +326,9 @@ function createMitmHandler ({
     clientSocket.allowHalfOpen = false
 
     // Tell client the tunnel is established
-    clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-agent: Cascade-Proxy-MITM\r\n\r\n')
+    clientSocket.write(
+      'HTTP/1.1 200 Connection Established\r\nProxy-agent: Cascade-Proxy-MITM\r\n\r\n'
+    )
 
     // Hand the client socket to the shared HTTPS server, which decrypts it
     server.emit('connection', clientSocket)
@@ -340,7 +347,7 @@ function createMitmHandler ({
    * @param {Buffer} head
    * @returns {void}
    */
-  function handleDecryptedUpgrade (clientReq, socket, head) {
+  function handleDecryptedUpgrade(clientReq, socket, head) {
     // The upgrade socket is the TLS socket of the tunnel, which shares its
     // remote endpoint with the raw socket the target was recorded for.
     const target = tunnelTargets.get(socketKey(/** @type {import('net').Socket} */ (socket)))
@@ -351,7 +358,9 @@ function createMitmHandler ({
     }
     // The proxy speaks no upgrade protocol but WebSocket: anything else
     // (e.g. `Upgrade: h2c`) is forwarded as an ordinary request.
-    const upgradeHeader = String(clientReq.headers.upgrade || '').trim().toLowerCase()
+    const upgradeHeader = String(clientReq.headers.upgrade || '')
+      .trim()
+      .toLowerCase()
     if (upgradeHeader !== 'websocket') {
       forwardUpgradeAsPlainRequest(clientReq, socket, head)
       return
@@ -380,7 +389,8 @@ function createMitmHandler ({
     }
 
     // Attach header so WebSocket handler can reuse resolved info
-    clientReq.headers['x-target-url'] = clientReq.headers['x-target-url'] ||
+    clientReq.headers['x-target-url'] =
+      clientReq.headers['x-target-url'] ||
       `${parsedFullUrl.protocol}//${parsedFullUrl.host}${parsedFullUrl.pathname || ''}`
 
     if (wsDecision.action === 'direct') {
@@ -388,7 +398,11 @@ function createMitmHandler ({
       // already been terminated. Approximate "direct" by disabling rewrites
       // and logging (bypass=true) while still using the MITM TLS tunnel.
       bypassCounter.increment()
-      logWebSocketDirectTunnel({ targetUrl: fullUrl, headers: clientReq.headers, suffix: ' (MITM bypass)' })
+      logWebSocketDirectTunnel({
+        targetUrl: fullUrl,
+        headers: clientReq.headers,
+        suffix: ' (MITM bypass)'
+      })
 
       handleWebSocketUpgrade(clientReq, socket, targetHost, fullUrl, { bypass: true, head })
       return
@@ -411,7 +425,7 @@ function createMitmHandler ({
    * @param {Buffer} head Bytes received after the headers: the request body, if any.
    * @returns {void}
    */
-  function forwardUpgradeAsPlainRequest (clientReq, socket, head) {
+  function forwardUpgradeAsPlainRequest(clientReq, socket, head) {
     const requestStart = Date.now()
     // undici refuses upgrade/keep-alive headers and the h2c settings make no
     // sense without the upgrade.
@@ -429,7 +443,12 @@ function createMitmHandler ({
       netSocket.end()
     })
 
-    processDecryptedRequest(clientReq, res, head && head.length ? head : Buffer.alloc(0), requestStart)
+    processDecryptedRequest(
+      clientReq,
+      res,
+      head && head.length ? head : Buffer.alloc(0),
+      requestStart
+    )
   }
 
   /**
@@ -442,7 +461,7 @@ function createMitmHandler ({
    * @param {import('http').ServerResponse} clientRes
    * @returns {void}
    */
-  function handleDecryptedRequest (clientReq, clientRes) {
+  function handleDecryptedRequest(clientReq, clientRes) {
     const requestStart = Date.now()
 
     // Collect request body
@@ -464,7 +483,7 @@ function createMitmHandler ({
    * @param {number} requestStart
    * @returns {Promise<void>}
    */
-  async function processDecryptedRequest (clientReq, clientRes, requestBody, requestStart) {
+  async function processDecryptedRequest(clientReq, clientRes, requestBody, requestStart) {
     const target = tunnelTargets.get(socketKey(clientReq.socket))
     if (!target) {
       // Only reachable if a connection outlived its tunnel bookkeeping.
@@ -476,7 +495,8 @@ function createMitmHandler ({
     const requestUrl = /** @type {string} */ (clientReq.url)
     const fullUrl = `https://${targetAuthority}${requestUrl}`
     const method = /** @type {string} */ (clientReq.method)
-    const clientIp = clientReq.socket?.remoteAddress || clientReq.connection?.remoteAddress || 'unknown'
+    const clientIp =
+      clientReq.socket?.remoteAddress || clientReq.connection?.remoteAddress || 'unknown'
     const parsedFullUrl = new URL(fullUrl)
     /** @type {Buffer} */
     let body = requestBody
@@ -496,7 +516,8 @@ function createMitmHandler ({
       if (httpHandling === 'direct') {
         // Direct flows buffer only when a rule can actually rewrite the
         // response; otherwise the body is piped through.
-        const responseRulesApply = MITM_BYPASS_REWRITES_ENABLED &&
+        const responseRulesApply =
+          MITM_BYPASS_REWRITES_ENABLED &&
           hasApplicableRules({ requestUrl, fullUrl, phase: 'response' })
 
         await handleDirectHttpFlow({
@@ -589,7 +610,11 @@ function createMitmHandler ({
           let headersToForward = createForwardHeaders(clientReq.headers, omitHeaders, {
             host: targetAuthority
           })
-          headersToForward = applyHeaderRewrites(headersToForward, { requestUrl, fullUrl, phase: 'request' }, logEntry)
+          headersToForward = applyHeaderRewrites(
+            headersToForward,
+            { requestUrl, fullUrl, phase: 'request' },
+            logEntry
+          )
 
           if (body.length > 0) {
             // Body has already been rewritten (Connect/protobuf or fallback) by
@@ -614,17 +639,23 @@ function createMitmHandler ({
           // Parse and optionally rewrite response body before forwarding/logging.
           /** @type {Record<string, any>} */
           let upstreamHeaders = upstreamResponse.headers
-          upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
+          upstreamHeaders = applyHeaderRewrites(
+            upstreamHeaders,
+            { requestUrl, fullUrl, phase: 'response' },
+            logEntry
+          )
 
           // Stream when no rule can touch the body and nothing needs it for
           // logging; otherwise buffer it for rewrites and previews.
-          const canStream = upstreamResponse.body && shouldStreamResponse({
-            method,
-            contentType: getContentType(upstreamHeaders),
-            contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
-            hasRules: hasApplicableRules({ requestUrl, fullUrl, phase: 'response' }),
-            interactive: configStore.interactiveModeEnabled === true
-          })
+          const canStream =
+            upstreamResponse.body &&
+            shouldStreamResponse({
+              method,
+              contentType: getContentType(upstreamHeaders),
+              contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
+              hasRules: hasApplicableRules({ requestUrl, fullUrl, phase: 'response' }),
+              interactive: configStore.interactiveModeEnabled === true
+            })
 
           if (canStream) {
             if (logEntry) {
@@ -637,7 +668,10 @@ function createMitmHandler ({
               addLog(logEntry)
             }
 
-            const streamedHeaders = sanitizeAndStripIdentifyingHeaders(upstreamHeaders, OMIT_RESPONSE_HEADERS)
+            const streamedHeaders = sanitizeAndStripIdentifyingHeaders(
+              upstreamHeaders,
+              OMIT_RESPONSE_HEADERS
+            )
             applyCacheBypassHeadersToObject(streamedHeaders)
             clientRes.writeHead(upstreamResponse.statusCode, streamedHeaders)
 
@@ -655,23 +689,21 @@ function createMitmHandler ({
             ? Buffer.from(await upstreamResponse.body.arrayBuffer())
             : Buffer.alloc(0)
 
-          const {
-            finalResponseBuffer,
-            upstreamHeaders: rewrittenHeaders
-          } = handleBufferedUpstreamResponseWithRewrites({
-            responseBuffer: responseBufferRaw,
-            upstreamHeaders,
-            requestUrl,
-            jsonPathFullUrl: fullUrl,
-            logEntry,
-            source: 'mitm',
-            targetUrlForLog: fullUrl,
-            overrideFullUrlOnLog: false,
-            allowUnaryConnectText: true,
-            statusCode: upstreamResponse.statusCode,
-            enableConnectFrameTextRewrites: true,
-            frameRewriteFullUrl: fullUrl
-          })
+          const { finalResponseBuffer, upstreamHeaders: rewrittenHeaders } =
+            handleBufferedUpstreamResponseWithRewrites({
+              responseBuffer: responseBufferRaw,
+              upstreamHeaders,
+              requestUrl,
+              jsonPathFullUrl: fullUrl,
+              logEntry,
+              source: 'mitm',
+              targetUrlForLog: fullUrl,
+              overrideFullUrlOnLog: false,
+              allowUnaryConnectText: true,
+              statusCode: upstreamResponse.statusCode,
+              enableConnectFrameTextRewrites: true,
+              frameRewriteFullUrl: fullUrl
+            })
 
           // Forward response with cache-busting headers, dropping identifying
           // tracing headers for actively MITM-processed responses.

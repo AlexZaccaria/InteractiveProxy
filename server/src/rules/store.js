@@ -90,7 +90,7 @@ const {
  * @param {RuleStoreOptions} options
  * @returns {RuleStore}
  */
-function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
+function createRuleStore({ rulesFile, presetsFile, storageDir, logger }) {
   /** @type {RuleStoreLogger} */
   const log = logger || {
     warn: (scope, message) => logWarn(scope, message),
@@ -115,13 +115,15 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {(change: RuleStoreChange) => void} listener
    * @returns {() => void}
    */
-  function onChange (listener) {
+  function onChange(listener) {
     changeListeners.add(listener)
-    return () => { changeListeners.delete(listener) }
+    return () => {
+      changeListeners.delete(listener)
+    }
   }
 
   /** @param {RuleStoreChange['kind']} kind */
-  function notifyChange (kind) {
+  function notifyChange(kind) {
     for (const listener of changeListeners) {
       try {
         listener({ kind })
@@ -132,7 +134,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** @param {boolean} value */
-  function setEnabled (value) {
+  function setEnabled(value) {
     const next = value === true
     if (next === enabled) return
     enabled = next
@@ -157,14 +159,12 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * long string fields back into single strings before normalisation, so that
    * the rest of the code always works with flat string values.
    */
-  function load () {
+  function load() {
     try {
       if (fs.existsSync(rulesFile)) {
         const data = JSON.parse(fs.readFileSync(rulesFile, 'utf8'))
         if (Array.isArray(data)) {
-          rules = data
-            .map(deserializeEditRuleFromDisk)
-            .map(normalizeEditRule)
+          rules = data.map(deserializeEditRuleFromDisk).map(normalizeEditRule)
         }
       }
     } catch (error) {
@@ -180,7 +180,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * written in a multi-segment form that is easier to inspect and edit by
    * hand.
    */
-  async function save () {
+  async function save() {
     // Every mutation of the rule list ends with a save, so this is where
     // subscribers learn about it (before the write lands on disk).
     notifyChange('rules')
@@ -194,7 +194,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** Load edit-rule presets from disk into memory. */
-  function loadPresets () {
+  function loadPresets() {
     try {
       if (fs.existsSync(presetsFile)) {
         const data = JSON.parse(fs.readFileSync(presetsFile, 'utf8'))
@@ -209,7 +209,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** Persist edit-rule presets to disk. */
-  async function savePresets () {
+  async function savePresets() {
     notifyChange('presets')
     try {
       const payload = JSON.stringify(presets, null, 2)
@@ -232,7 +232,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * This keeps the on-disk/editable representation compact while allowing the
    * runtime matcher to operate on simple start/end pairs.
    */
-  function rebuildCache () {
+  function rebuildCache() {
     compiledTextRules = []
     compiledJsonPathRules = []
 
@@ -262,9 +262,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
 
         /** @type {RuleTarget} */
         const normalizedTarget =
-          rule.target === 'response' || rule.target === 'both'
-            ? rule.target
-            : 'request'
+          rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
 
         compiledJsonPathRules.push({
           id: rule.id,
@@ -346,7 +344,10 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
           // An invalid regular expression in one rule must not take the whole
           // rule set down with it: skip that combination and keep going.
           const message = error instanceof Error ? error.message : String(error)
-          log.warn('edit-rules', `Skipping rule ${rule.id || '(no id)'} "${rule.name || ''}": ${message}`)
+          log.warn(
+            'edit-rules',
+            `Skipping rule ${rule.id || '(no id)'} "${rule.name || ''}": ${message}`
+          )
           continue
         }
         if (compiled) {
@@ -357,13 +358,13 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** @returns {CompiledTextRule[]} */
-  function getCompiledRules () {
+  function getCompiledRules() {
     if (!enabled) return []
     return compiledTextRules
   }
 
   /** @returns {CompiledJsonPathRule[]} */
-  function getCompiledJsonPathRules () {
+  function getCompiledJsonPathRules() {
     if (!enabled) return []
     return compiledJsonPathRules
   }
@@ -381,7 +382,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {UrlMatchContext|null|undefined} context
    * @returns {CompiledTextRule[]} Filtered compiled rules.
    */
-  function getCompiledRulesForContext (context) {
+  function getCompiledRulesForContext(context) {
     const all = getCompiledRules()
     if (!all.length || !context || typeof context !== 'object') return all
 
@@ -405,13 +406,13 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** @returns {boolean} */
-  function hasCompiledTextRules () {
+  function hasCompiledTextRules() {
     const compiled = getCompiledRules()
     return Array.isArray(compiled) && compiled.length > 0
   }
 
   /** @returns {boolean} */
-  function hasCompiledJsonPathRules () {
+  function hasCompiledJsonPathRules() {
     const compiled = getCompiledJsonPathRules()
     return Array.isArray(compiled) && compiled.length > 0
   }
@@ -423,12 +424,12 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    *
    * @returns {boolean}
    */
-  function hasAnyEditOrJsonPathRules () {
+  function hasAnyEditOrJsonPathRules() {
     return hasCompiledTextRules() || hasCompiledJsonPathRules()
   }
 
   /** @returns {EditRule[]} */
-  function getRules () {
+  function getRules() {
     return rules
   }
 
@@ -436,7 +437,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {Record<string, any>[]} next
    * @returns {EditRule[]}
    */
-  function replaceRules (next) {
+  function replaceRules(next) {
     rules = (Array.isArray(next) ? next : []).map(normalizeEditRule)
     rebuildCache()
     notifyChange('rules')
@@ -447,7 +448,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {string} id
    * @returns {EditRule | undefined}
    */
-  function findRule (id) {
+  function findRule(id) {
     return rules.find(rule => rule && rule.id === id)
   }
 
@@ -455,7 +456,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {Record<string, any>} raw
    * @returns {EditRule}
    */
-  function addRule (raw) {
+  function addRule(raw) {
     // normalizeEditRule generates the id; a client-supplied one is ignored.
     const rule = normalizeEditRule({ ...raw, id: undefined })
     rules.push(rule)
@@ -468,7 +469,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {Record<string, any>} patch
    * @returns {EditRule | null}
    */
-  function updateRule (id, patch) {
+  function updateRule(id, patch) {
     const idx = rules.findIndex(rule => rule.id === id)
     if (idx === -1) return null
 
@@ -488,7 +489,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {string} id
    * @returns {boolean}
    */
-  function removeRule (id) {
+  function removeRule(id) {
     const before = rules.length
     rules = rules.filter(rule => rule.id !== id)
     if (rules.length === before) return false
@@ -499,7 +500,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** @returns {EditRulePreset[]} */
-  function getPresets () {
+  function getPresets() {
     return presets
   }
 
@@ -507,7 +508,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {Record<string, any>} raw
    * @returns {EditRulePreset}
    */
-  function addPreset (raw) {
+  function addPreset(raw) {
     const preset = normalizeEditRulePreset(raw)
     presets.push(preset)
     return preset
@@ -517,20 +518,20 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * @param {string} id
    * @returns {boolean}
    */
-  function removePreset (id) {
+  function removePreset(id) {
     const before = presets.length
     presets = presets.filter(preset => preset && preset.id !== id)
     return presets.length !== before
   }
 
   /** @param {string} id */
-  function recordUsage (id) {
+  function recordUsage(id) {
     const prev = usageCounters.get(id) || 0
     usageCounters.set(id, prev + 1)
   }
 
   /** @param {Iterable<unknown>} ids */
-  function releaseUsage (ids) {
+  function releaseUsage(ids) {
     for (const id of ids) {
       if (typeof id !== 'string' || !id) continue
       const current = usageCounters.get(id)
@@ -546,7 +547,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   }
 
   /** @returns {{ usage: Record<string, number>, totalRulesWithUsage: number }} */
-  function getUsageSnapshot () {
+  function getUsageSnapshot() {
     /** @type {Record<string, number>} */
     const usage = Object.create(null)
     for (const [id, count] of usageCounters.entries()) {
@@ -555,7 +556,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
     return { usage, totalRulesWithUsage: usageCounters.size }
   }
 
-  function clearUsage () {
+  function clearUsage() {
     usageCounters.clear()
   }
 

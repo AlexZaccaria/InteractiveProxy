@@ -12,7 +12,7 @@ const { showNativeFilePicker } = require('../system/file-picker')
 /**
  * @returns {import('express').Router}
  */
-function createSystemRoutes () {
+function createSystemRoutes() {
   const router = express.Router()
 
   // Open a native file picker (Windows) for local path selection.

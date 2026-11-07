@@ -56,11 +56,22 @@ const { classifyUpstreamError } = require('./stats')
  * @param {LogEntryParams} params
  * @returns {LogEntry}
  */
-function createLogEntry ({ requestStart, method, url, fullUrl, headers, source, clientIp, sanitizeHeaders = false, wsOptions }) {
-  const ts = Number.isFinite(requestStart) && typeof requestStart === 'number' ? requestStart : Date.now()
+function createLogEntry({
+  requestStart,
+  method,
+  url,
+  fullUrl,
+  headers,
+  source,
+  clientIp,
+  sanitizeHeaders = false,
+  wsOptions
+}) {
+  const ts =
+    Number.isFinite(requestStart) && typeof requestStart === 'number' ? requestStart : Date.now()
   const processedHeaders = sanitizeHeaders
     ? sanitizeAndStripIdentifyingHeaders(headers || {})
-    : (headers || {})
+    : headers || {}
 
   const base = {
     id: ts + Math.random(),
@@ -100,8 +111,17 @@ function createLogEntry ({ requestStart, method, url, fullUrl, headers, source, 
  * @param {HttpFlowLogEntryParams} params
  * @returns {LogEntry}
  */
-function createHttpFlowLogEntry ({ requestStart, method, url, fullUrl, headers, source, clientIp }) {
-  return createLogEntry({ requestStart, method, url, fullUrl, headers, source, clientIp, sanitizeHeaders: true })
+function createHttpFlowLogEntry({ requestStart, method, url, fullUrl, headers, source, clientIp }) {
+  return createLogEntry({
+    requestStart,
+    method,
+    url,
+    fullUrl,
+    headers,
+    source,
+    clientIp,
+    sanitizeHeaders: true
+  })
 }
 
 /**
@@ -111,7 +131,7 @@ function createHttpFlowLogEntry ({ requestStart, method, url, fullUrl, headers, 
  * @param {{ wsUrl: string, source: string, headers?: HeaderMap, connectionId?: number, message?: string }} params
  * @returns {LogEntry}
  */
-function createWebSocketConnectionLog ({ wsUrl, source, headers, connectionId, message }) {
+function createWebSocketConnectionLog({ wsUrl, source, headers, connectionId, message }) {
   return createLogEntry({
     method: 'WS',
     url: wsUrl,
@@ -158,7 +178,7 @@ function createWebSocketConnectionLog ({ wsUrl, source, headers, connectionId, m
  * @param {LogEntryFactoryDeps} deps
  * @returns {LogEntryFactory}
  */
-function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }) {
+function createLogEntryFactory({ isInteractive, addLog, attachRewriteMetadata }) {
   /**
    * Log a WebSocket direct tunnel establishment when interactive mode is enabled.
    * Centralises the common pattern used by both HTTP upgrade and HTTPS MITM flows.
@@ -168,7 +188,7 @@ function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }
    * @param {HeaderMap} params.headers - Request headers to sanitize and log.
    * @param {string} [params.suffix=''] - Optional suffix for the log message.
    */
-  function logWebSocketDirectTunnel ({ targetUrl, headers, suffix = '' }) {
+  function logWebSocketDirectTunnel({ targetUrl, headers, suffix = '' }) {
     if (!isInteractive()) return
 
     const rawUrl = targetUrl || ''
@@ -199,7 +219,7 @@ function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }
    *
    * @param {WebSocketMessageLogParams} params
    */
-  function logWebSocketMessage ({
+  function logWebSocketMessage({
     direction,
     wsUrl,
     connectionId,
@@ -271,7 +291,8 @@ function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }
       }
 
       if (typeof originalBodyText === 'string' && originalBodyText.length > 0) {
-        const beforeJson = originalBodyJson != null ? originalBodyJson : tryParseWebSocketJson(originalBodyText)
+        const beforeJson =
+          originalBodyJson != null ? originalBodyJson : tryParseWebSocketJson(originalBodyText)
         if (beforeJson !== null) {
           messageLog.wsBodyJsonBefore = beforeJson
         }
@@ -288,7 +309,7 @@ function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }
    * @param {LogEntry | null | undefined} logEntry
    * @param {Error & { code?: string, name?: string, type?: string }} error
    */
-  function recordUpstreamErrorOnLog (logEntry, error) {
+  function recordUpstreamErrorOnLog(logEntry, error) {
     if (!logEntry || typeof logEntry !== 'object') return
 
     logEntry.source = 'error'
@@ -298,7 +319,9 @@ function createLogEntryFactory ({ isInteractive, addLog, attachRewriteMetadata }
       const startTs =
         typeof logEntry.requestStartTs === 'number'
           ? logEntry.requestStartTs
-          : (logEntry.timestamp ? Date.parse(logEntry.timestamp) || Date.now() : Date.now())
+          : logEntry.timestamp
+            ? Date.parse(logEntry.timestamp) || Date.now()
+            : Date.now()
       logEntry.upstreamDurationMs = Date.now() - startTs
     }
 

@@ -74,7 +74,7 @@ const certCache = createLruCache(HOST_CERT_CACHE_MAX)
  *
  * @returns {RsaKeyPair}
  */
-function generateRsaKeyPair () {
+function generateRsaKeyPair() {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   const keyPem = /** @type {string} */ (privateKey.export({ type: 'pkcs1', format: 'pem' }))
   const publicPem = /** @type {string} */ (publicKey.export({ type: 'spki', format: 'pem' }))
@@ -92,7 +92,7 @@ function generateRsaKeyPair () {
  * @param {string} keyPem
  * @returns {RsaKeyPair}
  */
-function loadRsaKeyPair (keyPem) {
+function loadRsaKeyPair(keyPem) {
   const privateKey = forge.pki.privateKeyFromPem(keyPem)
   return {
     privateKey,
@@ -108,7 +108,7 @@ function loadRsaKeyPair (keyPem) {
  * @param {string} target
  * @param {string} contents
  */
-function writeFileAtomic (target, contents) {
+function writeFileAtomic(target, contents) {
   fs.mkdirSync(path.dirname(target), { recursive: true })
   const temp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`
   fs.writeFileSync(temp, contents)
@@ -121,7 +121,7 @@ function writeFileAtomic (target, contents) {
  *
  * @returns {string}
  */
-function randomSerialNumber () {
+function randomSerialNumber() {
   const bytes = crypto.randomBytes(16)
   // Clear the high bit so the DER integer is positive.
   bytes[0] &= 0x7f
@@ -134,7 +134,7 @@ function randomSerialNumber () {
  *
  * @returns {CaMaterial}
  */
-function getOrCreateCA () {
+function getOrCreateCA() {
   if (fs.existsSync(CA_KEY_PATH) && fs.existsSync(CA_CERT_PATH)) {
     const caKeyPem = fs.readFileSync(CA_KEY_PATH, 'utf8')
     const caCertPem = fs.readFileSync(CA_CERT_PATH, 'utf8')
@@ -217,7 +217,7 @@ let leafKeyCache = null
  *
  * @returns {RsaKeyPair}
  */
-function getLeafKey () {
+function getLeafKey() {
   if (leafKeyCache) return leafKeyCache
 
   if (fs.existsSync(LEAF_KEY_PATH)) {
@@ -242,8 +242,11 @@ function getLeafKey () {
  * @param {string} hostname
  * @returns {string}
  */
-function hostCertPath (hostname) {
-  const safe = hostname.toLowerCase().replace(/[^a-z0-9.-]+/g, '_').replace(/^\.+/, '_')
+function hostCertPath(hostname) {
+  const safe = hostname
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, '_')
+    .replace(/^\.+/, '_')
   return path.join(HOST_CERTS_DIR, `${safe || '_'}.pem`)
 }
 
@@ -258,7 +261,7 @@ function hostCertPath (hostname) {
  * @param {RsaKeyPair} leafKey
  * @returns {HostCertificate|null}
  */
-function loadHostCertificate (hostname, ca, leafKey) {
+function loadHostCertificate(hostname, ca, leafKey) {
   let certPem
   try {
     certPem = fs.readFileSync(hostCertPath(hostname), 'utf8')
@@ -274,7 +277,10 @@ function loadHostCertificate (hostname, ca, leafKey) {
     if (!ca.cert.verify(cert)) return null
 
     const certKey = /** @type {import('node-forge').pki.rsa.PublicKey} */ (cert.publicKey)
-    if (certKey.n.compareTo(leafKey.publicKey.n) !== 0 || certKey.e.compareTo(leafKey.publicKey.e) !== 0) {
+    if (
+      certKey.n.compareTo(leafKey.publicKey.n) !== 0 ||
+      certKey.e.compareTo(leafKey.publicKey.e) !== 0
+    ) {
       return null
     }
 
@@ -293,7 +299,7 @@ function loadHostCertificate (hostname, ca, leafKey) {
  * @param {CaMaterial} ca
  * @returns {HostCertificate}
  */
-function generateCertForHost (hostname, ca) {
+function generateCertForHost(hostname, ca) {
   const cached = certCache.get(hostname)
   if (cached) {
     return cached
@@ -387,7 +393,7 @@ let caCache = null
  *
  * @returns {CaMaterial}
  */
-function getCA () {
+function getCA() {
   if (!caCache) {
     caCache = getOrCreateCA()
   }
@@ -398,7 +404,7 @@ function getCA () {
  * Drop the in-memory host certificates and the loaded leaf key, so the next
  * request goes back to disk (used by tests; the CA stays loaded).
  */
-function clearCache () {
+function clearCache() {
   certCache.clear()
   leafKeyCache = null
 }

@@ -106,7 +106,7 @@ const { bufferToTextPreview, tryParseJsonString } = require('../logs/preview')
  *
  * @param {ConnectRewriterDeps} deps
  */
-function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInteractive }) {
+function createConnectRewriter({ ruleStore, textRules, jsonPathRules, isInteractive }) {
   /**
    * @param {LogEntry|null|undefined} logEntry
    * @param {string[]} appliedRuleIds
@@ -119,7 +119,7 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
    * @param {LogEntry|null|undefined} logEntry
    * @returns {boolean}
    */
-  function wantsInteractiveLogging (logEntry) {
+  function wantsInteractiveLogging(logEntry) {
     return isInteractive() && !!logEntry
   }
 
@@ -138,7 +138,13 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
    * @param {{ loggingEnabled?: boolean }} [options] - Controls frame metadata/logging work.
    * @returns {ConnectFrameRewriteResult}
    */
-  function applyConnectFrameRewrites (buffer, headers = {}, decodedConnect = null, jsonPathContext = {}, options = {}) {
+  function applyConnectFrameRewrites(
+    buffer,
+    headers = {},
+    decodedConnect = null,
+    jsonPathContext = {},
+    options = {}
+  ) {
     if (isEmptyBuffer(buffer)) {
       return { buffer, appliedRuleIds: [], changed: false }
     }
@@ -149,7 +155,8 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
     const compiledJsonPathRulesLocal = ruleStore.getCompiledJsonPathRules()
 
     const hasTextRules = Array.isArray(compiledTextRules) && compiledTextRules.length > 0
-    const hasJsonPathRules = Array.isArray(compiledJsonPathRulesLocal) && compiledJsonPathRulesLocal.length > 0
+    const hasJsonPathRules =
+      Array.isArray(compiledJsonPathRulesLocal) && compiledJsonPathRulesLocal.length > 0
 
     if (!hasTextRules && !hasJsonPathRules) {
       return { buffer, appliedRuleIds: [], changed: false }
@@ -193,10 +200,12 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
 
     if (encodingHeader && encodingHeader !== 'identity') {
       // Try to reuse already-decoded HTTP body from Connect logging pass
-      const decodedHttpBuffer = decodedConnect && Buffer.isBuffer(decodedConnect.httpDecodedBuffer)
-        ? decodedConnect.httpDecodedBuffer
-        : null
-      const canReuse = decodedConnect &&
+      const decodedHttpBuffer =
+        decodedConnect && Buffer.isBuffer(decodedConnect.httpDecodedBuffer)
+          ? decodedConnect.httpDecodedBuffer
+          : null
+      const canReuse =
+        decodedConnect &&
         decodedConnect.httpDecompressed === true &&
         typeof decodedConnect.httpEncoding === 'string' &&
         decodedConnect.httpEncoding.toLowerCase() === encodingHeader &&
@@ -227,7 +236,7 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
      * @param {Buffer} inputBuffer
      * @returns {EnvelopeRewriteResult}
      */
-    const attemptEnvelopeRewrite = (inputBuffer) => {
+    const attemptEnvelopeRewrite = inputBuffer => {
       if (inputBuffer.length < 5) {
         return { buffer: inputBuffer, appliedRuleIds: [], changed: false, success: false }
       }
@@ -297,8 +306,14 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
           // decompressing the frame a second time here. Use the cached
           // Buffer when available.
           if (decodedConnect && decodedConnect.envelope && Array.isArray(decodedConnect.frames)) {
-            const decodedFrame = /** @type {CachedConnectFrame | undefined} */ (decodedConnect.frames[index])
-            if (decodedFrame && decodedFrame.frameDecompressed && Buffer.isBuffer(decodedFrame._decodedBuffer)) {
+            const decodedFrame = /** @type {CachedConnectFrame | undefined} */ (
+              decodedConnect.frames[index]
+            )
+            if (
+              decodedFrame &&
+              decodedFrame.frameDecompressed &&
+              Buffer.isBuffer(decodedFrame._decodedBuffer)
+            ) {
               framePayload = decodedFrame._decodedBuffer
               needsRecompress = true
               reusedDecodedPayload = true
@@ -349,7 +364,9 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
         /** @type {Record<string, unknown> | null} */
         let seedJson = null
         if (decodedConnect && decodedConnect.envelope && Array.isArray(decodedConnect.frames)) {
-          const decodedFrame = /** @type {CachedConnectFrame | undefined} */ (decodedConnect.frames[index])
+          const decodedFrame = /** @type {CachedConnectFrame | undefined} */ (
+            decodedConnect.frames[index]
+          )
           if (decodedFrame && typeof decodedFrame._rawProtobufJson === 'object') {
             seedJson = decodedFrame._rawProtobufJson
           }
@@ -486,7 +503,11 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
           try {
             updatedBuffer = connectCodec.compress(updatedBuffer)
           } catch (error) {
-            logDebug('applyConnectFrameRewrites', 'Failed to recompress unary Connect body after text rewrites', error)
+            logDebug(
+              'applyConnectFrameRewrites',
+              'Failed to recompress unary Connect body after text rewrites',
+              error
+            )
             updatedBuffer = null
           }
         }
@@ -544,7 +565,7 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
    * @param {ConnectRewriteOptions} [options]
    * @returns {{ buffer: Buffer, connect: DecodedConnectPayload | null }} Final body buffer and optional Connect view.
    */
-  function applyConnectRewritesAndDecode (logEntry, buffer, headers, options = {}) {
+  function applyConnectRewritesAndDecode(logEntry, buffer, headers, options = {}) {
     const role = options.role === 'response' ? 'response' : 'request'
     const allowBodyRewriteFallback = options.allowBodyRewriteFallback === true
     const updateContentEncoding = options.updateContentEncoding === true
@@ -598,9 +619,7 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
     // Decode the original payload once to build a true "before rewrite" view,
     // but only when required for logging. Rewrites operate on the raw HTTP
     // buffer and may optionally reuse decoded frames when logging is enabled.
-    const originalConnect = wantsLogging
-      ? decodeConnectPayload(buffer, headers)
-      : null
+    const originalConnect = wantsLogging ? decodeConnectPayload(buffer, headers) : null
 
     // Apply binary/protobuf rewrites to the HTTP body buffer.
     // We operate on the original HTTP body here; decodeConnectPayload above
@@ -666,7 +685,11 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
               }
 
               if (hasAppliedRules(bodyRewriteResult.appliedRuleIds)) {
-                attach(logEntry, bodyRewriteResult.appliedRuleIds, isResponse ? 'response' : 'request')
+                attach(
+                  logEntry,
+                  bodyRewriteResult.appliedRuleIds,
+                  isResponse ? 'response' : 'request'
+                )
               }
             }
           }
@@ -722,7 +745,11 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
     /** @type {DecodedConnectPayload | null} */
     let connect = null
 
-    if (originalConnect && Array.isArray(originalConnect.frames) && originalConnect.frames.length > 0) {
+    if (
+      originalConnect &&
+      Array.isArray(originalConnect.frames) &&
+      originalConnect.frames.length > 0
+    ) {
       // Normalised "before" frames (decoded from the original payload).
       /** @type {ConnectFrame[]} */
       const originalFrames = originalConnect.frames.map((frame, idx) => ({
@@ -741,9 +768,12 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
       if (Array.isArray(updatedFrames) && updatedFrames.length > 0) {
         frames = updatedFrames.map((frame, idx) => ({
           index: typeof frame.index === 'number' ? frame.index : idx,
-          length: typeof frame.length === 'number'
-            ? frame.length
-            : (Buffer.isBuffer(frame.data) ? frame.data.length : 0),
+          length:
+            typeof frame.length === 'number'
+              ? frame.length
+              : Buffer.isBuffer(frame.data)
+                ? frame.data.length
+                : 0,
           compressed: !!((frame.flags & 0x01) === 0x01),
           endStream: !!((frame.flags & 0x02) === 0x02),
           frameDecompressed: false,
@@ -800,7 +830,7 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
    * @param {{requestUrl?: string, fullUrl?: string}} [urlContext] - URL context for JSONPath rules.
    * @returns {{ buffer: Buffer }} Object containing the final response buffer.
    */
-  function applyConnectRewritesForBypass (buffer, headers, urlContext) {
+  function applyConnectRewritesForBypass(buffer, headers, urlContext) {
     if (isEmptyBuffer(buffer)) {
       return { buffer }
     }
@@ -811,17 +841,12 @@ function createConnectRewriter ({ ruleStore, textRules, jsonPathRules, isInterac
       return { buffer }
     }
 
-    const { buffer: nextBuffer } = applyConnectRewritesAndDecode(
-      null,
-      buffer,
-      headers,
-      {
-        role: 'response',
-        allowBodyRewriteFallback: true,
-        updateContentEncoding: true,
-        urlContext: urlContext || {}
-      }
-    )
+    const { buffer: nextBuffer } = applyConnectRewritesAndDecode(null, buffer, headers, {
+      role: 'response',
+      allowBodyRewriteFallback: true,
+      updateContentEncoding: true,
+      urlContext: urlContext || {}
+    })
 
     return { buffer: nextBuffer }
   }

@@ -18,16 +18,18 @@ let upstreamBase
  * @param {string|Buffer} [body]
  * @returns {Promise<{ status: number, headers: import('http').IncomingHttpHeaders, body: string }>}
  */
-function request (options, body) {
+function request(options, body) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: proxyPort, ...options }, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks).toString('utf8')
-      }))
+      res.on('end', () =>
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf8')
+        })
+      )
     })
     req.on('error', reject)
     if (body) req.write(body)
@@ -36,51 +38,64 @@ function request (options, body) {
 }
 
 /** Management API call (JSON in, JSON out) against the proxy's own origin. */
-async function api (method, path, payload, headers = {}) {
+async function api(method, path, payload, headers = {}) {
   const body = payload === undefined ? undefined : JSON.stringify(payload)
-  const response = await request({
-    method,
-    path,
-    headers: {
-      host: `127.0.0.1:${proxyPort}`,
-      ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}),
-      ...headers
-    }
-  }, body)
+  const response = await request(
+    {
+      method,
+      path,
+      headers: {
+        host: `127.0.0.1:${proxyPort}`,
+        ...(body
+          ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }
+          : {}),
+        ...headers
+      }
+    },
+    body
+  )
   let json = null
-  try { json = JSON.parse(response.body) } catch {}
+  try {
+    json = JSON.parse(response.body)
+  } catch {}
   return { ...response, json }
 }
 
 /** Proxy-style request: absolute URL in the request line, like `curl -x`. */
-function viaProxy (method, url, { headers = {}, body } = {}) {
+function viaProxy(method, url, { headers = {}, body } = {}) {
   const target = new URL(url)
-  return request({
-    method,
-    path: url,
-    headers: {
-      host: target.host,
-      ...(body ? { 'content-length': Buffer.byteLength(body) } : {}),
-      ...headers
-    }
-  }, body)
+  return request(
+    {
+      method,
+      path: url,
+      headers: {
+        host: target.host,
+        ...(body ? { 'content-length': Buffer.byteLength(body) } : {}),
+        ...headers
+      }
+    },
+    body
+  )
 }
 
 /** Request to the proxy's own origin carrying an X-Target-URL header. */
-function viaTargetHeader (method, path, targetUrl, { headers = {}, body } = {}) {
-  return request({
-    method,
-    path,
-    headers: {
-      host: `127.0.0.1:${proxyPort}`,
-      'x-target-url': targetUrl,
-      ...(body ? { 'content-length': Buffer.byteLength(body) } : {}),
-      ...headers
-    }
-  }, body)
+function viaTargetHeader(method, path, targetUrl, { headers = {}, body } = {}) {
+  return request(
+    {
+      method,
+      path,
+      headers: {
+        host: `127.0.0.1:${proxyPort}`,
+        'x-target-url': targetUrl,
+        ...(body ? { 'content-length': Buffer.byteLength(body) } : {}),
+        ...headers
+      }
+    },
+    body
+  )
 }
 
-async function listLogs (query = '') {
+async function listLogs(query = '') {
   const { json } = await api('GET', `/api/logs?limit=200${query}`)
   return json.items
 }
@@ -184,7 +199,11 @@ test('HEAD is forwarded and answered without a body', async () => {
 })
 
 test('404 when there is neither a target nor a local resource', async () => {
-  const res = await request({ method: 'GET', path: '/nothing-here', headers: { host: `127.0.0.1:${proxyPort}` } })
+  const res = await request({
+    method: 'GET',
+    path: '/nothing-here',
+    headers: { host: `127.0.0.1:${proxyPort}` }
+  })
   assert.equal(res.status, 404)
   const json = JSON.parse(res.body)
   assert.equal(json.error, 'No local resource found and no target URL specified')
@@ -310,7 +329,11 @@ test('a local resource is served instead of the upstream', async () => {
 test('a blocked rule answers 204 and the entry shows up as blocked once the rule is gone', async () => {
   await api('DELETE', '/api/logs')
 
-  const added = await api('POST', '/api/blocked', { action: 'add', url: '/blocked-path', name: 'test block' })
+  const added = await api('POST', '/api/blocked', {
+    action: 'add',
+    url: '/blocked-path',
+    name: 'test block'
+  })
   assert.equal(added.status, 200)
   assert.equal(added.json.success, true)
   const rule = added.json.blockedRules.find(entry => entry.url === '/blocked-path')
@@ -330,15 +353,24 @@ test('a blocked rule answers 204 and the entry shows up as blocked once the rule
   // /api/logs hides every entry whose URL matches a blocked rule (enabled or
   // not) while the rule exists (documented behaviour).
   const hidden = await listLogs()
-  assert.equal(hidden.some(entry => entry.source === 'blocked'), false)
-  assert.equal(hidden.some(entry => entry.fullUrl === `${upstreamBase}/still-open`), true)
+  assert.equal(
+    hidden.some(entry => entry.source === 'blocked'),
+    false
+  )
+  assert.equal(
+    hidden.some(entry => entry.fullUrl === `${upstreamBase}/still-open`),
+    true
+  )
 
   const dashboard = await api('GET', '/api/dashboard')
   assert.equal(dashboard.json.stats.blocked, 1)
 
   const removed = await api('POST', '/api/blocked', { action: 'remove', id: rule.id })
   assert.equal(removed.status, 200)
-  assert.equal(removed.json.blockedRules.some(entry => entry.id === rule.id), false)
+  assert.equal(
+    removed.json.blockedRules.some(entry => entry.id === rule.id),
+    false
+  )
 
   // Removing the rule makes the hidden entry visible right away.
   const entries = (await listLogs()).filter(item => item.source === 'blocked')
@@ -356,14 +388,22 @@ test('a blocked rule answers 204 and the entry shows up as blocked once the rule
 })
 
 test('a blocked rule added with a disabled flag is inactive until updated', async () => {
-  const added = await api('POST', '/api/blocked', { action: 'add', url: '/sleeping-block', enabled: false })
+  const added = await api('POST', '/api/blocked', {
+    action: 'add',
+    url: '/sleeping-block',
+    enabled: false
+  })
   assert.equal(added.status, 200)
   const rule = added.json.blockedRules.find(entry => entry.url === '/sleeping-block')
   assert.equal(rule.enabled, false)
 
   assert.equal((await viaProxy('GET', `${upstreamBase}/sleeping-block/a`)).status, 200)
 
-  const updated = await api('POST', '/api/blocked', { action: 'update', id: rule.id, enabled: true })
+  const updated = await api('POST', '/api/blocked', {
+    action: 'update',
+    id: rule.id,
+    enabled: true
+  })
   assert.equal(updated.status, 200)
   assert.equal((await viaProxy('GET', `${upstreamBase}/sleeping-block/a`)).status, 204)
 
@@ -381,7 +421,11 @@ test('POST /api/blocked validates its payload', async () => {
   const badEnabled = await api('POST', '/api/blocked', { action: 'add', url: '/x', enabled: 'yes' })
   assert.equal(badEnabled.status, 400)
 
-  const unknownId = await api('POST', '/api/blocked', { action: 'update', id: 'missing', url: '/y' })
+  const unknownId = await api('POST', '/api/blocked', {
+    action: 'update',
+    id: 'missing',
+    url: '/y'
+  })
   assert.equal(unknownId.status, 404)
 })
 
@@ -398,37 +442,42 @@ let streamBase
  * Proxy-style request returning the raw body and the arrival times of the
  * first chunk and of the end of the response.
  */
-function viaProxyTimed (url, { headers = {} } = {}) {
+function viaProxyTimed(url, { headers = {} } = {}) {
   const target = new URL(url)
   return new Promise((resolve, reject) => {
-    const req = http.request({
-      host: '127.0.0.1',
-      port: proxyPort,
-      method: 'GET',
-      path: url,
-      headers: { host: target.host, ...headers }
-    }, res => {
-      const chunks = []
-      let firstChunkAt = null
-      res.on('data', chunk => {
-        if (firstChunkAt === null) firstChunkAt = Date.now()
-        chunks.push(chunk)
-      })
-      res.on('end', () => resolve({
-        status: res.statusCode,
-        headers: res.headers,
-        body: Buffer.concat(chunks),
-        firstChunkAt,
-        endAt: Date.now()
-      }))
-    })
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: proxyPort,
+        method: 'GET',
+        path: url,
+        headers: { host: target.host, ...headers }
+      },
+      res => {
+        const chunks = []
+        let firstChunkAt = null
+        res.on('data', chunk => {
+          if (firstChunkAt === null) firstChunkAt = Date.now()
+          chunks.push(chunk)
+        })
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            firstChunkAt,
+            endAt: Date.now()
+          })
+        )
+      }
+    )
     req.on('error', reject)
     req.end()
   })
 }
 
 /** Poll the logs until the entry of `fullUrl` has a numeric responseSize (the pipe may still be finishing). */
-async function waitForStreamedEntry (fullUrl) {
+async function waitForStreamedEntry(fullUrl) {
   const deadline = Date.now() + 2000
   let entry = null
   while (Date.now() < deadline) {
@@ -444,7 +493,10 @@ before(async () => {
   streamBase = `http://127.0.0.1:${streamUpstreamPort}`
   streamUpstream = http.createServer((req, res) => {
     if (req.url === '/big.bin') {
-      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': BIG_BINARY.length
+      })
       res.end(BIG_BINARY)
       return
     }

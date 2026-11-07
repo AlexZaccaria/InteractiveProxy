@@ -55,7 +55,7 @@ const { extractHostInfoFromLog, sanitizePathForSuggestions } = require('./stats'
  * @param {SuggestionTrackerOptions} options
  * @returns {SuggestionTracker}
  */
-function createSuggestionTracker ({ getBypassMatchers }) {
+function createSuggestionTracker({ getBypassMatchers }) {
   /** @type {Map<string, SuggestionRecord>} */
   const bypassSuggestionStats = new Map()
   /** @type {WeakMap<object, { host: string, pathKey: string, timestamp: number | null }>} */
@@ -64,7 +64,7 @@ function createSuggestionTracker ({ getBypassMatchers }) {
   /**
    * @param {LogEntry} logEntry
    */
-  function onAdd (logEntry) {
+  function onAdd(logEntry) {
     const hostInfo = extractHostInfoFromLog(logEntry)
     if (!hostInfo?.host) return
 
@@ -104,7 +104,7 @@ function createSuggestionTracker ({ getBypassMatchers }) {
    * @param {LogEntry} logEntry
    * @param {LogStore} store
    */
-  function onRemove (logEntry, store) {
+  function onRemove(logEntry, store) {
     const meta = logSuggestionMetadata.get(logEntry)
     if (!meta?.host) return
 
@@ -146,12 +146,17 @@ function createSuggestionTracker ({ getBypassMatchers }) {
    * @param {{ limit?: number }} [options]
    * @returns {Suggestion[]}
    */
-  function compute ({ limit = 10 } = {}) {
+  function compute({ limit = 10 } = {}) {
     const cappedLimit = Math.max(1, Math.min(50, limit))
     const bypassMatchers = getBypassMatchers()
 
     const results = Array.from(bypassSuggestionStats.values())
-      .filter(record => !bypassMatchers.some(matcher => matcher.type === 'host' && hostPatternMatches(matcher.value, record.host)))
+      .filter(
+        record =>
+          !bypassMatchers.some(
+            matcher => matcher.type === 'host' && hostPatternMatches(matcher.value, record.host)
+          )
+      )
       .map(record => {
         const topPaths = Array.from(record.pathCounts.entries())
           .sort((a, b) => b[1] - a[1])
@@ -175,7 +180,7 @@ function createSuggestionTracker ({ getBypassMatchers }) {
     return results
   }
 
-  function reset () {
+  function reset() {
     bypassSuggestionStats.clear()
     logSuggestionMetadata = new WeakMap()
   }

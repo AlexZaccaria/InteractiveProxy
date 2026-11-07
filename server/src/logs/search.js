@@ -45,9 +45,9 @@ const ALWAYS_INCLUDED_SOURCES = new Set(['local', 'blocked', 'error'])
  * @param {LogEntry | null | undefined} log
  * @returns {string}
  */
-function getLogUrlString (log) {
+function getLogUrlString(log) {
   if (!log) return ''
-  return ((log.fullUrl || log.url) || '').toString()
+  return (log.fullUrl || log.url || '').toString()
 }
 
 /**
@@ -90,13 +90,11 @@ const EXTENSION_FILE_TYPES = {
  * @param {LogEntry | null | undefined} log
  * @returns {string}
  */
-function getFileTypeFromLogEntry (log) {
+function getFileTypeFromLogEntry(log) {
   // Early return if already cached
   if (log?.fileType) return log.fileType
 
-  const contentType = (log && log.responseHeaders)
-    ? getContentType(log.responseHeaders)
-    : ''
+  const contentType = log && log.responseHeaders ? getContentType(log.responseHeaders) : ''
   // Extension lookups ignore the query string and fragment.
   const url = getLogUrlString(log).toLowerCase().split(/[?#]/, 1)[0]
   const dot = url.lastIndexOf('.')
@@ -116,15 +114,15 @@ function getFileTypeFromLogEntry (log) {
   }
 
   // If bodies are structured objects, treat them as JSON for cosmetic purposes
-  if (log && (typeof log.responseBody === 'object' && log.responseBody !== null)) return 'json'
-  if (log && (typeof log.body === 'object' && log.body !== null)) return 'json'
+  if (log && typeof log.responseBody === 'object' && log.responseBody !== null) return 'json'
+  if (log && typeof log.body === 'object' && log.body !== null) return 'json'
 
   // Best-effort JSON detection on string bodies when content-type is missing or generic
   /**
    * @param {unknown} value
    * @returns {boolean}
    */
-  const tryLooksLikeJsonString = (value) => {
+  const tryLooksLikeJsonString = value => {
     if (!value || typeof value !== 'string') return false
     if (value.includes('[Binary')) return false
     const trimmed = value.trim()
@@ -152,14 +150,15 @@ function getFileTypeFromLogEntry (log) {
  *
  * @param {LogEntry | null | undefined} log
  */
-function ensureLogSearchSnapshots (log) {
+function ensureLogSearchSnapshots(log) {
   if (!log || typeof log !== 'object') return
 
   // Early return if all snapshots are already populated
-  const hasAll = typeof log.requestSearchContent === 'string' &&
-                 typeof log.headersSearch === 'string' &&
-                 typeof log.responseSearchContent === 'string' &&
-                 typeof log.responseHeadersSearch === 'string'
+  const hasAll =
+    typeof log.requestSearchContent === 'string' &&
+    typeof log.headersSearch === 'string' &&
+    typeof log.responseSearchContent === 'string' &&
+    typeof log.responseHeadersSearch === 'string'
   if (hasAll) return
 
   try {
@@ -252,7 +251,7 @@ function ensureLogSearchSnapshots (log) {
  * @param {LogStore} store
  * @returns {{ ordered: LogEntry[], total: number }}
  */
-function filterLogsCore (rawQuery, store) {
+function filterLogsCore(rawQuery, store) {
   /** @type {LogFilterQuery} */
   const query = rawQuery && typeof rawQuery === 'object' ? rawQuery : {}
   const searchTerm = safeString(query.search)
@@ -261,7 +260,17 @@ function filterLogsCore (rawQuery, store) {
 
   const selectedSources = parseListQuery(query.sources, ['proxied', 'mitm', 'websocket'])
   const selectedMethods = parseListQuery(query.methods, ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-  const selectedFileTypes = parseListQuery(query.fileTypes, ['json', 'html', 'css', 'js', 'image', 'video', 'audio', 'font', 'other'])
+  const selectedFileTypes = parseListQuery(query.fileTypes, [
+    'json',
+    'html',
+    'css',
+    'js',
+    'image',
+    'video',
+    'audio',
+    'font',
+    'other'
+  ])
 
   const showWsConnections = queryBool(query.showWsConnections)
 
@@ -301,7 +310,11 @@ function filterLogsCore (rawQuery, store) {
     // direct pattern scan only when that flag is not present.
     if (log && typeof log.hiddenByBlockedRules === 'boolean') {
       if (log.hiddenByBlockedRules) return false
-    } else if (patterns.length > 0 && urlString && patterns.some(pattern => urlString.includes(pattern))) {
+    } else if (
+      patterns.length > 0 &&
+      urlString &&
+      patterns.some(pattern => urlString.includes(pattern))
+    ) {
       return false
     }
 
@@ -309,49 +322,51 @@ function filterLogsCore (rawQuery, store) {
       return false
     }
 
-    const matchesSearch = searchTerm === '' || (() => {
-      const searchableText =
-        (log && typeof log.searchBase === 'string' && log.searchBase.length)
-          ? log.searchBase
-          : [
-              log.url,
-              log.method,
-              log.targetUrl || '',
-              log.localResource || ''
-            ].join(' ').toLowerCase()
+    const matchesSearch =
+      searchTerm === '' ||
+      (() => {
+        const searchableText =
+          log && typeof log.searchBase === 'string' && log.searchBase.length
+            ? log.searchBase
+            : [log.url, log.method, log.targetUrl || '', log.localResource || '']
+                .join(' ')
+                .toLowerCase()
 
-      if (searchOrGroups.length === 0) return true
+        if (searchOrGroups.length === 0) return true
 
-      /**
-       * @param {string} group
-       * @returns {boolean}
-       */
-      const groupMatches = (group) => {
-        const rawTerms = group.split(';').map(t => t.trim()).filter(t => t)
-        if (rawTerms.length === 0) return true
+        /**
+         * @param {string} group
+         * @returns {boolean}
+         */
+        const groupMatches = group => {
+          const rawTerms = group
+            .split(';')
+            .map(t => t.trim())
+            .filter(t => t)
+          if (rawTerms.length === 0) return true
 
-        return rawTerms.every(term => {
-          if (!term) return true
-          if (term.startsWith('!')) {
-            const negatedTerm = term.substring(1).toLowerCase()
-            return !searchableText.includes(negatedTerm)
-          }
-          return searchableText.includes(term.toLowerCase())
-        })
-      }
+          return rawTerms.every(term => {
+            if (!term) return true
+            if (term.startsWith('!')) {
+              const negatedTerm = term.substring(1).toLowerCase()
+              return !searchableText.includes(negatedTerm)
+            }
+            return searchableText.includes(term.toLowerCase())
+          })
+        }
 
-      return searchOrGroups.some(groupMatches)
-    })()
+        return searchOrGroups.some(groupMatches)
+      })()
 
     if (!matchesSearch) return false
 
     const requestSearchContentLower = safeString(log?.requestSearchContent)
     const headersSearchLower = safeString(log?.headersSearch)
 
-    const matchesRequestBodySearch = requestBodySearch === '' || (
+    const matchesRequestBodySearch =
+      requestBodySearch === '' ||
       (requestSearchContentLower && requestSearchContentLower.includes(requestBodySearchLower)) ||
       (headersSearchLower && headersSearchLower.includes(requestBodySearchLower))
-    )
 
     if (!matchesRequestBodySearch) return false
 
@@ -359,10 +374,10 @@ function filterLogsCore (rawQuery, store) {
     const responseSearchContentLower = safeString(log?.responseSearchContent)
     const responseHeadersSearchLower = safeString(log?.responseHeadersSearch)
 
-    const matchesResponseBodySearch = responseSearchTerm === '' || (
+    const matchesResponseBodySearch =
+      responseSearchTerm === '' ||
       (responseSearchContentLower && responseSearchContentLower.includes(responseSearchLower)) ||
       (responseHeadersSearchLower && responseHeadersSearchLower.includes(responseSearchLower))
-    )
 
     if (!matchesResponseBodySearch) return false
 
@@ -394,7 +409,7 @@ function filterLogsCore (rawQuery, store) {
     const methodSelected = log && (log.method === 'WS' || selectedMethods.includes(log.method))
     if (!methodSelected) return false
 
-    const fileType = (log && log.fileType) ? log.fileType : getFileTypeFromLogEntry(log)
+    const fileType = log && log.fileType ? log.fileType : getFileTypeFromLogEntry(log)
     const fileTypeSelected = selectedFileTypes.includes(fileType)
     if (!fileTypeSelected) return false
 

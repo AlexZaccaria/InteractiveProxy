@@ -62,7 +62,11 @@ const jsonPathRule = {
   target: 'request'
 }
 
-const ctx = { requestUrl: '/svc/Method', fullUrl: 'https://api.example.com/svc/Method', phase: 'request' }
+const ctx = {
+  requestUrl: '/svc/Method',
+  fullUrl: 'https://api.example.com/svc/Method',
+  phase: 'request'
+}
 
 before(async () => {
   const loaded = await loadServer()
@@ -77,7 +81,12 @@ afterEach(() => {
 describe('looksLikeConnectEnvelope', () => {
   it('accepts one or more well-formed frames, including empty ones', () => {
     assert.equal(I.looksLikeConnectEnvelope(frame(0, protoMessage())), true)
-    assert.equal(I.looksLikeConnectEnvelope(Buffer.concat([frame(0, protoMessage()), frame(2, Buffer.from('{}'))])), true)
+    assert.equal(
+      I.looksLikeConnectEnvelope(
+        Buffer.concat([frame(0, protoMessage()), frame(2, Buffer.from('{}'))])
+      ),
+      true
+    )
     assert.equal(I.looksLikeConnectEnvelope(Buffer.from([0, 0, 0, 0, 0])), true)
     assert.equal(I.looksLikeConnectEnvelope(frame(3, protoMessage())), true)
   })
@@ -85,7 +94,10 @@ describe('looksLikeConnectEnvelope', () => {
   it('rejects unknown flag bits, overflowing lengths, trailing bytes, short and non-buffer input', () => {
     assert.equal(I.looksLikeConnectEnvelope(frame(4, protoMessage())), false)
     assert.equal(I.looksLikeConnectEnvelope(Buffer.from([0, 0, 0, 0, 9, 1, 2])), false)
-    assert.equal(I.looksLikeConnectEnvelope(Buffer.concat([frame(0, protoMessage()), Buffer.from([1, 2, 3])])), false)
+    assert.equal(
+      I.looksLikeConnectEnvelope(Buffer.concat([frame(0, protoMessage()), Buffer.from([1, 2, 3])])),
+      false
+    )
     assert.equal(I.looksLikeConnectEnvelope(Buffer.from([0, 0, 0, 0])), false)
     assert.equal(I.looksLikeConnectEnvelope('abc'), false)
     assert.equal(I.looksLikeConnectEnvelope(protoMessage()), false)
@@ -106,14 +118,24 @@ describe('rebuildConnectEnvelope', () => {
 
   it('reproduces the bytes of a parsed envelope', () => {
     const original = Buffer.concat([frame(0, protoMessage()), frame(2, Buffer.from('{}'))])
-    const rebuilt = I.rebuildConnectEnvelope([{ flags: 0, data: protoMessage() }, { flags: 2, data: Buffer.from('{}') }])
+    const rebuilt = I.rebuildConnectEnvelope([
+      { flags: 0, data: protoMessage() },
+      { flags: 2, data: Buffer.from('{}') }
+    ])
     assert.ok(rebuilt.equals(original))
   })
 })
 
 describe('getConnectEncodingHeader', () => {
   it('prefers connect-content-encoding, then connect-encoding, then grpc-encoding, case-insensitively', () => {
-    assert.equal(I.getConnectEncodingHeader({ 'Grpc-Encoding': 'gzip', 'connect-encoding': 'br', 'Connect-Content-Encoding': 'zstd' }), 'zstd')
+    assert.equal(
+      I.getConnectEncodingHeader({
+        'Grpc-Encoding': 'gzip',
+        'connect-encoding': 'br',
+        'Connect-Content-Encoding': 'zstd'
+      }),
+      'zstd'
+    )
     assert.equal(I.getConnectEncodingHeader({ 'grpc-encoding': 'gzip' }), 'gzip')
     assert.equal(I.getConnectEncodingHeader({}), '')
     assert.equal(I.getConnectEncodingHeader(null), '')
@@ -127,16 +149,18 @@ describe('decodeConnectPayload', () => {
       contentType: 'application/connect+proto',
       envelope: true,
       frameCount: 1,
-      frames: [{
-        index: 0,
-        length: 15,
-        compressed: false,
-        endStream: false,
-        frameDecompressed: false,
-        preview: '\n\x0Bhello world\x10*',
-        json: { f1: 'hello world', f2: 42 },
-        note: null
-      }],
+      frames: [
+        {
+          index: 0,
+          length: 15,
+          compressed: false,
+          endStream: false,
+          frameDecompressed: false,
+          preview: '\n\x0Bhello world\x10*',
+          json: { f1: 'hello world', f2: 42 },
+          note: null
+        }
+      ],
       httpDecompressed: false,
       httpEncoding: '',
       rawBase64: 'AAAAAA8KC2hlbGxvIHdvcmxkECo='
@@ -149,19 +173,28 @@ describe('decodeConnectPayload', () => {
   })
 
   it('decodes a JSON envelope with an end-stream frame', () => {
-    const body = Buffer.concat([frame(0, Buffer.from('{"message":"hi"}')), frame(2, Buffer.from('{}'))])
+    const body = Buffer.concat([
+      frame(0, Buffer.from('{"message":"hi"}')),
+      frame(2, Buffer.from('{}'))
+    ])
     const decoded = I.decodeConnectPayload(body, { 'Content-Type': 'application/connect+json' })
     assert.equal(decoded.frameCount, 2)
-    assert.deepEqual(decoded.frames.map(f => [f.endStream, f.preview, f.json]), [
-      [false, '{"message":"hi"}', { message: 'hi' }],
-      [true, '{}', {}]
-    ])
+    assert.deepEqual(
+      decoded.frames.map(f => [f.endStream, f.preview, f.json]),
+      [
+        [false, '{"message":"hi"}', { message: 'hi' }],
+        [true, '{}', {}]
+      ]
+    )
   })
 
   it('decompresses a compressed frame only when a Connect encoding header names the codec', () => {
     const gzFrame = frame(1, zlib.gzipSync(protoMessage()))
 
-    const withHeader = I.decodeConnectPayload(gzFrame, { ...PROTO, 'connect-content-encoding': 'gzip' })
+    const withHeader = I.decodeConnectPayload(gzFrame, {
+      ...PROTO,
+      'connect-content-encoding': 'gzip'
+    })
     assert.equal(withHeader.frames[0].compressed, true)
     assert.equal(withHeader.frames[0].frameDecompressed, true)
     assert.deepEqual(withHeader.frames[0].json, { f1: 'hello world', f2: 42 })
@@ -180,31 +213,42 @@ describe('decodeConnectPayload', () => {
     )
 
     // A named codec that cannot decode the payload is reported the same way.
-    const undecodable = I.decodeConnectPayload(frame(1, protoMessage()), { ...PROTO, 'connect-content-encoding': 'gzip' })
+    const undecodable = I.decodeConnectPayload(frame(1, protoMessage()), {
+      ...PROTO,
+      'connect-content-encoding': 'gzip'
+    })
     assert.equal(undecodable.frames[0].frameDecompressed, false)
     assert.equal(undecodable.frames[0].json, null)
     assert.equal(undecodable.frames[0].preview, '')
-    assert.equal(undecodable.frames[0].note, 'compressed frame: decompression failed, payload left encoded')
+    assert.equal(
+      undecodable.frames[0].note,
+      'compressed frame: decompression failed, payload left encoded'
+    )
   })
 
   it('treats a non-envelope protobuf body as a single unary end-stream frame', () => {
     const decoded = I.decodeConnectPayload(protoMessage(), { 'content-type': 'application/proto' })
     assert.equal(decoded.envelope, false)
-    assert.deepEqual(decoded.frames, [{
-      index: 0,
-      length: 15,
-      compressed: false,
-      endStream: true,
-      frameDecompressed: false,
-      preview: '\n\x0Bhello world\x10*',
-      json: { f1: 'hello world', f2: 42 },
-      note: null
-    }])
+    assert.deepEqual(decoded.frames, [
+      {
+        index: 0,
+        length: 15,
+        compressed: false,
+        endStream: true,
+        frameDecompressed: false,
+        preview: '\n\x0Bhello world\x10*',
+        json: { f1: 'hello world', f2: 42 },
+        note: null
+      }
+    ])
     assert.equal(decoded.rawBase64, 'CgtoZWxsbyB3b3JsZBAq')
   })
 
   it('decodes an HTTP-compressed envelope when the content type allows decompression', () => {
-    const decoded = I.decodeConnectPayload(zlib.gzipSync(frame(0, protoMessage())), { ...PROTO, 'content-encoding': 'gzip' })
+    const decoded = I.decodeConnectPayload(zlib.gzipSync(frame(0, protoMessage())), {
+      ...PROTO,
+      'content-encoding': 'gzip'
+    })
     assert.equal(decoded.httpDecompressed, true)
     assert.equal(decoded.httpEncoding, 'gzip')
     assert.deepEqual(decoded.frames[0].json, { f1: 'hello world', f2: 42 })
@@ -212,42 +256,66 @@ describe('decodeConnectPayload', () => {
   })
 
   it('decodes an envelope regardless of content type, and returns null otherwise', () => {
-    assert.equal(I.decodeConnectPayload(frame(0, protoMessage()), { 'content-type': 'application/octet-stream' }).envelope, true)
+    assert.equal(
+      I.decodeConnectPayload(frame(0, protoMessage()), {
+        'content-type': 'application/octet-stream'
+      }).envelope,
+      true
+    )
     assert.equal(I.decodeConnectPayload(Buffer.alloc(0), PROTO), null)
-    assert.equal(I.decodeConnectPayload(Buffer.from('hello'), { 'content-type': 'text/plain' }), null)
-    assert.equal(I.decodeConnectPayload(Buffer.from('{"a":1}'), { 'content-type': 'application/json' }), null)
+    assert.equal(
+      I.decodeConnectPayload(Buffer.from('hello'), { 'content-type': 'text/plain' }),
+      null
+    )
+    assert.equal(
+      I.decodeConnectPayload(Buffer.from('{"a":1}'), { 'content-type': 'application/json' }),
+      null
+    )
   })
 })
 
 describe('edit rule loading', () => {
   it('folds legacy start/end markers of on-disk text rules into the variant lists', () => {
-    setRules([{ id: 'legacy', kind: 'text', enabled: true, start: 'hello', end: '', replacement: 'X' }])
+    setRules([
+      { id: 'legacy', kind: 'text', enabled: true, start: 'hello', end: '', replacement: 'X' }
+    ])
     const compiled = I.getCompiledRules()
     assert.equal(compiled.length, 1)
     assert.equal(compiled[0].mode, 'prefix')
     assert.deepEqual(compiled[0].rule.startVariants, ['hello'])
     assert.deepEqual(compiled[0].rule.endVariants, [])
-    assert.deepEqual(I.applyEditRulesToText('say hello Hello', { requestUrl: '/x', phase: 'request' }), {
-      text: 'say X X',
-      appliedRuleIds: ['legacy'],
-      changed: true
-    })
+    assert.deepEqual(
+      I.applyEditRulesToText('say hello Hello', { requestUrl: '/x', phase: 'request' }),
+      {
+        text: 'say X X',
+        appliedRuleIds: ['legacy'],
+        changed: true
+      }
+    )
 
-    setRules([{ id: 'legacy2', kind: 'text', enabled: true, start: '[', end: ']', replacement: '<x>' }])
+    setRules([
+      { id: 'legacy2', kind: 'text', enabled: true, start: '[', end: ']', replacement: '<x>' }
+    ])
     assert.equal(I.getCompiledRules()[0].mode, 'between')
-    assert.deepEqual(I.applyEditRulesToText('a [b] c [d]', { requestUrl: '/x', phase: 'request' }), {
-      text: 'a <x> c <x>',
-      appliedRuleIds: ['legacy2'],
-      changed: true
-    })
+    assert.deepEqual(
+      I.applyEditRulesToText('a [b] c [d]', { requestUrl: '/x', phase: 'request' }),
+      {
+        text: 'a <x> c <x>',
+        appliedRuleIds: ['legacy2'],
+        changed: true
+      }
+    )
 
     setRules([textRule])
     assert.equal(I.getCompiledRules().length, 1)
-    assert.deepEqual(I.applyEditRulesToText('say hello Hello', { requestUrl: '/x', phase: 'request' }), {
-      text: 'say HELLO HELLO',
-      appliedRuleIds: ['t1'],
-      changed: true
-    })
+    assert.deepEqual(
+      I.applyEditRulesToText('say hello Hello', { requestUrl: '/x', phase: 'request' }),
+      {
+        text: 'say HELLO HELLO',
+        appliedRuleIds: ['t1'],
+        changed: true
+      }
+    )
   })
 })
 
@@ -255,17 +323,26 @@ describe('applyConnectFrameRewrites', () => {
   it('is an identity (same buffer instance) without rules or with an empty buffer', () => {
     const env = frame(0, protoMessage())
     assert.equal(I.applyConnectFrameRewrites(env, PROTO, null, ctx).buffer, env)
-    assert.deepEqual(I.applyConnectFrameRewrites(Buffer.alloc(0), PROTO), { buffer: Buffer.alloc(0), appliedRuleIds: [], changed: false })
+    assert.deepEqual(I.applyConnectFrameRewrites(Buffer.alloc(0), PROTO), {
+      buffer: Buffer.alloc(0),
+      appliedRuleIds: [],
+      changed: false
+    })
   })
 
   it('applies a text rule inside a protobuf frame and rebuilds a valid envelope', () => {
     setRules([textRule])
-    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, { loggingEnabled: true })
+    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, {
+      loggingEnabled: true
+    })
     assert.equal(result.changed, true)
     assert.deepEqual(result.appliedRuleIds, ['t1'])
     assert.equal(result.encoding, '')
     assert.ok(I.looksLikeConnectEnvelope(result.buffer))
-    assert.deepEqual(I.decodeConnectPayload(result.buffer, PROTO).frames[0].json, { f1: 'HELLO world', f2: 42 })
+    assert.deepEqual(I.decodeConnectPayload(result.buffer, PROTO).frames[0].json, {
+      f1: 'HELLO world',
+      f2: 42
+    })
 
     const [updated] = result.updatedFrames
     assert.equal(hex(updated.data), '0a0b48454c4c4f20776f726c64102a')
@@ -276,7 +353,9 @@ describe('applyConnectFrameRewrites', () => {
 
   it('skips preview work when logging is disabled', () => {
     setRules([textRule])
-    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, { loggingEnabled: false })
+    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, {
+      loggingEnabled: false
+    })
     assert.equal(result.changed, true)
     assert.equal(result.updatedFrames[0].preview, '')
     assert.equal(result.updatedFrames[0].json, null)
@@ -284,24 +363,45 @@ describe('applyConnectFrameRewrites', () => {
 
   it('decompresses and recompresses an HTTP gzip body, reporting the encoding', () => {
     setRules([textRule])
-    const result = I.applyConnectFrameRewrites(zlib.gzipSync(frame(0, protoMessage())), { ...PROTO, 'content-encoding': 'gzip' }, null, ctx)
+    const result = I.applyConnectFrameRewrites(
+      zlib.gzipSync(frame(0, protoMessage())),
+      { ...PROTO, 'content-encoding': 'gzip' },
+      null,
+      ctx
+    )
     assert.equal(result.changed, true)
     assert.equal(result.encoding, 'gzip')
-    assert.deepEqual(I.decodeConnectPayload(zlib.gunzipSync(result.buffer), PROTO).frames[0].json, { f1: 'HELLO world', f2: 42 })
+    assert.deepEqual(I.decodeConnectPayload(zlib.gunzipSync(result.buffer), PROTO).frames[0].json, {
+      f1: 'HELLO world',
+      f2: 42
+    })
   })
 
   it('rewrites a gzip-compressed frame and keeps it compressed', () => {
     setRules([textRule])
     const headers = { ...PROTO, 'connect-content-encoding': 'gzip' }
-    const result = I.applyConnectFrameRewrites(frame(1, zlib.gzipSync(protoMessage())), headers, null, ctx)
+    const result = I.applyConnectFrameRewrites(
+      frame(1, zlib.gzipSync(protoMessage())),
+      headers,
+      null,
+      ctx
+    )
     assert.equal(result.changed, true)
     assert.equal(result.buffer[0], 1)
-    assert.deepEqual(I.decodeConnectPayload(result.buffer, headers).frames[0].json, { f1: 'HELLO world', f2: 42 })
+    assert.deepEqual(I.decodeConnectPayload(result.buffer, headers).frames[0].json, {
+      f1: 'HELLO world',
+      f2: 42
+    })
   })
 
   it('falls back to a plain text rewrite for a unary protobuf body', () => {
     setRules([textRule])
-    const result = I.applyConnectFrameRewrites(protoMessage(), { 'content-type': 'application/proto' }, null, ctx)
+    const result = I.applyConnectFrameRewrites(
+      protoMessage(),
+      { 'content-type': 'application/proto' },
+      null,
+      ctx
+    )
     assert.equal(result.changed, true)
     assert.deepEqual(result.appliedRuleIds, ['t1'])
     assert.equal(result.encoding, '')
@@ -312,16 +412,24 @@ describe('applyConnectFrameRewrites', () => {
   it('leaves non-protobuf, non-envelope bodies alone', () => {
     setRules([textRule])
     const body = Buffer.from('hello there')
-    assert.deepEqual(I.applyConnectFrameRewrites(body, { 'content-type': 'text/plain' }, null, ctx), { buffer: body, appliedRuleIds: [], changed: false })
+    assert.deepEqual(
+      I.applyConnectFrameRewrites(body, { 'content-type': 'text/plain' }, null, ctx),
+      { buffer: body, appliedRuleIds: [], changed: false }
+    )
   })
 
   it('applies a URL-scoped JSONPath rule to a protobuf frame', () => {
     setRules([jsonPathRule])
-    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, { loggingEnabled: true })
+    const result = I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, ctx, {
+      loggingEnabled: true
+    })
     assert.equal(result.changed, true)
     assert.deepEqual(result.appliedRuleIds, ['jp1'])
     assert.deepEqual(result.updatedFrames[0].json, { f1: 'changed', f2: 42 })
-    assert.deepEqual(I.decodeConnectPayload(result.buffer, PROTO).frames[0].json, { f1: 'changed', f2: 42 })
+    assert.deepEqual(I.decodeConnectPayload(result.buffer, PROTO).frames[0].json, {
+      f1: 'changed',
+      f2: 42
+    })
   })
 
   it('reuses the JSON view of a previously decoded payload as the JSONPath seed', () => {
@@ -335,7 +443,10 @@ describe('applyConnectFrameRewrites', () => {
   it('skips JSONPath-only rule sets whose URL does not match the context', () => {
     setRules([jsonPathRule])
     const other = { requestUrl: '/other', fullUrl: 'https://x/other', phase: 'request' }
-    assert.equal(I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, other).changed, false)
+    assert.equal(
+      I.applyConnectFrameRewrites(frame(0, protoMessage()), PROTO, null, other).changed,
+      false
+    )
   })
 })
 
@@ -344,7 +455,10 @@ describe('applyJsonPathRulesToProtobufBuffer', () => {
     const msg = protoMessage()
     assert.equal(I.applyJsonPathRulesToProtobufBuffer(msg, null, ctx).buffer, msg)
     assert.deepEqual(I.applyJsonPathRulesToProtobufBuffer(Buffer.alloc(0), { a: 1 }), {
-      buffer: Buffer.alloc(0), json: { a: 1 }, appliedRuleIds: [], changed: false
+      buffer: Buffer.alloc(0),
+      json: { a: 1 },
+      appliedRuleIds: [],
+      changed: false
     })
   })
 
@@ -359,8 +473,18 @@ describe('applyJsonPathRulesToProtobufBuffer', () => {
 
   it('honours the rule URL and target phase', () => {
     setRules([jsonPathRule])
-    assert.equal(I.applyJsonPathRulesToProtobufBuffer(protoMessage(), null, { requestUrl: '/other', phase: 'request' }).changed, false)
-    assert.equal(I.applyJsonPathRulesToProtobufBuffer(protoMessage(), null, { ...ctx, phase: 'response' }).changed, false)
+    assert.equal(
+      I.applyJsonPathRulesToProtobufBuffer(protoMessage(), null, {
+        requestUrl: '/other',
+        phase: 'request'
+      }).changed,
+      false
+    )
+    assert.equal(
+      I.applyJsonPathRulesToProtobufBuffer(protoMessage(), null, { ...ctx, phase: 'response' })
+        .changed,
+      false
+    )
   })
 
   it('current behavior: a seed JSON view replaces the buffer content entirely on re-encode', () => {
@@ -376,20 +500,43 @@ describe('applyConnectRewritesForBypass', () => {
   it('returns the same buffer without rules', () => {
     const env = frame(0, protoMessage())
     assert.equal(I.applyConnectRewritesForBypass(env, {}, ctx).buffer, env)
-    assert.deepEqual(I.applyConnectRewritesForBypass(Buffer.alloc(0), {}), { buffer: Buffer.alloc(0) })
+    assert.deepEqual(I.applyConnectRewritesForBypass(Buffer.alloc(0), {}), {
+      buffer: Buffer.alloc(0)
+    })
   })
 
   it('rewrites textual bodies through the text fallback and leaves binary content types alone', () => {
     setRules([textRule])
-    assert.equal(I.applyConnectRewritesForBypass(Buffer.from('{"msg":"hello"}'), { 'content-type': 'application/json' }, ctx).buffer.toString(), '{"msg":"HELLO"}')
-    assert.equal(I.applyConnectRewritesForBypass(Buffer.from('hello'), { 'content-type': 'image/png' }, ctx).buffer.toString(), 'hello')
+    assert.equal(
+      I.applyConnectRewritesForBypass(
+        Buffer.from('{"msg":"hello"}'),
+        { 'content-type': 'application/json' },
+        ctx
+      ).buffer.toString(),
+      '{"msg":"HELLO"}'
+    )
+    assert.equal(
+      I.applyConnectRewritesForBypass(
+        Buffer.from('hello'),
+        { 'content-type': 'image/png' },
+        ctx
+      ).buffer.toString(),
+      'hello'
+    )
   })
 
   it('rewrites a gzip envelope and keeps the content-encoding header', () => {
     setRules([textRule])
     const headers = { ...PROTO, 'content-encoding': 'gzip' }
-    const { buffer } = I.applyConnectRewritesForBypass(zlib.gzipSync(frame(0, protoMessage())), headers, ctx)
+    const { buffer } = I.applyConnectRewritesForBypass(
+      zlib.gzipSync(frame(0, protoMessage())),
+      headers,
+      ctx
+    )
     assert.equal(headers['content-encoding'], 'gzip')
-    assert.deepEqual(I.decodeConnectPayload(zlib.gunzipSync(buffer), PROTO).frames[0].json, { f1: 'HELLO world', f2: 42 })
+    assert.deepEqual(I.decodeConnectPayload(zlib.gunzipSync(buffer), PROTO).frames[0].json, {
+      f1: 'HELLO world',
+      f2: 42
+    })
   })
 })
