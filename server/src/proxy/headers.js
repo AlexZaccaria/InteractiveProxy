@@ -303,6 +303,23 @@ function applyCacheBypassHeadersToObject (headers) {
   headers.Expires = '0'
 }
 
+/**
+ * Make a `content-length` header truthful for a body that may have been
+ * rewritten: when the headers declare a length, it is replaced by the length
+ * of the buffer actually sent; headers without one (chunked upstream) are
+ * left alone and Node chunks the response itself.
+ *
+ * @param {HeaderMap} headers
+ * @param {Buffer} buffer
+ */
+function setContentLength (headers, buffer) {
+  if (!headers || typeof headers !== 'object' || !Buffer.isBuffer(buffer)) return
+  const keys = Object.keys(headers).filter(key => key.toLowerCase() === 'content-length')
+  if (!keys.length) return
+  for (const key of keys) delete headers[key]
+  headers['content-length'] = String(buffer.length)
+}
+
 module.exports = {
   OMIT_HEADERS_BASE,
   OMIT_HEADERS_CONDITIONAL,
@@ -317,5 +334,6 @@ module.exports = {
   sanitizeHeaders,
   sanitizeAndStripIdentifyingHeaders,
   applyCacheBypassHeadersToResponse,
-  applyCacheBypassHeadersToObject
+  applyCacheBypassHeadersToObject,
+  setContentLength
 }

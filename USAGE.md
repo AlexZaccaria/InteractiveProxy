@@ -105,7 +105,8 @@ The proxy server can be configured using environment variables.
 | `PROXY_WS_LOG_BODY_ENABLED` | `true` | Enable/disable WebSocket body logging |
 | `PROXY_UPSTREAM_HEADERS_TIMEOUT_MS` | `0` (default) | Timeout for upstream headers |
 | `PROXY_UPSTREAM_BODY_TIMEOUT_MS` | `0` (default) | Timeout for upstream body |
-| `PROXY_STREAM_UNINSPECTED_RESPONSES`| `false` | Stream large binaries directly without buffering |
+| `PROXY_STREAM_UNINSPECTED_RESPONSES`| `true` | Pipe upstream responses to the client as they arrive (HTTP and HTTPS MITM) when no edit rule can apply to them and nothing needs the body for logging: interactive mode off, clearly binary content, `text/event-stream`, or a declared size above `PROXY_STREAM_THRESHOLD_BYTES`. Such responses are logged as `[streamed response]` with their final size. Set to `false` to buffer every response |
+| `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` (1 MiB) | With interactive mode on, responses whose `content-length` exceeds this are streamed instead of previewed; `0` never streams by size alone |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED`| `true` | Apply rewrites even for direct MITM flows |
 | `PROXY_DEBUG_LOG` | `false` | Enable debug logging |
 | `PROXY_STRICT_TLS` | `false` | Enforce strict TLS for upstream |
@@ -267,6 +268,29 @@ Click on a request to see:
 - Timestamp
 - Status code (for proxy requests)
 - WebSocket message direction and content
+
+### Event stream (`GET /api/events`)
+
+The proxy publishes its changes as Server-Sent Events, so a client can react
+instead of polling (`curl -N http://localhost:8050/api/events` shows the raw
+stream). The response is `text/event-stream`; each event carries an `id`
+(monotonic, shared by every connected client), an `event` name and a JSON
+`data` line; a `: ping` comment is sent every 15 seconds to keep the
+connection open.
+
+| Event | When | `data` |
+|-------|------|--------|
+| `hello` | On connection (no `id`) | `{ interactiveModeEnabled, serverTime }` |
+| `log` | A request was logged (Interactive Mode ON) | The summary view of the entry, as returned by `GET /api/logs?view=summary` |
+| `stats` | Dashboard counters changed; coalesced to at most one event every 250 ms while traffic flows, and right after the logs are cleared | `{ stats, performance, payloads, routes, editedRequests, filterMetrics }` as in `GET /api/dashboard` (without `resources` and `blocked`) |
+| `logs-cleared` | After `DELETE /api/logs` | `{}` |
+| `config` | A flag or the filter mode changed (`POST /api/*-mode`, `POST /api/filter-mode`) | The `GET /api/config` flags |
+| `rules` | Edit rules or presets, blocked rules, filter rules or local resources changed | `{ kind: "edit" \| "blocked" \| "filter" \| "resources" }` |
+
+There is no replay: a client that connects or reconnects reads the current
+state from `GET /api/dashboard`, `/api/logs` and the rule endpoints, then
+follows the stream. A client that stops reading is disconnected once about
+1 MiB of events is queued for it.
 
 ### Real-time Statistics
 

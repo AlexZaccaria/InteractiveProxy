@@ -75,6 +75,13 @@ const {
  * @property {(ids: Iterable<unknown>) => void} releaseUsage Log entries evicted: decrement, drop at zero.
  * @property {() => { usage: Record<string, number>, totalRulesWithUsage: number }} getUsageSnapshot
  * @property {() => void} clearUsage
+ * @property {(listener: (change: RuleStoreChange) => void) => () => void} onChange Subscribe to saves, bulk replacements and the enabled flag; returns the unsubscribe function.
+ */
+
+/**
+ * What changed in a rule store notification.
+ *
+ * @typedef {{ kind: 'rules' | 'presets' | 'enabled' }} RuleStoreChange
  */
 
 /**
@@ -100,6 +107,37 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   let compiledJsonPathRules = []
   // Global live edit rules flag (persisted by the caller in config.json).
   let enabled = true
+
+  /** @type {Set<(change: RuleStoreChange) => void>} */
+  const changeListeners = new Set()
+
+  /**
+   * @param {(change: RuleStoreChange) => void} listener
+   * @returns {() => void}
+   */
+  function onChange (listener) {
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }
+
+  /** @param {RuleStoreChange['kind']} kind */
+  function notifyChange (kind) {
+    for (const listener of changeListeners) {
+      try {
+        listener({ kind })
+      } catch (error) {
+        log.error('[proxy] Rule store change listener failed:', error)
+      }
+    }
+  }
+
+  /** @param {boolean} value */
+  function setEnabled (value) {
+    const next = value === true
+    if (next === enabled) return
+    enabled = next
+    notifyChange('enabled')
+  }
 
   /**
    * Key: rule id, value: number of distinct log entries where the rule was
@@ -143,6 +181,9 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
    * hand.
    */
   async function save () {
+    // Every mutation of the rule list ends with a save, so this is where
+    // subscribers learn about it (before the write lands on disk).
+    notifyChange('rules')
     try {
       const diskRules = rules.map(serializeEditRuleForDisk)
       const payload = JSON.stringify(diskRules, null, 2)
@@ -169,6 +210,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
 
   /** Persist edit-rule presets to disk. */
   async function savePresets () {
+    notifyChange('presets')
     try {
       const payload = JSON.stringify(presets, null, 2)
       await fsPromises.writeFile(presetsFile, payload)
@@ -397,6 +439,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   function replaceRules (next) {
     rules = (Array.isArray(next) ? next : []).map(normalizeEditRule)
     rebuildCache()
+    notifyChange('rules')
     return rules
   }
 
@@ -533,7 +576,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
     removePreset,
     rebuildCache,
     isEnabled: () => enabled,
-    setEnabled: (value) => { enabled = value === true },
+    setEnabled,
     getCompiledRules,
     getCompiledRulesForContext,
     getCompiledJsonPathRules,
@@ -543,7 +586,8 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
     recordUsage,
     releaseUsage,
     getUsageSnapshot,
-    clearUsage
+    clearUsage,
+    onChange
   }
 }
 

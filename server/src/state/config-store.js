@@ -35,6 +35,7 @@ const fsPromises = fs.promises
  * @property {() => void} load Read config.json synchronously (a missing or invalid file keeps the defaults).
  * @property {() => void} persist Write the flags to config.json, coalescing concurrent writes.
  * @property {() => ConfigSnapshot} snapshot The flags as exposed by `GET /api/config`.
+ * @property {(listener: (snapshot: ConfigSnapshot) => void) => () => void} onChange Subscribe to flag changes made through the setters; returns the unsubscribe function.
  */
 
 /**
@@ -69,6 +70,33 @@ function createConfigStore ({ file, ruleStore }) {
   /** @type {Promise<void> | null} */
   let persistWritePromise = null
   let persistQueued = false
+  /** @type {Set<(snapshot: ConfigSnapshot) => void>} */
+  const changeListeners = new Set()
+
+  /**
+   * Tell the subscribers that a flag changed (setters only; `load()` restores
+   * the persisted state and is not a change).
+   */
+  function notifyChange () {
+    if (changeListeners.size === 0) return
+    const current = snapshot()
+    for (const listener of changeListeners) {
+      try {
+        listener(current)
+      } catch (error) {
+        console.error('[proxy] Config change listener failed:', error)
+      }
+    }
+  }
+
+  /**
+   * @param {(snapshot: ConfigSnapshot) => void} listener
+   * @returns {() => void}
+   */
+  function onChange (listener) {
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }
 
   /**
    * Load interactive mode, filter mode, and global feature modes from disk.
@@ -183,38 +211,52 @@ function createConfigStore ({ file, ruleStore }) {
       return interactiveModeEnabled
     },
     set interactiveModeEnabled (value) {
-      interactiveModeEnabled = value === true
+      const next = value === true
+      if (next === interactiveModeEnabled) return
+      interactiveModeEnabled = next
+      notifyChange()
     },
     get localResourcesEnabled () {
       return localResourcesEnabled
     },
     set localResourcesEnabled (value) {
-      localResourcesEnabled = value === true
+      const next = value === true
+      if (next === localResourcesEnabled) return
+      localResourcesEnabled = next
+      notifyChange()
     },
     get filterRulesEnabled () {
       return filterRulesEnabled
     },
     set filterRulesEnabled (value) {
-      filterRulesEnabled = value === true
+      const next = value === true
+      if (next === filterRulesEnabled) return
+      filterRulesEnabled = next
+      notifyChange()
     },
     get blockedRulesEnabled () {
       return blockedRulesEnabled
     },
     set blockedRulesEnabled (value) {
-      blockedRulesEnabled = value === true
+      const next = value === true
+      if (next === blockedRulesEnabled) return
+      blockedRulesEnabled = next
+      notifyChange()
     },
     get filterMode () {
       return filterMode
     },
     set filterMode (value) {
       const normalized = normalizeFilterMode(value)
-      if (normalized) {
+      if (normalized && normalized !== filterMode) {
         filterMode = normalized
+        notifyChange()
       }
     },
     load,
     persist,
-    snapshot
+    snapshot,
+    onChange
   }
 
   return store

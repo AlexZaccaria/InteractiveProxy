@@ -18,6 +18,7 @@ const { createEditRulesRoutes } = require('./edit-rules')
 const { createBlockedRoutes } = require('./blocked')
 const { createFiltersRoutes } = require('./filters')
 const { createDashboardRoutes } = require('./dashboard')
+const { createEventsRoutes } = require('./events')
 
 /**
  * Counter of the requests bypassed (redirected) by the filter rules. Owned by
@@ -41,6 +42,7 @@ const { createDashboardRoutes } = require('./dashboard')
  * @property {string} storageDir
  * @property {string[]} uiOrigins Browser origins allowed to mutate through the API.
  * @property {BypassCounter} bypassCounter
+ * @property {number} [eventsKeepAliveMs] Keep-alive interval of the `/api/events` stream.
  */
 
 /**
@@ -86,7 +88,8 @@ function createApiRouter (deps) {
     resourceStore,
     storageDir,
     uiOrigins,
-    bypassCounter
+    bypassCounter,
+    eventsKeepAliveMs
   } = deps
 
   const upload = createUpload(storageDir)
@@ -102,6 +105,16 @@ function createApiRouter (deps) {
   router.use(createBlockedRoutes({ router: proxyRouter }))
   router.use(createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }))
   router.use(createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter }))
+  router.use(createEventsRoutes({
+    logStore,
+    stats,
+    configStore,
+    ruleStore,
+    router: proxyRouter,
+    resourceStore,
+    bypassCounter,
+    keepAliveMs: eventsKeepAliveMs
+  }))
 
   return router
 }

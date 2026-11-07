@@ -261,3 +261,193 @@ test('a client that sends no SNI gets the certificate of the CONNECT host and is
 
   secure.destroy()
 })
+
+// --- Response streaming through the MITM tunnel ----------------------------
+
+const BIG_BINARY = crypto.randomBytes(3 * 1024 * 1024)
+const BIG_JSON = JSON.stringify({ marker: 'original', pad: 'x'.repeat(2 * 1024 * 1024) })
+let streamUpstream
+let streamUpstreamPort
+
+/** Management API call with a JSON payload against the proxy's own origin. */
+function apiJson (method, apiPath, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload)
+    const req = http.request({
+      host: '127.0.0.1',
+      port: proxyPort,
+      method,
+      path: apiPath,
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }
+    }, res => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8')
+        resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null })
+      })
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+/**
+ * One request over an established TLS socket, returning the raw body and
+ * the arrival time of every chunk.
+ */
+function requestOverSocketTimed (secureSocket, options) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ ...options, createConnection: () => secureSocket }, res => {
+      const chunks = []
+      const chunkTimes = []
+      res.on('data', chunk => {
+        chunks.push(chunk)
+        chunkTimes.push(Date.now())
+      })
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+        chunkTimes,
+        endAt: Date.now()
+      }))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/** Poll the logs until the entry of `fullUrl` has a numeric responseSize (the pipe may still be finishing). */
+async function waitForStreamedEntry (fullUrl) {
+  const deadline = Date.now() + 2000
+  let entry = null
+  while (Date.now() < deadline) {
+    const logs = await api('GET', '/api/logs?sources=mitm&limit=200')
+    entry = logs.json.items.find(item => item.fullUrl === fullUrl) || null
+    if (entry && typeof entry.responseSize === 'number') return entry
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  return entry
+}
+
+before(async () => {
+  streamUpstreamPort = await getFreePort()
+  streamUpstream = https.createServer(createSelfSignedCert('stream.test'), (req, res) => {
+    if (req.url === '/big.bin') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+      res.end(BIG_BINARY)
+      return
+    }
+    if (req.url === '/events') {
+      // Three events 100 ms apart: a streaming proxy forwards the first one
+      // long before the upstream has finished.
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write('data: event-1\n\n')
+      setTimeout(() => res.write('data: event-2\n\n'), 100)
+      setTimeout(() => res.end('data: event-3\n\n'), 200)
+      return
+    }
+    if (req.url === '/big.json') {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(BIG_JSON) })
+      res.end(BIG_JSON)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => streamUpstream.listen(streamUpstreamPort, '127.0.0.1', resolve))
+})
+
+after(async () => {
+  await new Promise(resolve => streamUpstream.close(resolve))
+})
+
+test('a 3 MiB binary response through MITM is streamed intact and logged with its size', async () => {
+  await api('DELETE', '/api/logs')
+
+  const { socket } = await openTunnel(`127.0.0.1:${streamUpstreamPort}`)
+  const secure = await secureTunnel(socket, 'stream.test')
+  const res = await requestOverSocketTimed(secure, {
+    method: 'GET',
+    path: '/big.bin',
+    headers: { host: `127.0.0.1:${streamUpstreamPort}`, connection: 'close' }
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/octet-stream')
+  assert.equal(res.body.length, BIG_BINARY.length)
+  assert.equal(
+    crypto.createHash('sha256').update(res.body).digest('hex'),
+    crypto.createHash('sha256').update(BIG_BINARY).digest('hex')
+  )
+
+  const fullUrl = `https://127.0.0.1:${streamUpstreamPort}/big.bin`
+  const entry = await waitForStreamedEntry(fullUrl)
+  assert.ok(entry, 'the streamed request is logged')
+  assert.equal(entry.source, 'mitm')
+  assert.equal(entry.statusCode, 200)
+  assert.equal(entry.responseBody, '[streamed response]')
+  assert.equal(entry.responseSize, BIG_BINARY.length)
+
+  secure.destroy()
+})
+
+test('an event stream through MITM reaches the client incrementally', async () => {
+  const { socket } = await openTunnel(`127.0.0.1:${streamUpstreamPort}`)
+  const secure = await secureTunnel(socket, 'stream.test')
+  const res = await requestOverSocketTimed(secure, {
+    method: 'GET',
+    path: '/events',
+    headers: { host: `127.0.0.1:${streamUpstreamPort}`, connection: 'close' }
+  })
+  assert.equal(res.status, 200)
+  assert.match(res.headers['content-type'], /text\/event-stream/)
+  assert.equal(res.body.toString('utf8'), 'data: event-1\n\ndata: event-2\n\ndata: event-3\n\n')
+  assert.ok(res.chunkTimes.length >= 2, `events arrived in ${res.chunkTimes.length} chunk(s): the stream was buffered`)
+  assert.ok(
+    res.endAt - res.chunkTimes[0] >= 150,
+    `first event arrived ${res.endAt - res.chunkTimes[0]} ms before the end: the stream was buffered`
+  )
+
+  secure.destroy()
+})
+
+test('a large JSON response with a matching JSONPath rule is still rewritten (buffered path)', async () => {
+  const fullUrl = `https://127.0.0.1:${streamUpstreamPort}/big.json`
+  const created = await apiJson('POST', '/api/edit-rules', {
+    kind: 'jsonPath',
+    name: 'marker',
+    url: fullUrl,
+    path: 'root.marker',
+    value: 'rewritten',
+    valueType: 'string',
+    target: 'response'
+  })
+  assert.equal(created.status, 201)
+  const ruleId = created.json.rule.id
+
+  try {
+    const { socket } = await openTunnel(`127.0.0.1:${streamUpstreamPort}`)
+    const secure = await secureTunnel(socket, 'stream.test')
+    const res = await requestOverSocketTimed(secure, {
+      method: 'GET',
+      path: '/big.json',
+      headers: { host: `127.0.0.1:${streamUpstreamPort}`, connection: 'close' }
+    })
+    assert.equal(res.status, 200)
+    const parsed = JSON.parse(res.body.toString('utf8'))
+    assert.equal(parsed.marker, 'rewritten')
+    assert.equal(parsed.pad.length, 2 * 1024 * 1024)
+
+    const logs = await api('GET', `/api/logs?sources=mitm&limit=200`)
+    const entry = logs.json.items.find(item => item.fullUrl === fullUrl)
+    assert.ok(entry)
+    assert.notEqual(entry.responseBody, '[streamed response]')
+    assert.equal(entry.rewrites[0].id, ruleId)
+
+    secure.destroy()
+  } finally {
+    // 204 with an empty body: the JSON-parsing `api` helper cannot be used.
+    await apiJson('DELETE', `/api/edit-rules/${ruleId}`, {})
+  }
+})

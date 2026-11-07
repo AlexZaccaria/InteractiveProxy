@@ -261,6 +261,32 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   const { blockedFile, filterFile, legacyBypassFile } = files
   const ownAuthorities = buildOwnAuthorities({ port, host, uiOrigins })
 
+  /** @typedef {{ kind: 'blocked' | 'filter' }} RouterChange */
+  /** @type {Set<(change: RouterChange) => void>} */
+  const changeListeners = new Set()
+
+  /**
+   * Subscribe to rule changes (notified when a rule list is saved).
+   *
+   * @param {(change: RouterChange) => void} listener
+   * @returns {() => void} Unsubscribe.
+   */
+  function onChange (listener) {
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }
+
+  /** @param {RouterChange['kind']} kind */
+  function notifyChange (kind) {
+    for (const listener of changeListeners) {
+      try {
+        listener({ kind })
+      } catch (error) {
+        console.error('[proxy] Router change listener failed:', error)
+      }
+    }
+  }
+
   // Blocked/BYPASS URL lists
   /** @type {string[]} */
   let blockedUrls = [] // Array of URL strings (enabled only)
@@ -393,6 +419,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
     blockedUrls = blockedRules.filter(rule => rule.enabled).map(rule => rule.url)
     // Keep the log filtering patterns in sync with the latest blocked rules.
     recomputeBlockedUrlSubstringsForFilter()
+    notifyChange('blocked')
 
     try {
       const payload = JSON.stringify(blockedRules, null, 2)
@@ -417,6 +444,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   function saveBypassUrlsSync () {
     try {
       const payload = buildBypassRulesSnapshot()
+      notifyChange('filter')
       fs.writeFileSync(filterFile, payload)
     } catch (error) {
       console.error('[proxy] Error saving bypass URLs (sync):', error)
@@ -426,6 +454,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
   async function saveBypassUrls () {
     try {
       const payload = buildBypassRulesSnapshot()
+      notifyChange('filter')
       await fsPromises.writeFile(filterFile, payload)
     } catch (error) {
       console.error('[proxy] Error saving bypass URLs:', error)
@@ -748,7 +777,8 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
     decideWebSocketHandling,
     resolveTargetFromRequest,
     isProxyTargetedRequest,
-    getAssumedProtocol
+    getAssumedProtocol,
+    onChange
   }
 }
 

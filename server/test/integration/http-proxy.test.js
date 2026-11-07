@@ -384,3 +384,135 @@ test('POST /api/blocked validates its payload', async () => {
   const unknownId = await api('POST', '/api/blocked', { action: 'update', id: 'missing', url: '/y' })
   assert.equal(unknownId.status, 404)
 })
+
+// --- Response streaming (plain HTTP path) ---------------------------------
+
+const crypto = require('crypto')
+
+const BIG_BINARY = crypto.randomBytes(3 * 1024 * 1024)
+let streamUpstream
+let streamUpstreamPort
+let streamBase
+
+/**
+ * Proxy-style request returning the raw body and the arrival times of the
+ * first chunk and of the end of the response.
+ */
+function viaProxyTimed (url, { headers = {} } = {}) {
+  const target = new URL(url)
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: proxyPort,
+      method: 'GET',
+      path: url,
+      headers: { host: target.host, ...headers }
+    }, res => {
+      const chunks = []
+      let firstChunkAt = null
+      res.on('data', chunk => {
+        if (firstChunkAt === null) firstChunkAt = Date.now()
+        chunks.push(chunk)
+      })
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+        firstChunkAt,
+        endAt: Date.now()
+      }))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/** Poll the logs until the entry of `fullUrl` has a numeric responseSize (the pipe may still be finishing). */
+async function waitForStreamedEntry (fullUrl) {
+  const deadline = Date.now() + 2000
+  let entry = null
+  while (Date.now() < deadline) {
+    entry = (await listLogs()).find(item => item.fullUrl === fullUrl) || null
+    if (entry && typeof entry.responseSize === 'number') return entry
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  return entry
+}
+
+before(async () => {
+  streamUpstreamPort = await getFreePort()
+  streamBase = `http://127.0.0.1:${streamUpstreamPort}`
+  streamUpstream = http.createServer((req, res) => {
+    if (req.url === '/big.bin') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+      res.end(BIG_BINARY)
+      return
+    }
+    if (req.url === '/slow.txt') {
+      // Two chunks 150 ms apart, no content-length: a streaming proxy hands
+      // the first one over before the second exists.
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+      res.write('part-1;')
+      setTimeout(() => res.end('part-2'), 150)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => streamUpstream.listen(streamUpstreamPort, '127.0.0.1', resolve))
+})
+
+after(async () => {
+  await new Promise(resolve => streamUpstream.close(resolve))
+})
+
+test('a 3 MiB binary response is streamed intact and logged with its size', async () => {
+  await api('DELETE', '/api/logs')
+
+  const res = await viaProxyTimed(`${streamBase}/big.bin`)
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/octet-stream')
+  assert.equal(res.body.length, BIG_BINARY.length)
+  assert.equal(
+    crypto.createHash('sha256').update(res.body).digest('hex'),
+    crypto.createHash('sha256').update(BIG_BINARY).digest('hex')
+  )
+
+  const entry = await waitForStreamedEntry(`${streamBase}/big.bin`)
+  assert.ok(entry, 'the streamed request is logged')
+  assert.equal(entry.source, 'proxied')
+  assert.equal(entry.statusCode, 200)
+  assert.equal(entry.responseBody, '[streamed response]')
+  assert.equal(entry.responseSize, BIG_BINARY.length)
+})
+
+test('with interactive mode off a text response is streamed as it arrives; on, it is buffered', async () => {
+  await api('DELETE', '/api/logs')
+
+  const off = await api('POST', '/api/interactive-mode', { enabled: false })
+  assert.equal(off.status, 200)
+  try {
+    const streamed = await viaProxyTimed(`${streamBase}/slow.txt`)
+    assert.equal(streamed.status, 200)
+    assert.equal(streamed.body.toString('utf8'), 'part-1;part-2')
+    assert.ok(
+      streamed.endAt - streamed.firstChunkAt >= 100,
+      `first chunk arrived ${streamed.endAt - streamed.firstChunkAt} ms before the end: the body was buffered`
+    )
+    assert.equal((await listLogs()).length, 0, 'nothing is logged while interactive mode is off')
+  } finally {
+    await api('POST', '/api/interactive-mode', { enabled: true })
+  }
+
+  // Interactive mode on: a small text body is needed for the preview, so it
+  // is buffered and the client gets everything at once.
+  const buffered = await viaProxyTimed(`${streamBase}/slow.txt`)
+  assert.equal(buffered.body.toString('utf8'), 'part-1;part-2')
+  assert.ok(
+    buffered.endAt - buffered.firstChunkAt < 100,
+    `chunks arrived ${buffered.endAt - buffered.firstChunkAt} ms apart: the body was streamed`
+  )
+  const entry = (await listLogs()).find(item => item.fullUrl === `${streamBase}/slow.txt`)
+  assert.ok(entry)
+  assert.equal(entry.responseBody, 'part-1;part-2')
+})

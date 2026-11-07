@@ -24,6 +24,8 @@ const { MITM_BYPASS_REWRITES_ENABLED } = require('../../config')
 const { getCA, generateCertForHost } = require('../tls/ca')
 const { createLruCache } = require('../util/lru')
 const { createRawTunnel } = require('./tunnel')
+const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
+const { STREAMED_BODY_MARKER, shouldStreamResponse, pipeUpstreamBody } = require('./streaming')
 
 /** Secure contexts kept per SNI name. */
 const SECURE_CONTEXT_CACHE_MAX = 500
@@ -52,7 +54,8 @@ const {
   OMIT_RESPONSE_HEADERS,
   createForwardHeaders,
   sanitizeAndStripIdentifyingHeaders,
-  applyCacheBypassHeadersToObject
+  applyCacheBypassHeadersToObject,
+  setContentLength
 } = require('./headers')
 const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upstream')
 
@@ -78,7 +81,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {Pick<LogEntryFactory, 'createHttpFlowLogEntry' | 'logWebSocketDirectTunnel' | 'recordUpstreamErrorOnLog'>} entries
  * @property {BodyRewriter} bodyRewriter
  * @property {HttpJsonRewriter} httpJson
- * @property {Pick<HttpFlow, 'handleDirectHttpFlow'>} httpFlow
+ * @property {Pick<HttpFlow, 'handleDirectHttpFlow' | 'hasApplicableRules'>} httpFlow
  * @property {Pick<WebSocketProxy, 'handleWebSocketUpgrade'>} webSocketProxy
  * @property {BypassCounter} bypassCounter
  */
@@ -105,7 +108,7 @@ function createMitmHandler ({
   const { performUpstreamRequest, attachAbortOnClose } = upstream
   const { applyHeaderRewrites } = httpJson
   const { processRequestBodyWithRewrites, handleBufferedUpstreamResponseWithRewrites } = bodyRewriter
-  const { handleDirectHttpFlow } = httpFlow
+  const { handleDirectHttpFlow, hasApplicableRules } = httpFlow
   const { handleWebSocketUpgrade } = webSocketProxy
 
   /** @param {import('./upstream').UpstreamErrorParams} params */
@@ -114,6 +117,16 @@ function createMitmHandler ({
   /** CONNECT target per open client connection (see socketKey). */
   /** @type {Map<string, TunnelTarget>} */
   const tunnelTargets = new Map()
+
+  /**
+   * Raw client sockets of the open tunnels. They are detached from the HTTP
+   * server by the CONNECT handshake, so `closeAllConnections()` does not
+   * reach them: `close()` destroys them itself, otherwise `server.close()`
+   * would wait for them forever.
+   *
+   * @type {Set<import('net').Socket>}
+   */
+  const tunnelSockets = new Set()
 
   /** @type {import('../util/lru').LruCache<string, import('tls').SecureContext>} */
   const secureContexts = createLruCache(SECURE_CONTEXT_CACHE_MAX)
@@ -196,6 +209,10 @@ function createMitmHandler ({
     httpsServer = null
     defaultContextHost = null
     tunnelTargets.clear()
+    for (const socket of tunnelSockets) {
+      socket.destroy()
+    }
+    tunnelSockets.clear()
     if (!server) return
     if (typeof server.closeAllConnections === 'function') {
       server.closeAllConnections()
@@ -283,7 +300,9 @@ function createMitmHandler ({
     const target = { host: targetHost, port: targetPort, authority: targetAuthority }
     const key = socketKey(clientSocket)
     tunnelTargets.set(key, target)
+    tunnelSockets.add(clientSocket)
     clientSocket.once('close', () => {
+      tunnelSockets.delete(clientSocket)
       if (tunnelTargets.get(key) === target) {
         tunnelTargets.delete(key)
       }
@@ -291,6 +310,12 @@ function createMitmHandler ({
 
     const server = getHttpsServer()
     setDefaultContext(server, targetHost)
+
+    // The HTTP server hands the socket over with half-open allowed (it needs
+    // that for request bodies); for a TLS tunnel a client FIN means the
+    // session is over, and a half-open raw socket would otherwise outlive
+    // the TLS socket and keep the server's connection count up forever.
+    clientSocket.allowHalfOpen = false
 
     // Tell client the tunnel is established
     clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-agent: Cascade-Proxy-MITM\r\n\r\n')
@@ -407,6 +432,11 @@ function createMitmHandler ({
       const httpHandling = router.decideHttpHandling(routingContext)
 
       if (httpHandling === 'direct') {
+        // Direct flows buffer only when a rule can actually rewrite the
+        // response; otherwise the body is piped through.
+        const responseRulesApply = MITM_BYPASS_REWRITES_ENABLED &&
+          hasApplicableRules({ requestUrl, fullUrl, phase: 'response' })
+
         await handleDirectHttpFlow({
           req: clientReq,
           res: clientRes,
@@ -419,7 +449,7 @@ function createMitmHandler ({
           omitHeaders: OMIT_HEADERS_MITM,
           body: body.length > 0 ? body : undefined,
           applyRewrites: MITM_BYPASS_REWRITES_ENABLED,
-          bufferResponse: MITM_BYPASS_REWRITES_ENABLED,
+          bufferResponse: responseRulesApply,
           handleHead: false
         })
 
@@ -505,13 +535,13 @@ function createMitmHandler ({
             headersToForward['content-length'] = body.length
           }
 
-          const { response: upstreamResponse, buffer: responseBufferRaw } = await performUpstreamRequest({
+          const { response: upstreamResponse } = await performUpstreamRequest({
             url: fullUrl,
             method,
             headers: headersToForward,
             body: body.length > 0 ? body : undefined,
             abortSignal: abortController.signal,
-            bufferResponse: true
+            bufferResponse: false
           })
 
           if (logEntry) {
@@ -523,12 +553,49 @@ function createMitmHandler ({
           let upstreamHeaders = upstreamResponse.headers
           upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
 
+          // Stream when no rule can touch the body and nothing needs it for
+          // logging; otherwise buffer it for rewrites and previews.
+          const canStream = upstreamResponse.body && shouldStreamResponse({
+            method,
+            contentType: getContentType(upstreamHeaders),
+            contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
+            hasRules: hasApplicableRules({ requestUrl, fullUrl, phase: 'response' }),
+            interactive: configStore.interactiveModeEnabled === true
+          })
+
+          if (canStream) {
+            if (logEntry) {
+              logEntry.source = 'mitm'
+              logEntry.targetUrl = fullUrl
+              logEntry.statusCode = upstreamResponse.statusCode
+              logEntry.responseHeaders = upstreamHeaders
+              logEntry.responseBody = STREAMED_BODY_MARKER
+              logEntry.responseSize = null
+              addLog(logEntry)
+            }
+
+            const streamedHeaders = sanitizeAndStripIdentifyingHeaders(upstreamHeaders, OMIT_RESPONSE_HEADERS)
+            applyCacheBypassHeadersToObject(streamedHeaders)
+            clientRes.writeHead(upstreamResponse.statusCode, streamedHeaders)
+
+            // Awaited so that the abort-on-close listener stays attached for
+            // the whole transfer; the size is known only at the end.
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes)
+            if (logEntry) {
+              logEntry.responseSize = bytes
+            }
+            return
+          }
+
+          const responseBufferRaw = upstreamResponse.body
+            ? Buffer.from(await upstreamResponse.body.arrayBuffer())
+            : Buffer.alloc(0)
+
           const {
             finalResponseBuffer,
             upstreamHeaders: rewrittenHeaders
           } = handleBufferedUpstreamResponseWithRewrites({
-            // bufferResponse: true always yields a Buffer (empty when there is no body).
-            responseBuffer: /** @type {Buffer} */ (responseBufferRaw),
+            responseBuffer: responseBufferRaw,
             upstreamHeaders,
             requestUrl,
             jsonPathFullUrl: fullUrl,
@@ -549,6 +616,7 @@ function createMitmHandler ({
             OMIT_RESPONSE_HEADERS
           )
           applyCacheBypassHeadersToObject(responseHeaders)
+          setContentLength(responseHeaders, finalResponseBuffer)
 
           clientRes.writeHead(upstreamResponse.statusCode, responseHeaders)
           clientRes.end(finalResponseBuffer)

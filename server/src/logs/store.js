@@ -39,6 +39,8 @@ const { computeLogEntryMetrics } = require('./stats')
  * @property {() => LogEntry[]} toArrayNewestFirst
  * @property {() => void} recomputeBlockedVisibility Refresh `hiddenByBlockedRules` on every entry after the blocked rules change.
  * @property {() => string[]} getBlockedPatterns The current blocked-rule patterns (as injected).
+ * @property {(listener: (entry: LogEntry) => void) => () => void} onEntryAdded Subscribe to new entries (after the `onAdd` hook); returns the unsubscribe function.
+ * @property {(listener: () => void) => () => void} onCleared Subscribe to `clear()`; returns the unsubscribe function.
  */
 
 /**
@@ -58,6 +60,13 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
   let count = 0
   /** @type {Map<string, LogEntry>} */
   let byId = new Map()
+
+  // Change listeners (event stream): kept apart from the onAdd/onRemove hooks
+  // so that subscribers can come and go without touching the wiring.
+  /** @type {Set<(entry: LogEntry) => void>} */
+  const entryListeners = new Set()
+  /** @type {Set<() => void>} */
+  const clearListeners = new Set()
 
   /**
    * @param {LogEntry | undefined} entry
@@ -129,6 +138,14 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
 
     onAdd(entry)
 
+    for (const listener of entryListeners) {
+      try {
+        listener(entry)
+      } catch (error) {
+        console.error('[proxy] Log entry listener failed:', error)
+      }
+    }
+
     if (evicted) {
       onRemove(evicted)
       // Keep edit rule usage counters aligned with the current in-memory
@@ -154,6 +171,32 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
     head = 0
     count = 0
     byId = new Map()
+
+    for (const listener of clearListeners) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[proxy] Log clear listener failed:', error)
+      }
+    }
+  }
+
+  /**
+   * @param {(entry: LogEntry) => void} listener
+   * @returns {() => void}
+   */
+  function onEntryAdded (listener) {
+    entryListeners.add(listener)
+    return () => { entryListeners.delete(listener) }
+  }
+
+  /**
+   * @param {() => void} listener
+   * @returns {() => void}
+   */
+  function onCleared (listener) {
+    clearListeners.add(listener)
+    return () => { clearListeners.delete(listener) }
   }
 
   /**
@@ -225,7 +268,9 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
     forEachNewestFirst,
     toArrayNewestFirst,
     recomputeBlockedVisibility,
-    getBlockedPatterns: () => getBlockedPatterns()
+    getBlockedPatterns: () => getBlockedPatterns(),
+    onEntryAdded,
+    onCleared
   }
 }
 

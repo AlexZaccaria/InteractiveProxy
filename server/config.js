@@ -156,13 +156,20 @@ const UPSTREAM_BODY_TIMEOUT_MS = Number.isFinite(Number(process.env.PROXY_UPSTRE
   ? Math.max(0, Number(process.env.PROXY_UPSTREAM_BODY_TIMEOUT_MS))
   : 0
 
-// Streaming optimisation: when enabled, large binary responses that cannot be
-// rewritten (no active rules, non‑textual content types) may be streamed
-// directly to the client instead of being fully buffered for inspection.
-// Defaults to false to preserve current behaviour.
+// Streaming: responses that no rule can rewrite and that need no inspection
+// for logging (interactive mode off, clearly binary content, event streams,
+// bodies larger than STREAM_THRESHOLD_BYTES) are piped to the client as they
+// arrive instead of being buffered. Applies to the plain HTTP and the HTTPS
+// MITM paths; set to false to buffer every response as older versions did.
 const STREAM_UNINSPECTED_RESPONSES = typeof process.env.PROXY_STREAM_UNINSPECTED_RESPONSES === 'string'
   ? ['1', 'true', 'yes'].includes(process.env.PROXY_STREAM_UNINSPECTED_RESPONSES.toLowerCase())
-  : false
+  : true
+
+// Declared content-length above which a response is streamed even with
+// interactive logging on (0 = never stream by size alone). Default 1 MiB.
+const STREAM_THRESHOLD_BYTES = Number.isFinite(Number(process.env.PROXY_STREAM_THRESHOLD_BYTES))
+  ? Math.max(0, Number(process.env.PROXY_STREAM_THRESHOLD_BYTES))
+  : 1024 * 1024
 
 // Controls whether HTTPS MITM "direct" flows still apply header/body rewrites
 // (Connect/JSONPath/text). Defaults to true to preserve existing behaviour;
@@ -217,6 +224,7 @@ module.exports = {
   UPSTREAM_HEADERS_TIMEOUT_MS,
   UPSTREAM_BODY_TIMEOUT_MS,
   STREAM_UNINSPECTED_RESPONSES,
+  STREAM_THRESHOLD_BYTES,
   WS_LOG_BODY_ENABLED,
   BODY_LIMIT
 }

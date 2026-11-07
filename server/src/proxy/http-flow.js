@@ -16,9 +16,14 @@
  */
 
 const { URL } = require('url')
-const { STREAM_UNINSPECTED_RESPONSES } = require('../../config')
 const { safeString } = require('../util/strings')
-const { getContentType, shouldDecompress, isClearlyBinaryContentType } = require('../codecs/compression')
+const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
+const {
+  STREAMED_BODY_MARKER,
+  hasApplicableRules,
+  shouldStreamResponse,
+  pipeUpstreamBody
+} = require('./streaming')
 const {
   OMIT_HEADERS_BASE,
   OMIT_HEADERS_PROXY,
@@ -27,7 +32,8 @@ const {
   stripIdentifyingHeaders,
   sanitizeHeaders,
   sanitizeAndStripIdentifyingHeaders,
-  applyCacheBypassHeadersToResponse
+  applyCacheBypassHeadersToResponse,
+  setContentLength
 } = require('./headers')
 const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upstream')
 
@@ -403,6 +409,9 @@ function createHttpFlow ({
       }
 
       const filteredHeaders = sanitizeHeaders(upstreamHeaders, OMIT_RESPONSE_HEADERS)
+      if (bufferResponse && responseBuffer && Buffer.isBuffer(responseBuffer)) {
+        setContentLength(filteredHeaders, responseBuffer)
+      }
       res.writeHead(upstreamResponse.statusCode, filteredHeaders)
 
       if (bufferResponse && responseBuffer && Buffer.isBuffer(responseBuffer) && responseBuffer.length > 0) {
@@ -562,36 +571,24 @@ function createHttpFlow ({
           let upstreamHeaders = upstreamResponse.headers
           upstreamHeaders = applyHeaderRewrites(upstreamHeaders, { requestUrl, fullUrl, phase: 'response' }, logEntry)
 
-          const contentType = getContentType(upstreamHeaders)
+          // Stream when no rule can touch the body and nothing needs it for
+          // logging; otherwise buffer it for rewrites and previews.
+          const canStream = upstreamResponse.body && shouldStreamResponse({
+            method: req.method,
+            contentType: getContentType(upstreamHeaders),
+            contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
+            hasRules: hasApplicableRules(ruleStore, { requestUrl, fullUrl: resolvedTargetUrl, phase: 'response' }),
+            interactive: configStore.interactiveModeEnabled === true
+          })
 
-          const isBinary = isClearlyBinaryContentType(contentType)
-
-          const hasAnyEditRules = ruleStore.hasAnyEditOrJsonPathRules()
-
-          let needsInspection = hasAnyEditRules || !isBinary || shouldDecompress(contentType)
-
-          if (!configStore.interactiveModeEnabled && !hasAnyEditRules) {
-            // When logging is disabled and there are no active edit rules, avoid
-            // buffering large responses purely for preview/logging. Allow
-            // uninspected streaming for responses that would otherwise only be
-            // inspected for logging purposes.
-            needsInspection = false
-          }
-
-          const canStreamUninspected =
-            STREAM_UNINSPECTED_RESPONSES &&
-            upstreamResponse.body &&
-            !needsInspection &&
-            req.method !== 'HEAD'
-
-          if (canStreamUninspected) {
+          if (canStream) {
             if (logEntry) {
               logEntry.source = 'proxied'
               logEntry.targetUrl = resolvedTargetUrl
               logEntry.fullUrl = resolvedTargetUrl // Use target URL instead of proxy URL
               logEntry.statusCode = upstreamResponse.statusCode
               logEntry.responseHeaders = upstreamHeaders
-              logEntry.responseBody = '[streamed binary response]'
+              logEntry.responseBody = STREAMED_BODY_MARKER
               logEntry.responseSize = null
               addLog(logEntry)
             }
@@ -608,7 +605,12 @@ function createHttpFlow ({
             applyCacheBypassHeadersToResponse(res, 'remote')
 
             res.status(upstreamResponse.statusCode)
-            upstreamResponse.body.pipe(res)
+            // Awaited so that the abort-on-close listener stays attached for
+            // the whole transfer; the size is known only at the end.
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res)
+            if (logEntry) {
+              logEntry.responseSize = bytes
+            }
             return
           }
           const responseBuffer = upstreamResponse.body
@@ -674,7 +676,15 @@ function createHttpFlow ({
     handleProxiedHttpRequest,
     tryHandleHttpBypass,
     handleDirectHttpFlow,
-    forwardDirectHttp
+    forwardDirectHttp,
+    /**
+     * Whether a text or JSONPath rule can apply to the body of a URL in a
+     * phase (shared with the MITM handler for its streaming decision).
+     *
+     * @param {{ requestUrl?: string, fullUrl?: string, phase: 'request' | 'response' }} context
+     * @returns {boolean}
+     */
+    hasApplicableRules: context => hasApplicableRules(ruleStore, context)
   }
 }
 

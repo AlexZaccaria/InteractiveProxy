@@ -148,7 +148,9 @@ let editRules = []                // Live edit rules
 - **Modern UI** with TailwindCSS
 - **Component-based** architecture
 - **Real-time dashboard updates** via polling `/api/dashboard` every 2s when
-  Interactive Mode is ON
+  Interactive Mode is ON (the server also offers `GET /api/events`, a
+  Server-Sent Events stream of log, stats, config and rule changes, not yet
+  used by the UI)
 - **Request Logs** fetched on demand from `/api/logs` (filters, scroll, and a
   lightweight 2s poll only while the first page is not yet full)
 - **Advanced filtering** and search
@@ -305,6 +307,22 @@ Incoming Request → addLog(logEntry)
     Available via GET /api/logs
 ```
 
+### Event Stream (`GET /api/events`)
+```
+Store change → listeners (logStore.onEntryAdded / onCleared,
+               configStore.onChange, ruleStore.onChange,
+               router.onChange, resourceStore.onChange)
+                   ↓
+    src/api/events.js: event bus (monotonic ids)
+                   ↓
+    Every open `GET /api/events` response (Server-Sent Events):
+      log, stats (coalesced, 250 ms), logs-cleared, config, rules
+```
+The UI still polls `/api/dashboard` and `/api/logs` (the switch to the
+stream is part of the frontend rework); the stream is the server-side
+contract for it. Clients that stop reading are dropped at ~1 MiB of queued
+output; keep-alive comments every 15 s; no replay on reconnect.
+
 ### Interactive Mode Toggle
 ```
 UI Toggle → POST /api/interactive-mode
@@ -345,7 +363,17 @@ UI Toggle → POST /api/interactive-mode
 
 ### Optimizations
 - **In-memory storage** for fast resource lookup
-- **Streaming responses** for large files
+- **Streaming responses** (`src/proxy/streaming.js`): on both the plain HTTP
+  and the HTTPS MITM paths the upstream body is piped to the client as it
+  arrives when no text/JSONPath rule can apply to that URL and phase and the
+  body is not needed for logging — interactive mode off, clearly binary
+  content, `text/event-stream`, or a declared `content-length` above
+  `PROXY_STREAM_THRESHOLD_BYTES` (1 MiB). Streamed responses are logged with
+  `[streamed response]` as body and their byte count as size; everything else
+  (JSON previews, text rewrites, Connect frames) keeps the buffered path. A
+  client that disconnects aborts the upstream request; an upstream failure
+  mid-stream destroys the client response instead of answering 502.
+  `PROXY_STREAM_UNINSPECTED_RESPONSES=false` buffers everything.
 - **Compression support** (gzip, deflate, br, zstd via Node's built-in `zlib`)
 - **Connection pooling** for proxy requests
 - **Interactive Mode** to disable logging overhead

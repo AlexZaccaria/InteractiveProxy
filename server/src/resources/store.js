@@ -41,6 +41,29 @@ const { safeString } = require('../util/strings')
 function createResourceStore ({ file, storageDir, configStore }) {
   /** @type {Map<string, LocalResource>} */
   let localResources = new Map()
+  /** @type {Set<() => void>} */
+  const changeListeners = new Set()
+
+  /**
+   * Subscribe to changes (every mutation ends with `save()`, which notifies).
+   *
+   * @param {() => void} listener
+   * @returns {() => void} Unsubscribe.
+   */
+  function onChange (listener) {
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }
+
+  function notifyChange () {
+    for (const listener of changeListeners) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[proxy] Resource change listener failed:', error)
+      }
+    }
+  }
 
   /**
    * Load existing local resources on startup.
@@ -57,6 +80,9 @@ function createResourceStore ({ file, storageDir, configStore }) {
   }
 
   async function save () {
+    // Subscribers learn about the change before the write lands on disk, so
+    // the UI reflects it as soon as the API answers.
+    notifyChange()
     const data = Object.fromEntries(localResources)
     try {
       await fsPromises.writeFile(file, JSON.stringify(data, null, 2))
@@ -234,6 +260,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
     remove,
     findMatching,
     serveStream,
+    onChange,
     get size () {
       return localResources.size
     }
