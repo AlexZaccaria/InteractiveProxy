@@ -18,7 +18,9 @@
     "lint:client": "eslint client/src",
     "typecheck": "tsc -p server/jsconfig.json",
     "test": "npm test --workspace server",
-    "install-all": "npm install"
+    "install-all": "npm install",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [
     "proxy",
@@ -63,6 +65,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^16.0.0",
     "pino-pretty": "^13.2.0",
+    "prettier": "^3.9.10",
     "typescript": "^7.0.2"
   }
 }

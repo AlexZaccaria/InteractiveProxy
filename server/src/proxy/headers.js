@@ -13,7 +13,10 @@
  * @typedef {Record<string, string | string[] | number | undefined>} HeaderMap
  */
 
-const OMIT_HEADERS_BASE = ['proxy-connection', 'connection']
+// Hop-by-hop headers never travel upstream: undici rejects `keep-alive`,
+// `upgrade` and `http2-settings` outright, and `connection` is managed by
+// the dispatcher.
+const OMIT_HEADERS_BASE = ['proxy-connection', 'connection', 'keep-alive', 'upgrade', 'http2-settings']
 const OMIT_HEADERS_CONDITIONAL = ['if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since']
 
 // Composed header omission sets used across different upstream flows to keep
@@ -30,8 +33,8 @@ const OMIT_HEADERS_BASE_SET = new Set(OMIT_HEADERS_BASE.map(header => header.toL
 // Common response header omissions used when forwarding upstream responses.
 // This constant is shared across call sites so sanitizeHeaders can cheaply
 // specialise caching for this very frequent omit set.
-const OMIT_RESPONSE_HEADERS = ['transfer-encoding', 'connection']
-const OMIT_RESPONSE_HEADERS_KEY = 'connection,transfer-encoding'
+const OMIT_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive']
+const OMIT_RESPONSE_HEADERS_KEY = 'connection,keep-alive,transfer-encoding'
 const OMIT_RESPONSE_HEADERS_SET = new Set(OMIT_RESPONSE_HEADERS_KEY.split(','))
 
 /**

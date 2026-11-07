@@ -1,0 +1,12 @@
+# The client keeps its own style until the Vite migration (Phase 3)
+client/
+
+# Generated or third-party
+node_modules/
+package-lock.json
+server/storage/
+server/certs/
+server/logs/
+
+# Prose keeps its hand-made tables
+*.md
