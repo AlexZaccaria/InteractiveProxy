@@ -290,6 +290,44 @@ export function usePresetMutations() {
   return { create, remove }
 }
 
+/**
+ * Open the native file picker on the proxy's host (`POST /api/system/file-picker`,
+ * Windows only, 501 elsewhere). Resolves with the chosen absolute path, or
+ * `null` when the dialog was canceled.
+ */
+export function useFilePicker() {
+  return useMutation({
+    /**
+     * @param {{ title?: string, filter?: string }} [options]
+     * @returns {Promise<string | null>}
+     */
+    mutationFn: async options => {
+      const result = await apiPost('/api/system/file-picker', options || {})
+      if (!result || result.canceled) return null
+      return typeof result.path === 'string' && result.path ? result.path : null
+    }
+  })
+}
+
+/**
+ * Upload a file whose content becomes the value of a JSONPath rule
+ * (`POST /api/edit-rules/value-file`, multipart field `file`). Resolves with
+ * the stored filename, the original name and the detected value type.
+ */
+export function useValueFileUpload() {
+  return useMutation({
+    /**
+     * @param {File} file
+     * @returns {Promise<{ filename: string, originalName: string, valueType: string }>}
+     */
+    mutationFn: file => {
+      const formData = new FormData()
+      formData.append('file', file)
+      return apiUpload('/api/edit-rules/value-file', formData)
+    }
+  })
+}
+
 export function useResourceMutations() {
   const client = useQueryClient()
   const invalidate = () =>
