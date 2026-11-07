@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Edit3,
   Trash2,
@@ -13,10 +13,10 @@ import {
   Info,
   ChevronDown,
   Check
-} from 'lucide-react';
-import axios from 'axios';
-import Spinner from './Spinner';
-import { buildApiUrl } from '../config/apiConfig';
+} from 'lucide-react'
+import axios from 'axios'
+import Spinner from './Spinner'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Build a human-readable preview string for a rule's replacement/value.
@@ -29,31 +29,31 @@ import { buildApiUrl } from '../config/apiConfig';
  * @returns {string}
  */
 function getRulePreviewText(rule, options = {}) {
-  const { truncate = true, maxLength = 300 } = options;
+  const { truncate = true, maxLength = 300 } = options
 
-  if (!rule || typeof rule !== 'object') return '(empty)';
+  if (!rule || typeof rule !== 'object') return '(empty)'
 
-  let rawValue;
+  let rawValue
   if (rule.kind === 'jsonPath') {
     if (rule.valueSource && rule.valueSource.type === 'file') {
       const fallbackName = rule.valueSource.path
         ? rule.valueSource.path.split(/[\\/]/).pop()
-        : rule.valueSource.filename;
-      rawValue = `(File Content) ${rule.valueSource.originalName || fallbackName || 'file reference'}`;
+        : rule.valueSource.filename
+      rawValue = `(File Content) ${rule.valueSource.originalName || fallbackName || 'file reference'}`
     } else {
-      rawValue = Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : '';
+      rawValue = Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : ''
     }
   } else {
-    rawValue = Object.prototype.hasOwnProperty.call(rule, 'replacement') ? rule.replacement : '';
+    rawValue = Object.prototype.hasOwnProperty.call(rule, 'replacement') ? rule.replacement : ''
   }
 
-  if (rawValue === null || rawValue === undefined) return '(empty)';
-  const text = String(rawValue);
-  if (!text) return '(empty)';
+  if (rawValue === null || rawValue === undefined) return '(empty)'
+  const text = String(rawValue)
+  if (!text) return '(empty)'
 
-  if (!truncate) return text;
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength) + '…';
+  if (!truncate) return text
+  if (text.length <= maxLength) return text
+  return text.slice(0, maxLength) + '…'
 }
 
 /**
@@ -64,13 +64,13 @@ function getRulePreviewText(rule, options = {}) {
  * @param {string} value
  * @returns {string[]}
  */
-const parseVariantLines = (value) => {
-  if (!value) return [];
+const parseVariantLines = value => {
+  if (!value) return []
   return String(value)
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-};
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+}
 
 /**
  * Truncate a preset label for compact display.
@@ -80,11 +80,11 @@ const parseVariantLines = (value) => {
  * @returns {string}
  */
 const truncatePresetLabel = (value, maxLength = 32) => {
-  const text = String(value || '').trim();
-  if (!text) return '—';
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength)}…`;
-};
+  const text = String(value || '').trim()
+  if (!text) return '—'
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength)}…`
+}
 
 /**
  * Normalize a value to a string for comparison.
@@ -92,7 +92,7 @@ const truncatePresetLabel = (value, maxLength = 32) => {
  * @param {any} value
  * @returns {string}
  */
-const safePresetString = (value) => (value == null ? '' : String(value));
+const safePresetString = value => (value == null ? '' : String(value))
 
 /**
  * Build a group label for an edit-rule preset.
@@ -102,32 +102,32 @@ const safePresetString = (value) => (value == null ? '' : String(value));
  * @returns {string}
  */
 const getPresetGroupLabel = (preset, groupBy) => {
-  const rule = preset && typeof preset === 'object' ? preset.rule || {} : {};
+  const rule = preset && typeof preset === 'object' ? preset.rule || {} : {}
 
   if (groupBy === 'mode') {
-    const target = rule.target === 'response' || rule.target === 'both' ? rule.target : 'request';
-    return target === 'both' ? 'Both' : target === 'response' ? 'Response' : 'Request';
+    const target = rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
+    return target === 'both' ? 'Both' : target === 'response' ? 'Response' : 'Request'
   }
 
   if (groupBy === 'path') {
     if (preset?.kind === 'jsonPath') {
-      return truncatePresetLabel(rule.path || 'No JSON path');
+      return truncatePresetLabel(rule.path || 'No JSON path')
     }
-    return truncatePresetLabel(rule.url || 'Any URL');
+    return truncatePresetLabel(rule.url || 'Any URL')
   }
 
   if (preset?.kind === 'jsonPath') {
     if (rule.valueSource && rule.valueSource.type === 'file') {
       const fallbackName = rule.valueSource.path
         ? rule.valueSource.path.split(/[\\/]/).pop()
-        : rule.valueSource.filename;
-      return `File: ${truncatePresetLabel(rule.valueSource.originalName || fallbackName || 'file reference')}`;
+        : rule.valueSource.filename
+      return `File: ${truncatePresetLabel(rule.valueSource.originalName || fallbackName || 'file reference')}`
     }
-    return truncatePresetLabel(rule.value || 'Empty value');
+    return truncatePresetLabel(rule.value || 'Empty value')
   }
 
-  return truncatePresetLabel(rule.replacement || 'Empty replacement');
-};
+  return truncatePresetLabel(rule.replacement || 'Empty replacement')
+}
 
 /**
  * Normalize a rule target for comparison.
@@ -138,11 +138,11 @@ const getPresetGroupLabel = (preset, groupBy) => {
  */
 const normalizeRuleTarget = (target, kind) => {
   if (kind === 'text') {
-    return target === 'request' || target === 'response' || target === 'both' ? target : 'both';
+    return target === 'request' || target === 'response' || target === 'both' ? target : 'both'
   }
 
-  return target === 'response' || target === 'both' ? target : 'request';
-};
+  return target === 'response' || target === 'both' ? target : 'request'
+}
 
 /**
  * Check whether a preset matches a rule by target, URL pattern, and JSON path.
@@ -152,21 +152,21 @@ const normalizeRuleTarget = (target, kind) => {
  * @returns {boolean}
  */
 const doesPresetMatchRuleCriteria = (preset, rule) => {
-  if (!preset || !rule) return false;
-  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
-  const ruleUrl = safePresetString(rule.url).trim();
-  const presetUrl = safePresetString(presetRule.url).trim();
-  if (ruleUrl !== presetUrl) return false;
-  const ruleTarget = normalizeRuleTarget(rule.target, rule.kind);
-  const presetTarget = normalizeRuleTarget(presetRule.target, preset.kind);
-  if (ruleTarget !== presetTarget) return false;
-  const rulePath = safePresetString(rule.path).trim();
-  const presetPath = safePresetString(presetRule.path).trim();
+  if (!preset || !rule) return false
+  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
+  const ruleUrl = safePresetString(rule.url).trim()
+  const presetUrl = safePresetString(presetRule.url).trim()
+  if (ruleUrl !== presetUrl) return false
+  const ruleTarget = normalizeRuleTarget(rule.target, rule.kind)
+  const presetTarget = normalizeRuleTarget(presetRule.target, preset.kind)
+  if (ruleTarget !== presetTarget) return false
+  const rulePath = safePresetString(rule.path).trim()
+  const presetPath = safePresetString(presetRule.path).trim()
   if (rulePath || presetPath) {
-    return rulePath === presetPath;
+    return rulePath === presetPath
   }
-  return true;
-};
+  return true
+}
 
 /**
  * Build grouped presets for a dropdown list.
@@ -174,19 +174,19 @@ const doesPresetMatchRuleCriteria = (preset, rule) => {
  * @param {object[]} presetList
  * @returns {Array<[string, object[]]>}
  */
-const buildGroupedPresets = (presetList) => {
-  const groups = new Map();
-  presetList.forEach((preset) => {
-    if (!preset) return;
-    const groupLabel = getPresetGroupLabel(preset, 'mode');
+const buildGroupedPresets = presetList => {
+  const groups = new Map()
+  presetList.forEach(preset => {
+    if (!preset) return
+    const groupLabel = getPresetGroupLabel(preset, 'mode')
     if (!groups.has(groupLabel)) {
-      groups.set(groupLabel, []);
+      groups.set(groupLabel, [])
     }
-    groups.get(groupLabel).push(preset);
-  });
+    groups.get(groupLabel).push(preset)
+  })
 
-  return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-};
+  return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+}
 
 /**
  * Compare two string arrays for equality regardless of order.
@@ -196,13 +196,15 @@ const buildGroupedPresets = (presetList) => {
  * @returns {boolean}
  */
 const areStringArraysEqual = (left, right) => {
-  const leftArr = Array.isArray(left) ? left.map((entry) => String(entry).trim()).filter(Boolean) : [];
-  const rightArr = Array.isArray(right) ? right.map((entry) => String(entry).trim()).filter(Boolean) : [];
-  if (leftArr.length !== rightArr.length) return false;
-  const leftSorted = leftArr.slice().sort();
-  const rightSorted = rightArr.slice().sort();
-  return leftSorted.every((value, index) => value === rightSorted[index]);
-};
+  const leftArr = Array.isArray(left) ? left.map(entry => String(entry).trim()).filter(Boolean) : []
+  const rightArr = Array.isArray(right)
+    ? right.map(entry => String(entry).trim()).filter(Boolean)
+    : []
+  if (leftArr.length !== rightArr.length) return false
+  const leftSorted = leftArr.slice().sort()
+  const rightSorted = rightArr.slice().sort()
+  return leftSorted.every((value, index) => value === rightSorted[index])
+}
 
 /**
  * Determine whether a rule matches a preset definition.
@@ -212,14 +214,22 @@ const areStringArraysEqual = (left, right) => {
  * @returns {boolean}
  */
 const doesRuleMatchPreset = (rule, preset) => {
-  if (!rule || !preset || rule.kind !== preset.kind) return false;
-  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+  if (!rule || !preset || rule.kind !== preset.kind) return false
+  const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
 
   if (rule.kind === 'jsonPath') {
-    const ruleSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
-    const presetSource = presetRule.valueSource && presetRule.valueSource.type === 'file' ? presetRule.valueSource : null;
-    const ruleFile = ruleSource ? (ruleSource.path || ruleSource.filename || ruleSource.originalName) : '';
-    const presetFile = presetSource ? (presetSource.path || presetSource.filename || presetSource.originalName) : '';
+    const ruleSource =
+      rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null
+    const presetSource =
+      presetRule.valueSource && presetRule.valueSource.type === 'file'
+        ? presetRule.valueSource
+        : null
+    const ruleFile = ruleSource
+      ? ruleSource.path || ruleSource.filename || ruleSource.originalName
+      : ''
+    const presetFile = presetSource
+      ? presetSource.path || presetSource.filename || presetSource.originalName
+      : ''
 
     return (
       safePresetString(rule.path) === safePresetString(presetRule.path) &&
@@ -230,7 +240,7 @@ const doesRuleMatchPreset = (rule, preset) => {
       (ruleSource || presetSource
         ? true
         : JSON.stringify(rule.value ?? '') === JSON.stringify(presetRule.value ?? ''))
-    );
+    )
   }
 
   return (
@@ -241,8 +251,8 @@ const doesRuleMatchPreset = (rule, preset) => {
     safePresetString(rule.target || '') === safePresetString(presetRule.target || '') &&
     areStringArraysEqual(rule.startVariants, presetRule.startVariants) &&
     areStringArraysEqual(rule.endVariants, presetRule.endVariants)
-  );
-};
+  )
+}
 
 /**
  * Preset dropdown menu with inline delete actions.
@@ -270,43 +280,43 @@ function PresetDropdown({
   buttonClassName = '',
   menuClassName = ''
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef(null);
+  const [open, setOpen] = useState(false)
+  const wrapperRef = useRef(null)
 
   const selectedPreset = useMemo(() => {
-    if (!value) return null;
+    if (!value) return null
     for (const [, items] of groups) {
-      const match = items.find((preset) => String(preset.id) === String(value));
-      if (match) return match;
+      const match = items.find(preset => String(preset.id) === String(value))
+      if (match) return match
     }
-    return null;
-  }, [groups, value]);
+    return null
+  }, [groups, value])
 
-  const selectedLabel = selectedPreset?.name ?? '';
-  const buttonLabel = selectedLabel || placeholder;
-  const isPlaceholder = !selectedLabel;
+  const selectedLabel = selectedPreset?.name ?? ''
+  const buttonLabel = selectedLabel || placeholder
+  const isPlaceholder = !selectedLabel
   const totalPresets = useMemo(
     () => groups.reduce((sum, [, items]) => sum + items.length, 0),
     [groups]
-  );
+  )
 
   useEffect(() => {
-    if (!open) return undefined;
-    const handleClickOutside = (event) => {
+    if (!open) return undefined
+    const handleClickOutside = event => {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setOpen(false);
+        setOpen(false)
       }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
 
-  const handleSelect = (presetId) => {
-    setOpen(false);
-    if (onSelect) onSelect(String(presetId));
-  };
+  const handleSelect = presetId => {
+    setOpen(false)
+    if (onSelect) onSelect(String(presetId))
+  }
 
-  const hasPresets = groups.some(([, items]) => items.length > 0);
+  const hasPresets = groups.some(([, items]) => items.length > 0)
 
   const targetMeta = {
     Request: {
@@ -324,13 +334,13 @@ function PresetDropdown({
       badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
       dot: 'bg-emerald-400'
     }
-  };
+  }
 
   return (
     <div className="relative" ref={wrapperRef}>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => setOpen(prev => !prev)}
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -338,11 +348,7 @@ function PresetDropdown({
           open ? 'border-blue-500/60 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]' : ''
         } ${buttonClassName}`}
       >
-        <span
-          className={`truncate ${
-            isPlaceholder ? 'text-slate-400' : 'text-slate-100'
-          }`}
-        >
+        <span className={`truncate ${isPlaceholder ? 'text-slate-400' : 'text-slate-100'}`}>
           {buttonLabel}
         </span>
         <ChevronDown
@@ -377,17 +383,19 @@ function PresetDropdown({
                         label: groupLabel,
                         badge: 'border-slate-600/40 bg-slate-700/20 text-slate-400',
                         dot: 'bg-slate-400'
-                      };
+                      }
                       return (
-                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${meta.badge}`}>
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${meta.badge}`}
+                        >
                           <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
                           {meta.label}
                         </span>
-                      );
+                      )
                     })()}
                   </div>
-                  {items.map((preset) => {
-                    const isSelected = String(preset.id) === String(value);
+                  {items.map(preset => {
+                    const isSelected = String(preset.id) === String(value)
                     return (
                       <div
                         key={preset.id}
@@ -404,14 +412,12 @@ function PresetDropdown({
                         >
                           {preset.name}
                         </button>
-                        {isSelected && (
-                          <Check className="w-3.5 h-3.5 text-blue-400" />
-                        )}
+                        {isSelected && <Check className="w-3.5 h-3.5 text-blue-400" />}
                         <button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (onDelete) onDelete(String(preset.id));
+                          onClick={event => {
+                            event.stopPropagation()
+                            if (onDelete) onDelete(String(preset.id))
                           }}
                           className="p-1 rounded text-slate-500 transition-colors hover:bg-red-600/20 hover:text-red-300"
                           title="Delete preset"
@@ -419,7 +425,7 @@ function PresetDropdown({
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    );
+                    )
                   })}
                 </div>
               ))
@@ -428,7 +434,7 @@ function PresetDropdown({
         </div>
       )}
     </div>
-  );
+  )
 }
 
 /**
@@ -439,28 +445,28 @@ function PresetDropdown({
  * @param {string[] | undefined | null} variants
  * @returns {string[]}
  */
-const buildMarkerList = (variants) => {
+const buildMarkerList = variants => {
   /** @type {string[]} */
-  const markers = [];
-  const seen = new Set();
+  const markers = []
+  const seen = new Set()
 
-  const addMarker = (raw) => {
-    if (raw === null || raw === undefined) return;
-    const value = String(raw).trim();
-    if (!value) return;
-    if (seen.has(value)) return;
-    seen.add(value);
-    markers.push(value);
-  };
+  const addMarker = raw => {
+    if (raw === null || raw === undefined) return
+    const value = String(raw).trim()
+    if (!value) return
+    if (seen.has(value)) return
+    seen.add(value)
+    markers.push(value)
+  }
 
   if (Array.isArray(variants)) {
     for (const variant of variants) {
-      addMarker(variant);
+      addMarker(variant)
     }
   }
 
-  return markers;
-};
+  return markers
+}
 
 /**
  * Coerce a raw JSONPath input into a boolean, number, JSON, or string.
@@ -471,39 +477,39 @@ const buildMarkerList = (variants) => {
  * @param {string} rawValue
  * @returns {{ value: boolean | number | string | object, valueType: 'boolean' | 'number' | 'json' | 'string' }}
  */
-const coerceJsonPathScalar = (rawValue) => {
-  const text = rawValue == null ? '' : String(rawValue);
-  const trimmed = text.trim();
-  const lower = trimmed.toLowerCase();
+const coerceJsonPathScalar = rawValue => {
+  const text = rawValue == null ? '' : String(rawValue)
+  const trimmed = text.trim()
+  const lower = trimmed.toLowerCase()
 
   if (lower === 'true') {
-    return { value: true, valueType: 'boolean' };
+    return { value: true, valueType: 'boolean' }
   }
 
   if (lower === 'false') {
-    return { value: false, valueType: 'boolean' };
+    return { value: false, valueType: 'boolean' }
   }
 
   if (trimmed.length > 0) {
-    const parsed = Number(trimmed);
+    const parsed = Number(trimmed)
     if (Number.isFinite(parsed)) {
-      return { value: parsed, valueType: 'number' };
+      return { value: parsed, valueType: 'number' }
     }
   }
 
   if (trimmed.length > 0) {
     try {
-      const parsedJson = JSON.parse(trimmed);
+      const parsedJson = JSON.parse(trimmed)
       if (parsedJson !== null && typeof parsedJson === 'object') {
-        return { value: parsedJson, valueType: 'json' };
+        return { value: parsedJson, valueType: 'json' }
       }
     } catch (error) {
       // Ignore invalid JSON and fall back to string.
     }
   }
 
-  return { value: text, valueType: 'string' };
-};
+  return { value: text, valueType: 'string' }
+}
 
 /**
  * Normalize an existing JSONPath rule value for form editing.
@@ -511,33 +517,33 @@ const coerceJsonPathScalar = (rawValue) => {
  * @param {any} rawValue
  * @returns {{ valueText: string, valueType: 'boolean' | 'number' | 'json' | 'string' }}
  */
-const normalizeJsonPathFormValue = (rawValue) => {
+const normalizeJsonPathFormValue = rawValue => {
   if (typeof rawValue === 'boolean') {
-    return { valueText: rawValue ? 'true' : 'false', valueType: 'boolean' };
+    return { valueText: rawValue ? 'true' : 'false', valueType: 'boolean' }
   }
 
   if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
-    return { valueText: String(rawValue), valueType: 'number' };
+    return { valueText: String(rawValue), valueType: 'number' }
   }
 
   if (typeof rawValue === 'string') {
-    const { valueType } = coerceJsonPathScalar(rawValue);
-    return { valueText: rawValue, valueType };
+    const { valueType } = coerceJsonPathScalar(rawValue)
+    return { valueText: rawValue, valueType }
   }
 
   if (rawValue && typeof rawValue === 'object') {
     try {
-      return { valueText: JSON.stringify(rawValue), valueType: 'json' };
+      return { valueText: JSON.stringify(rawValue), valueType: 'json' }
     } catch (error) {
-      return { valueText: String(rawValue), valueType: 'string' };
+      return { valueText: String(rawValue), valueType: 'string' }
     }
   }
 
   return {
     valueText: rawValue == null ? '' : String(rawValue),
     valueType: 'string'
-  };
-};
+  }
+}
 
 /**
  * Live edit rules configuration panel.
@@ -568,20 +574,20 @@ function EditRules({
   initialJsonPathSeed,
   onConsumeJsonPathSeed
 }) {
-  const [rules, setRules] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [editingRule, setEditingRule] = useState(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [togglingId, setTogglingId] = useState(null);
-  const [expandedRuleIds, setExpandedRuleIds] = useState([]);
-  const [presets, setPresets] = useState([]);
-  const [presetsLoading, setPresetsLoading] = useState(false);
-  const [selectedPresetId, setSelectedPresetId] = useState('');
-  const [rulePresetSelections, setRulePresetSelections] = useState({});
-  const [updatingPresetRuleId, setUpdatingPresetRuleId] = useState(null);
-  const [isPickingJsonValueFile, setIsPickingJsonValueFile] = useState(false);
+  const [rules, setRules] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editingRule, setEditingRule] = useState(null)
+  const [isCreating, setIsCreating] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [togglingId, setTogglingId] = useState(null)
+  const [expandedRuleIds, setExpandedRuleIds] = useState([])
+  const [presets, setPresets] = useState([])
+  const [presetsLoading, setPresetsLoading] = useState(false)
+  const [selectedPresetId, setSelectedPresetId] = useState('')
+  const [rulePresetSelections, setRulePresetSelections] = useState({})
+  const [updatingPresetRuleId, setUpdatingPresetRuleId] = useState(null)
+  const [isPickingJsonValueFile, setIsPickingJsonValueFile] = useState(false)
   const [formData, setFormData] = useState({
     kind: 'text',
     name: '',
@@ -599,41 +605,41 @@ function EditRules({
     jsonValueFileToken: '',
     url: '',
     target: 'request'
-  });
+  })
 
-  const formRef = useRef(null);
+  const formRef = useRef(null)
 
   const fetchRules = useCallback(async () => {
     try {
-      setLoading(true);
-      const response = await axios.get(buildApiUrl('/api/edit-rules'));
-      setRules(response.data.rules || []);
+      setLoading(true)
+      const response = await axios.get(buildApiUrl('/api/edit-rules'))
+      setRules(response.data.rules || [])
     } catch (error) {
-      console.error('Error fetching edit rules:', error);
+      console.error('Error fetching edit rules:', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, []);
+  }, [])
 
   const fetchPresets = useCallback(async () => {
     try {
-      setPresetsLoading(true);
-      const response = await axios.get(buildApiUrl('/api/edit-rule-presets'));
-      setPresets(response.data.presets || []);
+      setPresetsLoading(true)
+      const response = await axios.get(buildApiUrl('/api/edit-rule-presets'))
+      setPresets(response.data.presets || [])
     } catch (error) {
-      console.error('Error fetching edit rule presets:', error);
+      console.error('Error fetching edit rule presets:', error)
     } finally {
-      setPresetsLoading(false);
+      setPresetsLoading(false)
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    fetchRules();
-  }, [fetchRules]);
+    fetchRules()
+  }, [fetchRules])
 
   useEffect(() => {
-    fetchPresets();
-  }, [fetchPresets]);
+    fetchPresets()
+  }, [fetchPresets])
 
   /**
    * Build a preset-ready edit-rule payload from the current form data.
@@ -656,14 +662,14 @@ function EditRules({
           },
           url: formData.url,
           target: formData.target || 'request'
-        };
+        }
       }
 
-      const normalizedValue = coerceJsonPathScalar(formData.value);
+      const normalizedValue = coerceJsonPathScalar(formData.value)
       const storedValue =
         normalizedValue.valueType === 'json'
           ? JSON.stringify(normalizedValue.value)
-          : normalizedValue.value;
+          : normalizedValue.value
 
       return {
         kind: 'jsonPath',
@@ -674,7 +680,7 @@ function EditRules({
         valueSource: null,
         url: formData.url,
         target: formData.target || 'request'
-      };
+      }
     }
 
     return {
@@ -685,31 +691,34 @@ function EditRules({
       caseSensitive: formData.caseSensitive === true,
       url: formData.url || '',
       target:
-        formData.target === 'request' || formData.target === 'response' || formData.target === 'both'
+        formData.target === 'request' ||
+        formData.target === 'response' ||
+        formData.target === 'both'
           ? formData.target
           : 'both',
       startVariants: parseVariantLines(formData.startVariantsText),
       endVariants: parseVariantLines(formData.endVariantsText)
-    };
-  }, [formData]);
+    }
+  }, [formData])
 
   /**
    * Apply a saved preset to the edit form.
    *
    * @param {object} preset
    */
-  const applyPresetToForm = useCallback((preset) => {
-    if (!preset || typeof preset !== 'object') return;
-    const rule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
+  const applyPresetToForm = useCallback(preset => {
+    if (!preset || typeof preset !== 'object') return
+    const rule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
 
     if (preset.kind === 'jsonPath') {
-      const fileSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
+      const fileSource =
+        rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null
       const normalizedValue = normalizeJsonPathFormValue(
         Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : ''
-      );
+      )
       const fileFallbackName = fileSource?.path
         ? fileSource.path.split(/[\\/]/).pop()
-        : fileSource?.filename;
+        : fileSource?.filename
 
       setFormData({
         kind: 'jsonPath',
@@ -722,21 +731,18 @@ function EditRules({
         caseSensitive: false,
         path: rule.path || '',
         value: fileSource ? '' : normalizedValue.valueText,
-        valueType: fileSource ? (rule.valueType || 'string') : normalizedValue.valueType,
+        valueType: fileSource ? rule.valueType || 'string' : normalizedValue.valueType,
         jsonValueMode: fileSource ? 'file' : 'text',
         jsonValueFileName: fileSource?.originalName || fileFallbackName || '',
         jsonValueFileToken: fileSource?.path || fileSource?.filename || '',
         url: rule.url || '',
-        target:
-          rule.target === 'response' || rule.target === 'both'
-            ? rule.target
-            : 'request'
-      });
-      return;
+        target: rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
+      })
+      return
     }
 
-    const startMarkers = buildMarkerList(rule.startVariants);
-    const endMarkers = buildMarkerList(rule.endVariants);
+    const startMarkers = buildMarkerList(rule.startVariants)
+    const endMarkers = buildMarkerList(rule.endVariants)
 
     setFormData({
       kind: 'text',
@@ -758,8 +764,8 @@ function EditRules({
         rule.target === 'request' || rule.target === 'response' || rule.target === 'both'
           ? rule.target
           : 'both'
-    });
-  }, []);
+    })
+  }, [])
 
   const groupedPresets = useMemo(() => {
     const criteria = {
@@ -767,10 +773,10 @@ function EditRules({
       url: formData.url || '',
       target: formData.target,
       path: formData.kind === 'jsonPath' ? formData.path : ''
-    };
-    const filtered = presets.filter((preset) => doesPresetMatchRuleCriteria(preset, criteria));
-    return buildGroupedPresets(filtered);
-  }, [formData.kind, formData.path, formData.target, formData.url, presets]);
+    }
+    const filtered = presets.filter(preset => doesPresetMatchRuleCriteria(preset, criteria))
+    return buildGroupedPresets(filtered)
+  }, [formData.kind, formData.path, formData.target, formData.url, presets])
 
   /**
    * Apply a preset directly to an existing rule from the recap list.
@@ -780,12 +786,12 @@ function EditRules({
    * @returns {Promise<void>}
    */
   const handleQuickPresetChange = async (rule, presetId) => {
-    if (!rule || !presetId) return;
-    const preset = presets.find((item) => item && String(item.id) === String(presetId));
-    if (!preset || !doesPresetMatchRuleCriteria(preset, rule)) return;
+    if (!rule || !presetId) return
+    const preset = presets.find(item => item && String(item.id) === String(presetId))
+    if (!preset || !doesPresetMatchRuleCriteria(preset, rule)) return
 
-    const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {};
-    let patch = null;
+    const presetRule = preset.rule && typeof preset.rule === 'object' ? preset.rule : {}
+    let patch = null
 
     if (rule.kind === 'jsonPath') {
       patch = {
@@ -793,42 +799,42 @@ function EditRules({
         value: Object.prototype.hasOwnProperty.call(presetRule, 'value') ? presetRule.value : '',
         valueType: presetRule.valueType || rule.valueType,
         valueSource: presetRule.valueSource || null
-      };
+      }
     } else {
       patch = {
         ...rule,
         replacement: presetRule.replacement || ''
-      };
+      }
     }
 
     try {
-      setUpdatingPresetRuleId(rule.id);
-      await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), patch);
-      await fetchRules();
-      if (onRulesChanged) onRulesChanged();
-      setRulePresetSelections((prev) => ({ ...prev, [rule.id]: String(presetId) }));
+      setUpdatingPresetRuleId(rule.id)
+      await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), patch)
+      await fetchRules()
+      if (onRulesChanged) onRulesChanged()
+      setRulePresetSelections(prev => ({ ...prev, [rule.id]: String(presetId) }))
     } catch (error) {
-      console.error('Error applying preset to rule:', error);
-      const message = error.response?.data?.error || error.message || 'Unknown error';
+      console.error('Error applying preset to rule:', error)
+      const message = error.response?.data?.error || error.message || 'Unknown error'
       if (showAlert) {
-        showAlert('Failed to apply preset', String(message), 'error');
+        showAlert('Failed to apply preset', String(message), 'error')
       } else {
-        alert('Failed to apply preset: ' + message);
+        alert('Failed to apply preset: ' + message)
       }
     } finally {
-      setUpdatingPresetRuleId(null);
+      setUpdatingPresetRuleId(null)
     }
-  };
+  }
 
   // When coming from the JSONTree edit icon, prefill a new jsonPath rule
   useEffect(() => {
-    if (!initialJsonPathSeed) return;
+    if (!initialJsonPathSeed) return
 
-    const normalizedSeedValue = normalizeJsonPathFormValue(initialJsonPathSeed.value);
+    const normalizedSeedValue = normalizeJsonPathFormValue(initialJsonPathSeed.value)
 
-    setIsCreating(true);
-    setEditingRule(null);
-    setSelectedPresetId('');
+    setIsCreating(true)
+    setEditingRule(null)
+    setSelectedPresetId('')
     setFormData(prev => ({
       ...prev,
       kind: 'jsonPath',
@@ -850,38 +856,38 @@ function EditRules({
       replacement: '',
       useRegex: false,
       caseSensitive: false
-    }));
+    }))
 
     if (onConsumeJsonPathSeed) {
-      onConsumeJsonPathSeed();
+      onConsumeJsonPathSeed()
     }
-  }, [initialJsonPathSeed, onConsumeJsonPathSeed]);
+  }, [initialJsonPathSeed, onConsumeJsonPathSeed])
 
-  const handleToggleEnabled = async (rule) => {
-    if (!rule) return;
+  const handleToggleEnabled = async rule => {
+    if (!rule) return
     try {
-      setTogglingId(rule.id);
+      setTogglingId(rule.id)
       await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), {
         ...rule,
         enabled: !rule.enabled
-      });
-      await fetchRules();
-      if (onRulesChanged) onRulesChanged();
+      })
+      await fetchRules()
+      if (onRulesChanged) onRulesChanged()
     } catch (error) {
-      console.error('Error toggling rule:', error);
+      console.error('Error toggling rule:', error)
       if (showAlert) {
         showAlert(
           'Failed to toggle rule',
           'An error occurred while toggling this edit rule. Please try again.',
           'error'
-        );
+        )
       } else {
-        alert('Failed to toggle rule');
+        alert('Failed to toggle rule')
       }
     } finally {
-      setTogglingId(null);
+      setTogglingId(null)
     }
-  };
+  }
 
   /**
    * Toggle whether the replacement/value preview for the given rule is
@@ -889,20 +895,20 @@ function EditRules({
    *
    * @param {string} ruleId
    */
-  const toggleRuleExpanded = (ruleId) => {
-    setExpandedRuleIds((prev) =>
-      prev.includes(ruleId) ? prev.filter((id) => id !== ruleId) : [...prev, ruleId]
-    );
-  };
+  const toggleRuleExpanded = ruleId => {
+    setExpandedRuleIds(prev =>
+      prev.includes(ruleId) ? prev.filter(id => id !== ruleId) : [...prev, ruleId]
+    )
+  }
 
   const handleCopyJsonValue = useCallback(() => {
-    if (!formData.value || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    if (!formData.value || typeof navigator === 'undefined' || !navigator.clipboard) return
     try {
-      navigator.clipboard.writeText(formData.value);
+      navigator.clipboard.writeText(formData.value)
     } catch (error) {
-      console.error('Failed to copy value to clipboard:', error);
+      console.error('Failed to copy value to clipboard:', error)
     }
-  }, [formData.value]);
+  }, [formData.value])
 
   /**
    * Open a native file picker via the backend to capture an absolute path.
@@ -913,27 +919,27 @@ function EditRules({
     const response = await axios.post(buildApiUrl('/api/system/file-picker'), {
       title: 'Select JSONPath value file',
       filter: 'Text files (*.txt)|*.txt|All files (*.*)|*.*'
-    });
+    })
 
-    if (response?.data?.canceled) return null;
-    return response?.data?.path || null;
-  }, []);
+    if (response?.data?.canceled) return null
+    return response?.data?.path || null
+  }, [])
 
   /**
    * Handle text input changes for JSONPath values with cascading type conversion.
    *
    * @param {React.ChangeEvent<HTMLInputElement>} event
    */
-  const handleJsonValueTextChange = (event) => {
-    const rawText = event.target.value;
-    const { valueType } = coerceJsonPathScalar(rawText);
-    setFormData((prev) => ({
+  const handleJsonValueTextChange = event => {
+    const rawText = event.target.value
+    const { valueType } = coerceJsonPathScalar(rawText)
+    setFormData(prev => ({
       ...prev,
       value: rawText,
       valueType,
       jsonValueMode: 'text'
-    }));
-  };
+    }))
+  }
 
   /**
    * Handle JSONPath file selection via the native picker.
@@ -942,72 +948,73 @@ function EditRules({
    */
   const handleJsonValueFilePick = async () => {
     try {
-      setIsPickingJsonValueFile(true);
-      const selectedPath = await openJsonValueFilePicker();
-      if (!selectedPath) return;
-      const filename = selectedPath.split(/[\\/]/).pop() || selectedPath;
-      setFormData((prev) => ({
+      setIsPickingJsonValueFile(true)
+      const selectedPath = await openJsonValueFilePicker()
+      if (!selectedPath) return
+      const filename = selectedPath.split(/[\\/]/).pop() || selectedPath
+      setFormData(prev => ({
         ...prev,
         value: '',
         valueType: 'string',
         jsonValueMode: 'file',
         jsonValueFileName: filename,
         jsonValueFileToken: selectedPath
-      }));
+      }))
     } catch (error) {
-      const message = error?.response?.data?.error || error?.message || 'Unable to open the file picker.';
+      const message =
+        error?.response?.data?.error || error?.message || 'Unable to open the file picker.'
       if (showAlert) {
-        showAlert('File picker error', String(message), 'error');
+        showAlert('File picker error', String(message), 'error')
       } else {
-        alert('Unable to open the file picker: ' + message);
+        alert('Unable to open the file picker: ' + message)
       }
     } finally {
-      setIsPickingJsonValueFile(false);
+      setIsPickingJsonValueFile(false)
     }
-  };
+  }
 
   /**
    * Switch between text and file inputs for JSONPath values.
    *
    * @param {'text' | 'file'} mode
    */
-  const handleJsonValueModeChange = (mode) => {
-    setFormData((prev) => ({
+  const handleJsonValueModeChange = mode => {
+    setFormData(prev => ({
       ...prev,
       jsonValueMode: mode,
       jsonValueFileName: mode === 'file' ? prev.jsonValueFileName : '',
       jsonValueFileToken: mode === 'file' ? prev.jsonValueFileToken : ''
-    }));
-  };
+    }))
+  }
 
-  const handleDelete = async (ruleId) => {
-    let confirmed = true;
+  const handleDelete = async ruleId => {
+    let confirmed = true
 
     if (showConfirm) {
       try {
         confirmed = await showConfirm(
           'Delete edit rule',
           'Are you sure you want to delete this rule? This action cannot be undone.'
-        );
+        )
       } catch (error) {
-        console.error('Error showing confirmation modal:', error);
-        confirmed = false;
+        console.error('Error showing confirmation modal:', error)
+        confirmed = false
       }
     }
 
-    if (!confirmed) return;
+    if (!confirmed) return
 
     try {
-      setDeletingId(ruleId);
-      await axios.delete(buildApiUrl(`/api/edit-rules/${ruleId}`));
-      await fetchRules();
-      if (onRulesChanged) onRulesChanged();
+      setDeletingId(ruleId)
+      await axios.delete(buildApiUrl(`/api/edit-rules/${ruleId}`))
+      await fetchRules()
+      if (onRulesChanged) onRulesChanged()
     } catch (error) {
-      console.error('Error deleting rule:', error);
+      console.error('Error deleting rule:', error)
     } finally {
-      setDeletingId(null);
+      setDeletingId(null)
     }
-  };
+  }
 
   /**
    * Enter edit mode for a given rule, initialising the form state
@@ -1015,21 +1022,22 @@ function EditRules({
    *
    * @param {{ id: string, kind?: string, name?: string }} rule
    */
-  const handleEdit = (rule) => {
+  const handleEdit = rule => {
     if (isCreating || (editingRule && editingRule !== rule.id)) {
-      handleCancel();
+      handleCancel()
     }
-    setEditingRule(rule.id);
-    setSelectedPresetId('');
+    setEditingRule(rule.id)
+    setSelectedPresetId('')
     if (rule.kind === 'jsonPath') {
       const normalizedValue = normalizeJsonPathFormValue(
         Object.prototype.hasOwnProperty.call(rule, 'value') ? rule.value : ''
-      );
-      const fileSource = rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null;
+      )
+      const fileSource =
+        rule.valueSource && rule.valueSource.type === 'file' ? rule.valueSource : null
       const fileFallbackName = fileSource?.path
         ? fileSource.path.split(/[\\/]/).pop()
-        : fileSource?.filename;
-      setIsCreating(false);
+        : fileSource?.filename
+      setIsCreating(false)
       setFormData({
         kind: 'jsonPath',
         name: rule.name || '',
@@ -1041,20 +1049,17 @@ function EditRules({
         caseSensitive: false,
         path: rule.path || '',
         value: fileSource ? '' : normalizedValue.valueText,
-        valueType: fileSource ? (rule.valueType || 'string') : normalizedValue.valueType,
+        valueType: fileSource ? rule.valueType || 'string' : normalizedValue.valueType,
         jsonValueMode: fileSource ? 'file' : 'text',
         jsonValueFileName: fileSource?.originalName || fileFallbackName || '',
         jsonValueFileToken: fileSource?.path || fileSource?.filename || '',
         url: rule.url || '',
-        target:
-          rule.target === 'response' || rule.target === 'both'
-            ? rule.target
-            : 'request'
-      });
+        target: rule.target === 'response' || rule.target === 'both' ? rule.target : 'request'
+      })
     } else {
-      setIsCreating(false);
-      const startMarkers = buildMarkerList(rule.startVariants);
-      const endMarkers = buildMarkerList(rule.endVariants);
+      setIsCreating(false)
+      const startMarkers = buildMarkerList(rule.startVariants)
+      const endMarkers = buildMarkerList(rule.endVariants)
       setFormData({
         kind: 'text',
         name: rule.name || '',
@@ -1077,16 +1082,16 @@ function EditRules({
           rule.target === 'request' || rule.target === 'response' || rule.target === 'both'
             ? rule.target
             : 'both'
-      });
+      })
     }
-  };
+  }
 
   /**
    * Start creating a new text rule with default values.
    */
   const handleCreate = () => {
-    setIsCreating(true);
-    setSelectedPresetId('');
+    setIsCreating(true)
+    setSelectedPresetId('')
     setFormData({
       kind: 'text',
       name: '',
@@ -1106,17 +1111,17 @@ function EditRules({
       // For new text rules, default to both request and response to preserve
       // the legacy behaviour where text rules applied in all phases.
       target: 'both'
-    });
-  };
+    })
+  }
 
   /**
    * Exit create/edit mode and reset the form to its initial text-rule
    * state.
    */
   const handleCancel = useCallback(() => {
-    setEditingRule(null);
-    setIsCreating(false);
-    setSelectedPresetId('');
+    setEditingRule(null)
+    setIsCreating(false)
+    setSelectedPresetId('')
     setFormData({
       kind: 'text',
       name: '',
@@ -1134,8 +1139,8 @@ function EditRules({
       jsonValueFileToken: '',
       url: '',
       target: 'request'
-    });
-  }, []);
+    })
+  }, [])
 
   /**
    * Persist the current rule form, creating or updating a backend edit rule.
@@ -1149,37 +1154,37 @@ function EditRules({
    * @returns {Promise<void>}
    */
   const handleSave = useCallback(async () => {
-    let startMarkers = [];
-    let endMarkers = [];
+    let startMarkers = []
+    let endMarkers = []
 
     if (formData.kind === 'text') {
-      startMarkers = parseVariantLines(formData.startVariantsText);
-      endMarkers = parseVariantLines(formData.endVariantsText);
+      startMarkers = parseVariantLines(formData.startVariantsText)
+      endMarkers = parseVariantLines(formData.endVariantsText)
     }
 
     if (formData.kind === 'jsonPath') {
       if (!formData.url.trim() || !formData.path.trim()) {
-        const msg = 'For a JSONPath rule you must specify both the URL and the JSON path.';
+        const msg = 'For a JSONPath rule you must specify both the URL and the JSON path.'
         if (showAlert) {
-          showAlert('Missing fields', msg, 'warning');
+          showAlert('Missing fields', msg, 'warning')
         } else {
-          alert(msg);
+          alert(msg)
         }
-        return;
+        return
       }
 
       if (formData.jsonValueMode === 'file' && !formData.jsonValueFileToken) {
-        const msg = 'Select a file to use as the JSONPath value before saving.';
+        const msg = 'Select a file to use as the JSONPath value before saving.'
         if (showAlert) {
-          showAlert('Missing file', msg, 'warning');
+          showAlert('Missing file', msg, 'warning')
         } else {
-          alert(msg);
+          alert(msg)
         }
-        return;
+        return
       }
     } else {
-      const hasStartMarkers = startMarkers.length > 0;
-      const hasEndMarkers = endMarkers.length > 0;
+      const hasStartMarkers = startMarkers.length > 0
+      const hasEndMarkers = endMarkers.length > 0
 
       if (!hasStartMarkers && !hasEndMarkers) {
         if (showAlert) {
@@ -1187,11 +1192,11 @@ function EditRules({
             'Missing match boundaries',
             'Please provide at least one start or end marker (one per line) so the proxy knows which part of the content to replace.',
             'warning'
-          );
+          )
         } else {
-          alert('Please provide at least one start or end marker before saving this rule.');
+          alert('Please provide at least one start or end marker before saving this rule.')
         }
-        return;
+        return
       }
     }
 
@@ -1213,14 +1218,14 @@ function EditRules({
                 url: formData.url,
                 target: formData.target || 'request',
                 enabled: formData.enabled !== false
-              };
+              }
             }
 
-            const normalizedValue = coerceJsonPathScalar(formData.value);
+            const normalizedValue = coerceJsonPathScalar(formData.value)
             const storedValue =
               normalizedValue.valueType === 'json'
                 ? JSON.stringify(normalizedValue.value)
-                : normalizedValue.value;
+                : normalizedValue.value
             return {
               kind: 'jsonPath',
               name: formData.name,
@@ -1231,11 +1236,11 @@ function EditRules({
               url: formData.url,
               target: formData.target || 'request',
               enabled: formData.enabled !== false
-            };
+            }
           })()
         : (() => {
-            const startVariants = startMarkers;
-            const endVariants = endMarkers;
+            const startVariants = startMarkers
+            const endVariants = endMarkers
 
             return {
               kind: 'text',
@@ -1248,45 +1253,39 @@ function EditRules({
               // rule is global, and when target is omitted it defaults to both.
               url: formData.url || '',
               target:
-                formData.target === 'request' || formData.target === 'response' || formData.target === 'both'
+                formData.target === 'request' ||
+                formData.target === 'response' ||
+                formData.target === 'both'
                   ? formData.target
                   : 'both',
               startVariants,
               endVariants
-            };
-          })();
+            }
+          })()
 
     try {
-      setSaving(true);
+      setSaving(true)
       if (isCreating) {
-        await axios.post(buildApiUrl('/api/edit-rules'), payload);
+        await axios.post(buildApiUrl('/api/edit-rules'), payload)
       } else if (editingRule) {
-        await axios.put(buildApiUrl(`/api/edit-rules/${editingRule}`), payload);
+        await axios.put(buildApiUrl(`/api/edit-rules/${editingRule}`), payload)
       }
 
-      await fetchRules();
-      if (onRulesChanged) onRulesChanged();
-      handleCancel();
+      await fetchRules()
+      if (onRulesChanged) onRulesChanged()
+      handleCancel()
     } catch (error) {
-      console.error('Error saving rule:', error);
-      const message = error.response?.data?.error || error.message || 'Unknown error';
+      console.error('Error saving rule:', error)
+      const message = error.response?.data?.error || error.message || 'Unknown error'
       if (showAlert) {
-        showAlert('Failed to save rule', String(message), 'error');
+        showAlert('Failed to save rule', String(message), 'error')
       } else {
-        alert('Failed to save rule: ' + message);
+        alert('Failed to save rule: ' + message)
       }
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  }, [
-    editingRule,
-    fetchRules,
-    formData,
-    handleCancel,
-    isCreating,
-    onRulesChanged,
-    showAlert
-  ]);
+  }, [editingRule, fetchRules, formData, handleCancel, isCreating, onRulesChanged, showAlert])
 
   /**
    * Save the current form as a reusable preset.
@@ -1294,57 +1293,71 @@ function EditRules({
    * @returns {Promise<void>}
    */
   const handleSavePreset = useCallback(async () => {
-    const defaultName = formData.name || (formData.kind === 'jsonPath' ? 'JSONPath preset' : 'Text preset');
+    const defaultName =
+      formData.name || (formData.kind === 'jsonPath' ? 'JSONPath preset' : 'Text preset')
     const promptResult = showPrompt
-      ? await showPrompt('Save preset', 'Choose a name for this preset.', defaultName, 'Preset name')
-      : window.prompt('Preset name', defaultName);
+      ? await showPrompt(
+          'Save preset',
+          'Choose a name for this preset.',
+          defaultName,
+          'Preset name'
+        )
+      : window.prompt('Preset name', defaultName)
 
     if (!promptResult || typeof promptResult !== 'string' || !promptResult.trim()) {
-      return;
+      return
     }
 
     const payload = {
       name: promptResult.trim(),
       kind: formData.kind === 'jsonPath' ? 'jsonPath' : 'text',
       rule: buildPresetRuleFromForm()
-    };
+    }
 
     try {
-      const response = await axios.post(buildApiUrl('/api/edit-rule-presets'), payload);
-      const created = response.data?.preset;
-      await fetchPresets();
+      const response = await axios.post(buildApiUrl('/api/edit-rule-presets'), payload)
+      const created = response.data?.preset
+      await fetchPresets()
       if (created?.id) {
-        setSelectedPresetId(String(created.id));
+        setSelectedPresetId(String(created.id))
       }
-      await handleSave();
+      await handleSave()
     } catch (error) {
-      console.error('Error saving edit rule preset:', error);
-      const message = error.response?.data?.error || error.message || 'Unknown error';
+      console.error('Error saving edit rule preset:', error)
+      const message = error.response?.data?.error || error.message || 'Unknown error'
       if (showAlert) {
-        showAlert('Failed to save preset', String(message), 'error');
+        showAlert('Failed to save preset', String(message), 'error')
       } else {
-        alert('Failed to save preset: ' + message);
+        alert('Failed to save preset: ' + message)
       }
     }
-  }, [buildPresetRuleFromForm, fetchPresets, formData.kind, formData.name, handleSave, showAlert, showPrompt]);
+  }, [
+    buildPresetRuleFromForm,
+    fetchPresets,
+    formData.kind,
+    formData.name,
+    handleSave,
+    showAlert,
+    showPrompt
+  ])
 
   /**
    * Handle selection of a preset from the dropdown.
    *
    * @param {string} presetId
    */
-  const handlePresetSelect = (presetId) => {
-    const nextId = String(presetId || '');
-    setSelectedPresetId(nextId);
-  };
+  const handlePresetSelect = presetId => {
+    const nextId = String(presetId || '')
+    setSelectedPresetId(nextId)
+  }
 
   useEffect(() => {
-    if (!selectedPresetId) return;
-    const preset = presets.find((item) => item && String(item.id) === selectedPresetId);
+    if (!selectedPresetId) return
+    const preset = presets.find(item => item && String(item.id) === selectedPresetId)
     if (preset) {
-      applyPresetToForm(preset);
+      applyPresetToForm(preset)
     }
-  }, [applyPresetToForm, presets, selectedPresetId]);
+  }, [applyPresetToForm, presets, selectedPresetId])
 
   /**
    * Delete a preset by id.
@@ -1352,57 +1365,62 @@ function EditRules({
    * @param {string} presetId
    * @returns {Promise<void>}
    */
-  const handleDeletePreset = useCallback(async (presetId) => {
-    const targetId = String(presetId || '');
-    if (!targetId) return;
+  const handleDeletePreset = useCallback(
+    async presetId => {
+      const targetId = String(presetId || '')
+      if (!targetId) return
 
-    const confirmed = showConfirm
-      ? await showConfirm('Delete preset', 'Are you sure you want to delete this preset? This cannot be undone.')
-      : window.confirm('Delete this preset?');
+      const confirmed = showConfirm
+        ? await showConfirm(
+            'Delete preset',
+            'Are you sure you want to delete this preset? This cannot be undone.'
+          )
+        : window.confirm('Delete this preset?')
 
-    if (!confirmed) return;
+      if (!confirmed) return
 
-    try {
-      await axios.delete(buildApiUrl(`/api/edit-rule-presets/${targetId}`));
-      await fetchPresets();
-      setSelectedPresetId((prev) => (String(prev) === targetId ? '' : prev));
-      setRulePresetSelections((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((key) => {
-          if (String(next[key]) === targetId) {
-            delete next[key];
-          }
-        });
-        return next;
-      });
-    } catch (error) {
-      console.error('Error deleting preset:', error);
-      const message = error.response?.data?.error || error.message || 'Unknown error';
-      if (showAlert) {
-        showAlert('Failed to delete preset', String(message), 'error');
-      } else {
-        alert('Failed to delete preset: ' + message);
+      try {
+        await axios.delete(buildApiUrl(`/api/edit-rule-presets/${targetId}`))
+        await fetchPresets()
+        setSelectedPresetId(prev => (String(prev) === targetId ? '' : prev))
+        setRulePresetSelections(prev => {
+          const next = { ...prev }
+          Object.keys(next).forEach(key => {
+            if (String(next[key]) === targetId) {
+              delete next[key]
+            }
+          })
+          return next
+        })
+      } catch (error) {
+        console.error('Error deleting preset:', error)
+        const message = error.response?.data?.error || error.message || 'Unknown error'
+        if (showAlert) {
+          showAlert('Failed to delete preset', String(message), 'error')
+        } else {
+          alert('Failed to delete preset: ' + message)
+        }
       }
-    }
-  }, [fetchPresets, showAlert, showConfirm]);
+    },
+    [fetchPresets, showAlert, showConfirm]
+  )
 
   useEffect(() => {
     if ((isCreating || editingRule) && formRef.current && typeof window !== 'undefined') {
-      const headerOffset = 96;
-      const rect = formRef.current.getBoundingClientRect();
-      const targetY = window.scrollY + rect.top - headerOffset - 16;
+      const headerOffset = 96
+      const rect = formRef.current.getBoundingClientRect()
+      const targetY = window.scrollY + rect.top - headerOffset - 16
 
       try {
         window.scrollTo({
           top: Math.max(targetY, 0),
           behavior: 'smooth'
-        });
+        })
       } catch (error) {
-        window.scrollTo(0, Math.max(targetY, 0));
+        window.scrollTo(0, Math.max(targetY, 0))
       }
     }
-  }, [isCreating, editingRule]);
-
+  }, [isCreating, editingRule])
 
   return (
     <div className="space-y-4">
@@ -1421,11 +1439,20 @@ function EditRules({
                 aria-pressed={!!editRulesEnabled}
               >
                 <Edit3 className="w-4 h-4" />
-                <span className="text-xs font-medium tracking-wide">{editRulesEnabled ? 'ON' : 'OFF'}</span>
+                <span className="text-xs font-medium tracking-wide">
+                  {editRulesEnabled ? 'ON' : 'OFF'}
+                </span>
               </button>
-              <div className="invisible group-hover/live-edit:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl" style={{ zIndex: 99999 }}>
+              <div
+                className="invisible group-hover/live-edit:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
+                style={{ zIndex: 99999 }}
+              >
                 <div className="font-semibold mb-1 text-slate-200">Live edit rules</div>
-                <p>{editRulesEnabled ? 'Live edit rules are active and may modify matching traffic.' : 'Live edit rules are disabled. All rules are ignored without changing their individual switches.'}</p>
+                <p>
+                  {editRulesEnabled
+                    ? 'Live edit rules are active and may modify matching traffic.'
+                    : 'Live edit rules are disabled. All rules are ignored without changing their individual switches.'}
+                </p>
               </div>
             </div>
             <div>
@@ -1454,16 +1481,25 @@ function EditRules({
           <div className="text-sm text-slate-300">
             <p className="font-medium text-cyan-400 mb-1">How it works</p>
             <p>
-              Rules are applied across headers, bodies, Connect frames, and WebSocket messages for traffic that passes through the proxy pipeline.
-              Text rules use <span className="font-semibold">start/end markers</span> to match text patterns: everything from the start marker through the end marker (inclusive) is replaced with your value.
-              Markers are entered as lists (one per line) and all non-empty lines are treated as <span className="font-semibold">OR variants</span>, so a single rule can cover many similar cases.
-              JSON Path rules target structured fields and support Manual values or File values read from a local path at runtime (no upload).
-              Presets are scoped by Apply To (target), URL pattern, and JSON path (when applicable) to prevent mismatched usage.
+              Rules are applied across headers, bodies, Connect frames, and WebSocket messages for
+              traffic that passes through the proxy pipeline. Text rules use{' '}
+              <span className="font-semibold">start/end markers</span> to match text patterns:
+              everything from the start marker through the end marker (inclusive) is replaced with
+              your value. Markers are entered as lists (one per line) and all non-empty lines are
+              treated as <span className="font-semibold">OR variants</span>, so a single rule can
+              cover many similar cases. JSON Path rules target structured fields and support Manual
+              values or File values read from a local path at runtime (no upload). Presets are
+              scoped by Apply To (target), URL pattern, and JSON path (when applicable) to prevent
+              mismatched usage.
             </p>
             <p className="mt-2 text-xs text-slate-400">
-              <strong>Note:</strong> If you provide only start markers and leave end markers empty, the replacement will continue to the end of the content.
-              This allows you to replace everything from a marker onwards without needing to specify where to stop. When both start and end marker lists are provided,
-              the proxy applies the rule to every matching start/end combination. JSON Path rules require both a URL pattern and JSON path; File input requires a local file selection and is read at runtime. Saving a preset also saves the rule.
+              <strong>Note:</strong> If you provide only start markers and leave end markers empty,
+              the replacement will continue to the end of the content. This allows you to replace
+              everything from a marker onwards without needing to specify where to stop. When both
+              start and end marker lists are provided, the proxy applies the rule to every matching
+              start/end combination. JSON Path rules require both a URL pattern and JSON path; File
+              input requires a local file selection and is read at runtime. Saving a preset also
+              saves the rule.
             </p>
           </div>
         </div>
@@ -1477,7 +1513,8 @@ function EditRules({
                 {isCreating ? 'Create rule' : 'Edit rule'}
               </h4>
               <p className="text-xs text-slate-400">
-                Presets are scoped by Apply To (target), URL pattern, and JSON path (when applicable) and apply to all traffic that passes through the proxy pipeline.
+                Presets are scoped by Apply To (target), URL pattern, and JSON path (when
+                applicable) and apply to all traffic that passes through the proxy pipeline.
               </p>
             </div>
 
@@ -1512,9 +1549,15 @@ function EditRules({
                     >
                       <Code className="w-4 h-4" />
                     </button>
-                    <div className="invisible group-hover/regex:visible absolute right-0 bottom-full mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl" style={{ zIndex: 99999 }}>
+                    <div
+                      className="invisible group-hover/regex:visible absolute right-0 bottom-full mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
+                      style={{ zIndex: 99999 }}
+                    >
                       <div className="font-semibold mb-1 text-slate-200">Regex mode</div>
-                      <p>Use regular expressions to match patterns across headers, bodies, and frames.</p>
+                      <p>
+                        Use regular expressions to match patterns across headers, bodies, and
+                        frames.
+                      </p>
                     </div>
                   </div>
 
@@ -1522,7 +1565,9 @@ function EditRules({
                   <div className="relative group/case">
                     <button
                       type="button"
-                      onClick={() => setFormData({ ...formData, caseSensitive: !formData.caseSensitive })}
+                      onClick={() =>
+                        setFormData({ ...formData, caseSensitive: !formData.caseSensitive })
+                      }
                       className={`inline-flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${
                         formData.caseSensitive
                           ? 'border-blue-500 bg-blue-600/20 text-blue-300'
@@ -1533,9 +1578,15 @@ function EditRules({
                     >
                       <Type className="w-4 h-4" />
                     </button>
-                    <div className="invisible group-hover/case:visible absolute right-0 bottom-full mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl" style={{ zIndex: 99999 }}>
+                    <div
+                      className="invisible group-hover/case:visible absolute right-0 bottom-full mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
+                      style={{ zIndex: 99999 }}
+                    >
                       <div className="font-semibold mb-1 text-slate-200">Case sensitive</div>
-                      <p>When enabled, matches will respect letter casing. Otherwise, matching is case-insensitive.</p>
+                      <p>
+                        When enabled, matches will respect letter casing. Otherwise, matching is
+                        case-insensitive.
+                      </p>
                     </div>
                   </div>
                 </>
@@ -1556,15 +1607,21 @@ function EditRules({
                 >
                   <Power className="w-4 h-4" />
                 </button>
-                <div className="invisible group-hover/enabled:visible absolute right-0 bottom-full mb-2 w-56 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl" style={{ zIndex: 99999 }}>
+                <div
+                  className="invisible group-hover/enabled:visible absolute right-0 bottom-full mb-2 w-56 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
+                  style={{ zIndex: 99999 }}
+                >
                   <div className="font-semibold mb-1 text-slate-200">Rule enabled</div>
-                  <p>Toggle whether this rule is active. Disabled rules are ignored but kept for later.</p>
+                  <p>
+                    Toggle whether this rule is active. Disabled rules are ignored but kept for
+                    later.
+                  </p>
                 </div>
               </div>
             </div>
           </div>
 
-            <div className="space-y-4">
+          <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
                 Rule name
@@ -1572,7 +1629,7 @@ function EditRules({
               <input
                 type="text"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder="e.g., Replace API Key"
                 className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
@@ -1587,7 +1644,7 @@ function EditRules({
                   <input
                     type="text"
                     value={formData.url}
-                    onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                    onChange={e => setFormData({ ...formData, url: e.target.value })}
                     placeholder="es: /api/v1/users oppure https://example.com/api"
                     className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                   />
@@ -1599,21 +1656,25 @@ function EditRules({
                       Apply to
                     </label>
                     <div className="flex w-full gap-2">
-                      {[{ key: 'request', label: 'Request' }, { key: 'response', label: 'Response' }, { key: 'both', label: 'Both' }].map(option => {
-                        const isActive = formData.target === option.key;
+                      {[
+                        { key: 'request', label: 'Request' },
+                        { key: 'response', label: 'Response' },
+                        { key: 'both', label: 'Both' }
+                      ].map(option => {
+                        const isActive = formData.target === option.key
 
-                        let activeClasses = '';
-                        let hoverClasses = '';
+                        let activeClasses = ''
+                        let hoverClasses = ''
                         if (option.key === 'request') {
-                          activeClasses = 'bg-blue-600/20 border-blue-500/60 text-blue-300';
-                          hoverClasses = 'hover:border-blue-500 hover:text-blue-300';
+                          activeClasses = 'bg-blue-600/20 border-blue-500/60 text-blue-300'
+                          hoverClasses = 'hover:border-blue-500 hover:text-blue-300'
                         } else if (option.key === 'response') {
-                          activeClasses = 'bg-green-600/20 border-green-500/60 text-green-300';
-                          hoverClasses = 'hover:border-green-500 hover:text-green-300';
+                          activeClasses = 'bg-green-600/20 border-green-500/60 text-green-300'
+                          hoverClasses = 'hover:border-green-500 hover:text-green-300'
                         } else {
                           // both
-                          activeClasses = 'bg-yellow-500/20 border-yellow-400/60 text-yellow-300';
-                          hoverClasses = 'hover:border-yellow-400 hover:text-yellow-300';
+                          activeClasses = 'bg-yellow-500/20 border-yellow-400/60 text-yellow-300'
+                          hoverClasses = 'hover:border-yellow-400 hover:text-yellow-300'
                         }
 
                         return (
@@ -1629,7 +1690,7 @@ function EditRules({
                           >
                             {option.label}
                           </button>
-                        );
+                        )
                       })}
                     </div>
                   </div>
@@ -1641,7 +1702,7 @@ function EditRules({
                     <input
                       type="text"
                       value={formData.path}
-                      onChange={(e) => setFormData({ ...formData, path: e.target.value })}
+                      onChange={e => setFormData({ ...formData, path: e.target.value })}
                       placeholder="es: root.data[0].user.name"
                       className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                     />
@@ -1654,16 +1715,19 @@ function EditRules({
                       Input Type
                     </label>
                     <div className="flex w-full gap-2">
-                      {[{ key: 'text', label: 'Manual' }, { key: 'file', label: 'File' }].map(option => {
-                        const isActive = formData.jsonValueMode === option.key;
+                      {[
+                        { key: 'text', label: 'Manual' },
+                        { key: 'file', label: 'File' }
+                      ].map(option => {
+                        const isActive = formData.jsonValueMode === option.key
                         const activeClasses =
                           option.key === 'file'
                             ? 'bg-green-600/20 border-green-500/60 text-green-400'
-                            : 'bg-amber-600/20 border-amber-500/60 text-amber-200';
+                            : 'bg-amber-600/20 border-amber-500/60 text-amber-200'
                         const inactiveClasses =
                           option.key === 'file'
                             ? 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-green-500 hover:text-green-400'
-                            : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-amber-500 hover:text-amber-200';
+                            : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-amber-500 hover:text-amber-200'
                         return (
                           <button
                             key={option.key}
@@ -1675,7 +1739,7 @@ function EditRules({
                           >
                             {option.label}
                           </button>
-                        );
+                        )
                       })}
                     </div>
                   </div>
@@ -1691,16 +1755,20 @@ function EditRules({
                           className="invisible group-hover/json-value-help:visible absolute left-0 bottom-full mb-2 w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-[11px] text-slate-300 shadow-2xl"
                           style={{ zIndex: 99999 }}
                         >
-                          <div className="font-semibold mb-1 text-slate-200">JSON-aware replacement</div>
+                          <div className="font-semibold mb-1 text-slate-200">
+                            JSON-aware replacement
+                          </div>
                           <p>
-                            When the target field is an object or array, the proxy will try to parse this value as JSON.
-                            If parsing succeeds, the entire object will be replaced with the new one (for example by pasting
-                            a stringified JSON object).
+                            When the target field is an object or array, the proxy will try to parse
+                            this value as JSON. If parsing succeeds, the entire object will be
+                            replaced with the new one (for example by pasting a stringified JSON
+                            object).
                           </p>
                         </div>
                       </div>
                       <span className="text-[11px] text-slate-500">
-                        [Detected type: <span className="text-amber-200 font-semibold">{formData.valueType}</span>]
+                        [Detected type:{' '}
+                        <span className="text-amber-200 font-semibold">{formData.valueType}</span>]
                       </span>
                     </div>
                     {formData.jsonValueMode === 'file' ? (
@@ -1755,7 +1823,9 @@ function EditRules({
                     </label>
                     <textarea
                       value={formData.startVariantsText}
-                      onChange={(e) => setFormData({ ...formData, startVariantsText: e.target.value })}
+                      onChange={e =>
+                        setFormData({ ...formData, startVariantsText: e.target.value })
+                      }
                       placeholder="Each line is an alternative start marker that can trigger this rule."
                       rows={3}
                       className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
@@ -1771,13 +1841,14 @@ function EditRules({
                     </label>
                     <textarea
                       value={formData.endVariantsText}
-                      onChange={(e) => setFormData({ ...formData, endVariantsText: e.target.value })}
+                      onChange={e => setFormData({ ...formData, endVariantsText: e.target.value })}
                       placeholder="Each line is an alternative end marker that can close the replacement block."
                       rows={3}
                       className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Leave this empty to replace everything from the start marker to the end of the content.
+                      Leave this empty to replace everything from the start marker to the end of the
+                      content.
                     </p>
                   </div>
                 </div>
@@ -1788,21 +1859,25 @@ function EditRules({
                       Apply to
                     </label>
                     <div className="flex flex-wrap gap-2">
-                      {[{ key: 'request', label: 'Request' }, { key: 'response', label: 'Response' }, { key: 'both', label: 'Both' }].map(option => {
-                        const isActive = formData.target === option.key;
+                      {[
+                        { key: 'request', label: 'Request' },
+                        { key: 'response', label: 'Response' },
+                        { key: 'both', label: 'Both' }
+                      ].map(option => {
+                        const isActive = formData.target === option.key
 
-                        let activeClasses = '';
-                        let hoverClasses = '';
+                        let activeClasses = ''
+                        let hoverClasses = ''
                         if (option.key === 'request') {
-                          activeClasses = 'bg-blue-600/20 border-blue-500/60 text-blue-300';
-                          hoverClasses = 'hover:border-blue-500 hover:text-blue-300';
+                          activeClasses = 'bg-blue-600/20 border-blue-500/60 text-blue-300'
+                          hoverClasses = 'hover:border-blue-500 hover:text-blue-300'
                         } else if (option.key === 'response') {
-                          activeClasses = 'bg-green-600/20 border-green-500/60 text-green-300';
-                          hoverClasses = 'hover:border-green-500 hover:text-green-300';
+                          activeClasses = 'bg-green-600/20 border-green-500/60 text-green-300'
+                          hoverClasses = 'hover:border-green-500 hover:text-green-300'
                         } else {
                           // both
-                          activeClasses = 'bg-yellow-500/20 border-yellow-400/60 text-yellow-300';
-                          hoverClasses = 'hover:border-yellow-400 hover:text-yellow-300';
+                          activeClasses = 'bg-yellow-500/20 border-yellow-400/60 text-yellow-300'
+                          hoverClasses = 'hover:border-yellow-400 hover:text-yellow-300'
                         }
 
                         return (
@@ -1818,7 +1893,7 @@ function EditRules({
                           >
                             {option.label}
                           </button>
-                        );
+                        )
                       })}
                     </div>
                   </div>
@@ -1830,7 +1905,7 @@ function EditRules({
                     <input
                       type="text"
                       value={formData.url}
-                      onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                      onChange={e => setFormData({ ...formData, url: e.target.value })}
                       placeholder="es: /api/v1/users oppure https://example.com/api"
                       className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
                     />
@@ -1843,7 +1918,7 @@ function EditRules({
                   </label>
                   <textarea
                     value={formData.replacement}
-                    onChange={(e) => setFormData({ ...formData, replacement: e.target.value })}
+                    onChange={e => setFormData({ ...formData, replacement: e.target.value })}
                     placeholder="New text to insert"
                     rows={3}
                     className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none"
@@ -1905,20 +1980,24 @@ function EditRules({
         </div>
       ) : (
         <div className="space-y-3">
-          {rules.map((rule) => {
-            const startMarkers = buildMarkerList(rule.startVariants);
-            const endMarkers = buildMarkerList(rule.endVariants);
-            const filteredPresetsForRule = presets.filter((preset) => doesPresetMatchRuleCriteria(preset, rule));
-            const rulePresetGroups = buildGroupedPresets(filteredPresetsForRule);
-            const matchedPresetId = filteredPresetsForRule.find((preset) => doesRuleMatchPreset(rule, preset))?.id;
-            const rulePresetValue = rulePresetSelections[rule.id] || (matchedPresetId ? String(matchedPresetId) : '');
+          {rules.map(rule => {
+            const startMarkers = buildMarkerList(rule.startVariants)
+            const endMarkers = buildMarkerList(rule.endVariants)
+            const filteredPresetsForRule = presets.filter(preset =>
+              doesPresetMatchRuleCriteria(preset, rule)
+            )
+            const rulePresetGroups = buildGroupedPresets(filteredPresetsForRule)
+            const matchedPresetId = filteredPresetsForRule.find(preset =>
+              doesRuleMatchPreset(rule, preset)
+            )?.id
+            const rulePresetValue =
+              rulePresetSelections[rule.id] || (matchedPresetId ? String(matchedPresetId) : '')
 
-            const isExpanded = expandedRuleIds.includes(rule.id);
-            const fullReplacementText = getRulePreviewText(rule, { truncate: false });
-            const isTruncatable = fullReplacementText.length > 300;
-            const replacementText = isExpanded || !isTruncatable
-              ? fullReplacementText
-              : getRulePreviewText(rule);
+            const isExpanded = expandedRuleIds.includes(rule.id)
+            const fullReplacementText = getRulePreviewText(rule, { truncate: false })
+            const isTruncatable = fullReplacementText.length > 300
+            const replacementText =
+              isExpanded || !isTruncatable ? fullReplacementText : getRulePreviewText(rule)
 
             return (
               <div
@@ -1968,8 +2047,12 @@ function EditRules({
                         placeholder="Apply preset"
                         groups={rulePresetGroups}
                         loading={presetsLoading}
-                        disabled={presetsLoading || updatingPresetRuleId === rule.id || rulePresetGroups.length === 0}
-                        onSelect={(presetId) => handleQuickPresetChange(rule, presetId)}
+                        disabled={
+                          presetsLoading ||
+                          updatingPresetRuleId === rule.id ||
+                          rulePresetGroups.length === 0
+                        }
+                        onSelect={presetId => handleQuickPresetChange(rule, presetId)}
                         onDelete={handleDeletePreset}
                         buttonClassName="min-w-[180px] h-8 px-2.5 rounded-lg border border-[#2a2a2a] bg-[#0b0b0b] text-[11px] text-slate-100 inline-flex items-center justify-between gap-2 hover:border-blue-500/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                         menuClassName="absolute right-0 mt-2 w-56 bg-[#101010] border border-[#2a2a2a] rounded-lg shadow-2xl z-50"
@@ -2017,10 +2100,14 @@ function EditRules({
                   <div className="space-y-1 text-sm text-slate-400">
                     {startMarkers.length > 0 && (
                       <div className="flex items-start gap-2">
-                        <span className="text-slate-500 shrink-0 w-24 text-left">Start markers:</span>
+                        <span className="text-slate-500 shrink-0 w-24 text-left">
+                          Start markers:
+                        </span>
                         <div className="flex flex-col gap-0.5">
                           {startMarkers.map((marker, idx) => (
-                            <code key={idx} className="text-slate-300 break-all">{marker}</code>
+                            <code key={idx} className="text-slate-300 break-all">
+                              {marker}
+                            </code>
                           ))}
                         </div>
                       </div>
@@ -2030,7 +2117,9 @@ function EditRules({
                         <span className="text-slate-500 shrink-0 w-24 text-left">End markers:</span>
                         <div className="flex flex-col gap-0.5">
                           {endMarkers.map((marker, idx) => (
-                            <code key={idx} className="text-slate-300 break-all">{marker}</code>
+                            <code key={idx} className="text-slate-300 break-all">
+                              {marker}
+                            </code>
                           ))}
                         </div>
                       </div>
@@ -2049,7 +2138,9 @@ function EditRules({
                           onClick={() => isTruncatable && toggleRuleExpanded(rule.id)}
                           aria-expanded={isExpanded}
                           className={`group inline-flex w-full items-start gap-2 rounded-md border border-transparent px-0 py-0 text-left transition-colors ${
-                            isTruncatable ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-cyan-500/5' : 'cursor-default'
+                            isTruncatable
+                              ? 'cursor-pointer hover:border-cyan-500/40 hover:bg-cyan-500/5'
+                              : 'cursor-default'
                           }`}
                         >
                           <code className="text-cyan-300 break-all whitespace-pre-wrap text-xs flex-1">
@@ -2070,9 +2161,7 @@ function EditRules({
                     </div>
                     {(rule.useRegex || rule.caseSensitive) && (
                       <div className="flex items-center gap-3 mt-2">
-                        {rule.useRegex && (
-                          <span className="text-xs text-blue-400">Regex</span>
-                        )}
+                        {rule.useRegex && <span className="text-xs text-blue-400">Regex</span>}
                         {rule.caseSensitive && (
                           <span className="text-xs text-purple-400">Case Sensitive</span>
                         )}
@@ -2081,13 +2170,12 @@ function EditRules({
                   </div>
                 </div>
               </div>
-            );
+            )
           })}
         </div>
       )}
-
     </div>
-  );
+  )
 }
 
-export default EditRules;
+export default EditRules

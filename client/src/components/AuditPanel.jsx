@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react';
-import { buildApiUrl } from '../config/apiConfig';
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Secret audit panel for detailed proxy performance analysis.
@@ -9,21 +9,21 @@ import { buildApiUrl } from '../config/apiConfig';
  * it is opened via a hidden triple-click gesture on the header icon.
  */
 function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0 }) {
-  const [errorBuckets, setErrorBuckets] = useState({});
-  const [totalErrors, setTotalErrors] = useState(0);
-  const [hostStats, setHostStats] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [editRuleUsage, setEditRuleUsage] = useState([]);
-  const hasLoadedRef = useRef(false);
+  const [errorBuckets, setErrorBuckets] = useState({})
+  const [totalErrors, setTotalErrors] = useState(0)
+  const [hostStats, setHostStats] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [editRuleUsage, setEditRuleUsage] = useState([])
+  const hasLoadedRef = useRef(false)
 
   // Fetched once when the panel opens, then on every `stats` event of the
   // event stream (already coalesced by the server) or, without the stream,
   // on a fixed interval.
   useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    const POLL_INTERVAL_MS = 5000;
+    let cancelled = false
+    let inFlight = false
+    const POLL_INTERVAL_MS = 5000
 
     /**
      * Fetch latest audit metrics (latency, errors, host stats) and
@@ -34,60 +34,60 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
      * @returns {Promise<void>}
      */
     const fetchAudit = async (isInitial = false) => {
-      if (inFlight || cancelled) return;
+      if (inFlight || cancelled) return
 
-      inFlight = true;
+      inFlight = true
       if (isInitial) {
-        setLoading(true);
+        setLoading(true)
       }
-      setError(null);
+      setError(null)
 
       try {
-        const auditPromise = fetch(buildApiUrl('/api/audit'));
-        const rulesPromise = fetch(buildApiUrl('/api/edit-rules')).catch(() => null);
-        const usagePromise = fetch(buildApiUrl('/api/edit-rules/usage')).catch(() => null);
+        const auditPromise = fetch(buildApiUrl('/api/audit'))
+        const rulesPromise = fetch(buildApiUrl('/api/edit-rules')).catch(() => null)
+        const usagePromise = fetch(buildApiUrl('/api/edit-rules/usage')).catch(() => null)
 
         const [auditResponse, rulesResponse, usageResponse] = await Promise.all([
           auditPromise,
           rulesPromise,
           usagePromise
-        ]);
+        ])
 
         if (!auditResponse || !auditResponse.ok) {
-          throw new Error(`HTTP ${auditResponse ? auditResponse.status : 'AUDIT_FAILED'}`);
+          throw new Error(`HTTP ${auditResponse ? auditResponse.status : 'AUDIT_FAILED'}`)
         }
 
-        const auditData = await auditResponse.json();
+        const auditData = await auditResponse.json()
 
         if (!cancelled) {
           const {
             errorBuckets: buckets = {},
             totalErrors: total = 0,
             hostStats: hosts = []
-          } = auditData || {};
-          setErrorBuckets(buckets || {});
-          setTotalErrors(typeof total === 'number' ? total : 0);
-          setHostStats(Array.isArray(hosts) ? hosts : []);
+          } = auditData || {}
+          setErrorBuckets(buckets || {})
+          setTotalErrors(typeof total === 'number' ? total : 0)
+          setHostStats(Array.isArray(hosts) ? hosts : [])
         }
 
         // Best-effort edit rule usage snapshot; failures here should not
         // affect the core audit metrics UI.
         if (!cancelled && rulesResponse && rulesResponse.ok && usageResponse && usageResponse.ok) {
           try {
-            const rulesJson = await rulesResponse.json();
-            const usageJson = await usageResponse.json();
+            const rulesJson = await rulesResponse.json()
+            const usageJson = await usageResponse.json()
 
-            const rules = Array.isArray(rulesJson?.rules) ? rulesJson.rules : [];
-            const usageMap = usageJson && typeof usageJson === 'object' ? usageJson.usage || {} : {};
+            const rules = Array.isArray(rulesJson?.rules) ? rulesJson.rules : []
+            const usageMap = usageJson && typeof usageJson === 'object' ? usageJson.usage || {} : {}
 
             const snapshot = rules
-              .filter((rule) => rule && rule.id)
-              .map((rule) => {
-                const countRaw = usageMap[rule.id];
+              .filter(rule => rule && rule.id)
+              .map(rule => {
+                const countRaw = usageMap[rule.id]
                 const count =
                   typeof countRaw === 'number' && Number.isFinite(countRaw) && countRaw > 0
                     ? countRaw
-                    : 0;
+                    : 0
                 return {
                   id: rule.id,
                   name: rule.name || '(unnamed rule)',
@@ -96,90 +96,90 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                   url: rule.url || '',
                   target: rule.target || 'both',
                   count
-                };
+                }
               })
               // Sort with rarely-used rules first to highlight obsolete ones.
               .sort((a, b) => {
-                if (a.count !== b.count) return a.count - b.count;
-                return a.name.localeCompare(b.name);
-              });
+                if (a.count !== b.count) return a.count - b.count
+                return a.name.localeCompare(b.name)
+              })
 
-            setEditRuleUsage(snapshot);
+            setEditRuleUsage(snapshot)
           } catch {
-            setEditRuleUsage([]);
+            setEditRuleUsage([])
           }
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err?.message || String(err));
+          setError(err?.message || String(err))
         }
       } finally {
         if (!cancelled && isInitial) {
-          setLoading(false);
+          setLoading(false)
         }
-        inFlight = false;
+        inFlight = false
       }
-    };
+    }
 
-    const isInitial = !hasLoadedRef.current;
-    hasLoadedRef.current = true;
+    const isInitial = !hasLoadedRef.current
+    hasLoadedRef.current = true
 
-    let timer = null;
-    let intervalId = null;
+    let timer = null
+    let intervalId = null
     if (isInitial) {
-      fetchAudit(true);
+      fetchAudit(true)
     } else if (eventsConnected) {
-      timer = setTimeout(() => fetchAudit(false), 300);
+      timer = setTimeout(() => fetchAudit(false), 300)
     }
     if (!eventsConnected) {
       intervalId = setInterval(() => {
-        fetchAudit(false);
-      }, POLL_INTERVAL_MS);
+        fetchAudit(false)
+      }, POLL_INTERVAL_MS)
     }
 
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [eventsConnected, statsVersion]);
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [eventsConnected, statsVersion])
 
   const dashboardRoutesByHandling = useMemo(() => {
     if (!routes || !routes.byHandling || typeof routes.byHandling !== 'object') {
-      return null;
+      return null
     }
 
-    const normalizeList = (key) => {
-      const list = routes.byHandling[key];
-      return Array.isArray(list) ? list : [];
-    };
+    const normalizeList = key => {
+      const list = routes.byHandling[key]
+      return Array.isArray(list) ? list : []
+    }
 
     return {
       processed: normalizeList('processed'),
       redirected: normalizeList('redirected'),
       blocked: normalizeList('blocked'),
       served: normalizeList('served')
-    };
-  }, [routes]);
+    }
+  }, [routes])
 
-  const formatMs = (value) => {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
-    if (value < 1) return `${value.toFixed(2)} ms`;
-    if (value < 100) return `${value.toFixed(1)} ms`;
-    return `${Math.round(value)} ms`;
-  };
+  const formatMs = value => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+    if (value < 1) return `${value.toFixed(2)} ms`
+    if (value < 100) return `${value.toFixed(1)} ms`
+    return `${Math.round(value)} ms`
+  }
 
-  const formatBytes = (bytes) => {
-    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '-';
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)));
-    const value = bytes / Math.pow(k, i);
+  const formatBytes = bytes => {
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '-'
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)))
+    const value = bytes / Math.pow(k, i)
     const fixed =
-      value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
-    return `${fixed} ${sizes[i]}`;
-  };
+      value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)
+    return `${fixed} ${sizes[i]}`
+  }
 
   /**
    * Render a small table listing the top routes for a specific flow/handling bucket.
@@ -204,7 +204,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
           <div className="text-xs font-semibold text-slate-300 mb-1">{title}</div>
           <div>No routes observed for this flow yet.</div>
         </div>
-      );
+      )
     }
 
     return (
@@ -224,7 +224,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
               </tr>
             </thead>
             <tbody>
-              {rows.map((entry) => (
+              {rows.map(entry => (
                 <tr
                   key={`${entry.handling || 'unknown'}:${entry.host || 'unknown'}${entry.path || '/'}`}
                   className="border-b border-[#161616] last:border-0"
@@ -236,12 +236,8 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                     {entry.path || '/'}
                   </td>
                   <td className="py-1 pr-2 text-right">{entry.count ?? 0}</td>
-                  <td className="py-1 pr-2 text-right text-slate-200">
-                    {formatMs(entry.avgMs)}
-                  </td>
-                  <td className="py-1 pr-2 text-right text-slate-200">
-                    {formatMs(entry.maxMs)}
-                  </td>
+                  <td className="py-1 pr-2 text-right text-slate-200">{formatMs(entry.avgMs)}</td>
+                  <td className="py-1 pr-2 text-right text-slate-200">{formatMs(entry.maxMs)}</td>
                   <td className="py-1 pr-2 text-right text-slate-200">
                     {formatBytes(entry.avgBytes)}
                   </td>
@@ -256,8 +252,8 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
           </table>
         </div>
       </div>
-    );
-  };
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm">
@@ -289,9 +285,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
 
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(80vh-44px)]">
-          {loading && (
-            <div className="text-xs text-slate-400">Loading audit metrics…</div>
-          )}
+          {loading && <div className="text-xs text-slate-400">Loading audit metrics…</div>}
           {error && (
             <div className="text-xs text-red-400 flex items-center gap-2">
               <AlertTriangle className="w-3 h-3" />
@@ -306,10 +300,14 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                 <AlertTriangle className="w-3 h-3 text-red-400" />
                 <span>Upstream error categories</span>
               </div>
-              <div className="text-[11px] text-slate-500">source: /api/logs.upstreamErrorCategory</div>
+              <div className="text-[11px] text-slate-500">
+                source: /api/logs.upstreamErrorCategory
+              </div>
             </div>
             {totalErrors === 0 ? (
-              <div className="text-[11px] text-slate-500">No upstream error entries in the current log window.</div>
+              <div className="text-[11px] text-slate-500">
+                No upstream error entries in the current log window.
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
@@ -322,14 +320,14 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                   </thead>
                   <tbody>
                     {Object.entries(errorBuckets).map(([category, count]) => {
-                      const pct = totalErrors > 0 ? (count / totalErrors) * 100 : 0;
+                      const pct = totalErrors > 0 ? (count / totalErrors) * 100 : 0
                       return (
                         <tr key={category} className="border-b border-[#161616] last:border-0">
                           <td className="py-1 pr-2 font-mono text-[11px]">{category}</td>
                           <td className="py-1 pr-2 text-right">{count}</td>
                           <td className="py-1 pr-2 text-right text-slate-400">{pct.toFixed(1)}%</td>
                         </tr>
-                      );
+                      )
                     })}
                   </tbody>
                 </table>
@@ -362,7 +360,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                     </tr>
                   </thead>
                   <tbody>
-                    {editRuleUsage.map((rule) => (
+                    {editRuleUsage.map(rule => (
                       <tr key={rule.id} className="border-b border-[#161616] last:border-0">
                         <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                           {rule.name}
@@ -372,9 +370,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                         <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                           {rule.url || '—'}
                         </td>
-                        <td className="py-1 pr-2 text-right text-slate-200">
-                          {rule.count}
-                        </td>
+                        <td className="py-1 pr-2 text-right text-slate-200">{rule.count}</td>
                         <td className="py-1 pr-2 text-right">
                           <span
                             className={
@@ -408,7 +404,10 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
               </div>
               <div className="grid grid-cols-1 gap-3">
                 {renderFlowTable('Processed (proxy / MITM)', dashboardRoutesByHandling.processed)}
-                {renderFlowTable('Redirected / bypassed upstream', dashboardRoutesByHandling.redirected)}
+                {renderFlowTable(
+                  'Redirected / bypassed upstream',
+                  dashboardRoutesByHandling.redirected
+                )}
                 {renderFlowTable('Blocked by rules', dashboardRoutesByHandling.blocked)}
                 {renderFlowTable('Served from local resources', dashboardRoutesByHandling.served)}
               </div>
@@ -425,7 +424,9 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
               <div className="text-[11px] text-slate-500">limit: 20 hosts, last 1000 logs</div>
             </div>
             {hostStats.length === 0 ? (
-              <div className="text-[11px] text-slate-500">No upstream latency data available yet.</div>
+              <div className="text-[11px] text-slate-500">
+                No upstream latency data available yet.
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
@@ -437,11 +438,15 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
                     </tr>
                   </thead>
                   <tbody>
-                    {hostStats.map((entry) => (
+                    {hostStats.map(entry => (
                       <tr key={entry.host} className="border-b border-[#161616] last:border-0">
-                        <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">{entry.host}</td>
+                        <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
+                          {entry.host}
+                        </td>
                         <td className="py-1 pr-2 text-right">{entry.count}</td>
-                        <td className="py-1 pr-2 text-right text-slate-200">{formatMs(entry.avgDuration)}</td>
+                        <td className="py-1 pr-2 text-right text-slate-200">
+                          {formatMs(entry.avgDuration)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -452,7 +457,7 @@ function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0
         </div>
       </div>
     </div>
-  );
+  )
 }
 
-export default AuditPanel;
+export default AuditPanel

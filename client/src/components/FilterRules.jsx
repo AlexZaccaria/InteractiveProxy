@@ -1,7 +1,16 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { SkipForward, Trash2, PlusCircle, Lightbulb, AlertCircle, Power, CircuitBoard, CornerDownRight } from 'lucide-react';
-import Spinner from './Spinner';
-import { buildApiUrl } from '../config/apiConfig';
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import {
+  SkipForward,
+  Trash2,
+  PlusCircle,
+  Lightbulb,
+  AlertCircle,
+  Power,
+  CircuitBoard,
+  CornerDownRight
+} from 'lucide-react'
+import Spinner from './Spinner'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Filter rules configuration panel (Redirect/Process modes).
@@ -21,265 +30,285 @@ import { buildApiUrl } from '../config/apiConfig';
  * @param {number} [props.rulesVersion] Bumped on every `rules` event; the rule list is refetched.
  * @param {number} [props.logsVersion] Bumped on every `log` event; the suggestions are refetched (debounced).
  */
-function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange, filterRulesEnabled = true, onFilterRulesModeChange, showConfirm, eventsConnected = false, rulesVersion = 0, logsVersion = 0 }) {
-  const bypassMode = filterMode;
-  const [patterns, setPatterns] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeRuleId, setActiveRuleId] = useState(null);
-  const [newPattern, setNewPattern] = useState('');
-  const [newName, setNewName] = useState('');
-  const [error, setError] = useState(null);
-  const [suggestions, setSuggestions] = useState([]);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+function FilterRules({
+  onRulesChanged,
+  filterMode = 'ignore',
+  onFilterModeChange,
+  filterRulesEnabled = true,
+  onFilterRulesModeChange,
+  showConfirm,
+  eventsConnected = false,
+  rulesVersion = 0,
+  logsVersion = 0
+}) {
+  const bypassMode = filterMode
+  const [patterns, setPatterns] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [activeRuleId, setActiveRuleId] = useState(null)
+  const [newPattern, setNewPattern] = useState('')
+  const [newName, setNewName] = useState('')
+  const [error, setError] = useState(null)
+  const [suggestions, setSuggestions] = useState([])
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
 
   const fetchBypassPatterns = useCallback(async () => {
     try {
-      setIsLoading(true);
-      const params = new URLSearchParams();
+      setIsLoading(true)
+      const params = new URLSearchParams()
       if (bypassMode === 'focus' || bypassMode === 'ignore') {
-        params.set('mode', bypassMode);
+        params.set('mode', bypassMode)
       }
-      const response = await fetch(buildApiUrl(`/api/filters?${params.toString()}`));
-      const data = await response.json();
-      setPatterns(Array.isArray(data) ? data : []);
+      const response = await fetch(buildApiUrl(`/api/filters?${params.toString()}`))
+      const data = await response.json()
+      setPatterns(Array.isArray(data) ? data : [])
       if (onRulesChanged) {
-        onRulesChanged();
+        onRulesChanged()
       }
     } catch (err) {
-      console.error('Error fetching filter patterns:', err);
-      setError('Failed to load filter rules.');
+      console.error('Error fetching filter patterns:', err)
+      setError('Failed to load filter rules.')
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  }, [onRulesChanged, bypassMode]);
+  }, [onRulesChanged, bypassMode])
 
   const fetchSuggestions = useCallback(async () => {
     try {
-      setSuggestionsLoading(true);
-      const response = await fetch(buildApiUrl('/api/filters/suggestions'));
-      const data = await response.json();
+      setSuggestionsLoading(true)
+      const response = await fetch(buildApiUrl('/api/filters/suggestions'))
+      const data = await response.json()
       if (Array.isArray(data.suggestions)) {
-        setSuggestions(data.suggestions);
+        setSuggestions(data.suggestions)
       } else {
-        setSuggestions([]);
+        setSuggestions([])
       }
     } catch (err) {
-      console.error('Error fetching filter suggestions:', err);
+      console.error('Error fetching filter suggestions:', err)
     } finally {
-      setSuggestionsLoading(false);
+      setSuggestionsLoading(false)
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    fetchBypassPatterns();
+    fetchBypassPatterns()
     if (bypassMode !== 'focus') {
-      fetchSuggestions();
+      fetchSuggestions()
     } else {
-      setSuggestions([]);
+      setSuggestions([])
     }
-  }, [fetchBypassPatterns, fetchSuggestions, bypassMode]);
+  }, [fetchBypassPatterns, fetchSuggestions, bypassMode])
 
   useEffect(() => {
-    if (bypassMode === 'focus' || eventsConnected) return;
+    if (bypassMode === 'focus' || eventsConnected) return
 
     const interval = setInterval(() => {
-      fetchSuggestions();
-    }, 1000);
+      fetchSuggestions()
+    }, 1000)
 
-    return () => clearInterval(interval);
-  }, [fetchSuggestions, bypassMode, eventsConnected]);
+    return () => clearInterval(interval)
+  }, [fetchSuggestions, bypassMode, eventsConnected])
 
   // Event stream: rule changes made elsewhere (API, other tabs) reload the
   // list; new traffic refreshes the suggestions, debounced.
   useEffect(() => {
-    if (rulesVersion === 0) return;
-    fetchBypassPatterns();
-  }, [rulesVersion, fetchBypassPatterns]);
+    if (rulesVersion === 0) return
+    fetchBypassPatterns()
+  }, [rulesVersion, fetchBypassPatterns])
 
   useEffect(() => {
-    if (!eventsConnected || logsVersion === 0 || bypassMode === 'focus') return undefined;
-    const timer = setTimeout(() => fetchSuggestions(), 500);
-    return () => clearTimeout(timer);
-  }, [logsVersion, eventsConnected, bypassMode, fetchSuggestions]);
+    if (!eventsConnected || logsVersion === 0 || bypassMode === 'focus') return undefined
+    const timer = setTimeout(() => fetchSuggestions(), 500)
+    return () => clearTimeout(timer)
+  }, [logsVersion, eventsConnected, bypassMode, fetchSuggestions])
 
-  const submitPattern = useCallback(async (pattern) => {
-    const trimmed = pattern.trim();
-    if (!trimmed) return false;
+  const submitPattern = useCallback(
+    async pattern => {
+      const trimmed = pattern.trim()
+      if (!trimmed) return false
 
-    try {
-      setIsLoading(true);
-      setError(null);
-      const response = await fetch(buildApiUrl('/api/filters'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: trimmed, 
-          action: 'add',
-          name: newName.trim() || '',
-          enabled: true,
-          mode: bypassMode
+      try {
+        setIsLoading(true)
+        setError(null)
+        const response = await fetch(buildApiUrl('/api/filters'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: trimmed,
+            action: 'add',
+            name: newName.trim() || '',
+            enabled: true,
+            mode: bypassMode
+          })
         })
-      });
 
-      if (!response.ok) {
-        throw new Error('Failed to add filter pattern');
+        if (!response.ok) {
+          throw new Error('Failed to add filter pattern')
+        }
+
+        await fetchBypassPatterns()
+        return true
+      } catch (err) {
+        console.error('Error adding filter pattern:', err)
+        setError('Failed to add filter pattern.')
+        return false
+      } finally {
+        setIsLoading(false)
       }
+    },
+    [fetchBypassPatterns, newName, bypassMode]
+  )
 
-      await fetchBypassPatterns();
-      return true;
-    } catch (err) {
-      console.error('Error adding filter pattern:', err);
-      setError('Failed to add filter pattern.');
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchBypassPatterns, newName, bypassMode]);
+  const addPattern = useCallback(
+    async event => {
+      event.preventDefault()
+      const success = await submitPattern(newPattern)
+      if (success) {
+        setNewPattern('')
+        setNewName('')
+      }
+    },
+    [newPattern, submitPattern]
+  )
 
-  const addPattern = useCallback(async (event) => {
-    event.preventDefault();
-    const success = await submitPattern(newPattern);
-    if (success) {
-      setNewPattern('');
-      setNewName('');
-    }
-  }, [newPattern, submitPattern]);
-
-  const removePattern = async (id) => {
-    let confirmed = true;
+  const removePattern = async id => {
+    let confirmed = true
 
     if (showConfirm) {
       try {
         confirmed = await showConfirm(
           'Remove filter rule',
           'Are you sure you want to remove this filter rule? This may change which requests are redirected or processed.'
-        );
+        )
       } catch (err) {
-        console.error('Error showing confirmation modal:', err);
-        confirmed = false;
+        console.error('Error showing confirmation modal:', err)
+        confirmed = false
       }
     }
 
-    if (!confirmed) return;
+    if (!confirmed) return
 
     try {
-      setIsLoading(true);
-      setActiveRuleId(id);
-      setError(null);
+      setIsLoading(true)
+      setActiveRuleId(id)
+      setError(null)
       const response = await fetch(buildApiUrl('/api/filters'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, action: 'remove' })
-      });
+      })
 
       if (!response.ok) {
-        throw new Error('Failed to remove filter pattern');
+        throw new Error('Failed to remove filter pattern')
       }
 
-      await fetchBypassPatterns();
+      await fetchBypassPatterns()
     } catch (err) {
-      console.error('Error removing filter pattern:', err);
-      setError('Failed to remove filter pattern.');
+      console.error('Error removing filter pattern:', err)
+      setError('Failed to remove filter pattern.')
     } finally {
-      setIsLoading(false);
-      setActiveRuleId(null);
+      setIsLoading(false)
+      setActiveRuleId(null)
     }
-  };
+  }
 
   const togglePattern = async (id, enabled) => {
     try {
-      setIsLoading(true);
-      setActiveRuleId(id);
-      setError(null);
+      setIsLoading(true)
+      setActiveRuleId(id)
+      setError(null)
       const response = await fetch(buildApiUrl('/api/filters'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, enabled: !enabled, action: 'update' })
-      });
+      })
 
       if (!response.ok) {
-        throw new Error('Failed to toggle filter pattern');
+        throw new Error('Failed to toggle filter pattern')
       }
 
-      await fetchBypassPatterns();
+      await fetchBypassPatterns()
     } catch (err) {
-      console.error('Error toggling filter pattern:', err);
-      setError('Failed to toggle filter pattern.');
+      console.error('Error toggling filter pattern:', err)
+      setError('Failed to toggle filter pattern.')
     } finally {
-      setIsLoading(false);
-      setActiveRuleId(null);
+      setIsLoading(false)
+      setActiveRuleId(null)
     }
-  };
+  }
 
-  const generateNameFromPattern = (pattern) => {
+  const generateNameFromPattern = pattern => {
     // Extract domain from pattern
     // Examples: "facebook.com" -> "Facebook.com", "api.example.com" -> "Example.com"
     try {
       // Remove protocol if present
-      let domain = pattern.replace(/^https?:\/\//, '');
+      let domain = pattern.replace(/^https?:\/\//, '')
       // Remove path if present
-      domain = domain.split('/')[0];
+      domain = domain.split('/')[0]
       // Remove port if present
-      domain = domain.split(':')[0];
-      
+      domain = domain.split(':')[0]
+
       // Split by dots and get the main domain (last 2 parts for .com, .org, etc.)
-      const parts = domain.split('.');
+      const parts = domain.split('.')
       if (parts.length >= 2) {
         // Get last 2 parts (e.g., "facebook.com" from "api.facebook.com")
-        const mainDomain = parts.slice(-2).join('.');
+        const mainDomain = parts.slice(-2).join('.')
         // Capitalize first letter
-        return mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1);
+        return mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1)
       }
-      
+
       // Fallback: capitalize first letter of the whole thing
-      return domain.charAt(0).toUpperCase() + domain.slice(1);
+      return domain.charAt(0).toUpperCase() + domain.slice(1)
     } catch (e) {
-      return pattern;
+      return pattern
     }
-  };
+  }
 
-  const addSuggestion = useCallback(async (pattern) => {
-    const generatedName = generateNameFromPattern(pattern);
-    try {
-      setIsLoading(true);
-      setError(null);
-      const response = await fetch(buildApiUrl('/api/filters'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: pattern, 
-          action: 'add',
-          name: generatedName,
-          enabled: true,
-          mode: bypassMode
+  const addSuggestion = useCallback(
+    async pattern => {
+      const generatedName = generateNameFromPattern(pattern)
+      try {
+        setIsLoading(true)
+        setError(null)
+        const response = await fetch(buildApiUrl('/api/filters'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: pattern,
+            action: 'add',
+            name: generatedName,
+            enabled: true,
+            mode: bypassMode
+          })
         })
-      });
 
-      if (!response.ok) {
-        throw new Error('Failed to add filter suggestion');
+        if (!response.ok) {
+          throw new Error('Failed to add filter suggestion')
+        }
+
+        await fetchBypassPatterns()
+      } catch (err) {
+        console.error('Error adding filter suggestion:', err)
+        setError('Failed to add filter suggestion.')
+      } finally {
+        setIsLoading(false)
       }
-
-      await fetchBypassPatterns();
-    } catch (err) {
-      console.error('Error adding filter suggestion:', err);
-      setError('Failed to add filter suggestion.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchBypassPatterns, bypassMode]);
+    },
+    [fetchBypassPatterns, bypassMode]
+  )
 
   const suggestionRows = useMemo(() => {
     // Only show suggestions that are not already covered by an existing rule
-    const filteredSuggestions = suggestions.filter((suggestion) => {
-      const pattern = suggestion.pattern || '';
-      return !patterns.some((existing) => existing.url.toLowerCase() === pattern.toLowerCase());
-    });
+    const filteredSuggestions = suggestions.filter(suggestion => {
+      const pattern = suggestion.pattern || ''
+      return !patterns.some(existing => existing.url.toLowerCase() === pattern.toLowerCase())
+    })
 
-    return filteredSuggestions.map((suggestion) => {
-      const { pattern, count, samplePaths } = suggestion;
-      const pathSummary = samplePaths && samplePaths.length
-        ? samplePaths.map(({ path, count: pathCount }) => `${path} (${pathCount})`).join(', ')
-        : '—';
+    return filteredSuggestions.map(suggestion => {
+      const { pattern, count, samplePaths } = suggestion
+      const pathSummary =
+        samplePaths && samplePaths.length
+          ? samplePaths.map(({ path, count: pathCount }) => `${path} (${pathCount})`).join(', ')
+          : '—'
 
       return (
         <div
@@ -323,9 +352,9 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
             )}
           </button>
         </div>
-      );
-    });
-  }, [suggestions, patterns, addSuggestion, isLoading, bypassMode]);
+      )
+    })
+  }, [suggestions, patterns, addSuggestion, isLoading, bypassMode])
 
   return (
     <div className="space-y-4">
@@ -335,7 +364,9 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
             <div className="relative group/filter-rules">
               <button
                 type="button"
-                onClick={() => onFilterRulesModeChange && onFilterRulesModeChange(!filterRulesEnabled)}
+                onClick={() =>
+                  onFilterRulesModeChange && onFilterRulesModeChange(!filterRulesEnabled)
+                }
                 className={`inline-flex items-center gap-1.5 px-3 h-8 text-xs font-medium rounded-lg border transition-colors ${
                   filterRulesEnabled
                     ? bypassMode === 'focus'
@@ -350,7 +381,9 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
                 ) : (
                   <CornerDownRight className="w-4 h-4" />
                 )}
-                <span className="text-xs font-medium tracking-wide">{filterRulesEnabled ? 'ON' : 'OFF'}</span>
+                <span className="text-xs font-medium tracking-wide">
+                  {filterRulesEnabled ? 'ON' : 'OFF'}
+                </span>
               </button>
               <div
                 className="invisible group-hover/filter-rules:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
@@ -434,29 +467,34 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
             <p>
               {bypassMode === 'focus' ? (
                 <>
-                  In <span className="font-semibold">Process</span> mode, only matching requests pass through the full
-                  proxy pipeline (logging, decoding, edit rules); all other traffic is forwarded directly.{' '}
-                  In <span className="font-semibold">Redirect</span> mode, requests matching these patterns are
-                  completely bypassed by the proxy logic and forwarded directly to the destination (no MITM, no logging,
-                  no edits).
+                  In <span className="font-semibold">Process</span> mode, only matching requests
+                  pass through the full proxy pipeline (logging, decoding, edit rules); all other
+                  traffic is forwarded directly. In <span className="font-semibold">Redirect</span>{' '}
+                  mode, requests matching these patterns are completely bypassed by the proxy logic
+                  and forwarded directly to the destination (no MITM, no logging, no edits).
                 </>
               ) : (
                 <>
-                  In <span className="font-semibold">Redirect</span> mode, requests matching these patterns are
-                  completely bypassed by the proxy logic and forwarded directly to the destination (no MITM, no logging,
-                  no edits).{' '}
-                  In <span className="font-semibold">Process</span> mode, only matching requests pass through the full
-                  proxy pipeline (logging, decoding, edit rules); all other traffic is forwarded directly.
+                  In <span className="font-semibold">Redirect</span> mode, requests matching these
+                  patterns are completely bypassed by the proxy logic and forwarded directly to the
+                  destination (no MITM, no logging, no edits). In{' '}
+                  <span className="font-semibold">Process</span> mode, only matching requests pass
+                  through the full proxy pipeline (logging, decoding, edit rules); all other traffic
+                  is forwarded directly.
                 </>
               )}{' '}
-              Matching is case-sensitive and applies to both the raw request path and the resolved absolute URL.
-              Suggestions are generated from recent traffic that is not yet covered by an active rule.
+              Matching is case-sensitive and applies to both the raw request path and the resolved
+              absolute URL. Suggestions are generated from recent traffic that is not yet covered by
+              an active rule.
             </p>
           </div>
         </div>
       </div>
 
-      <form onSubmit={addPattern} className="bg-[#1a1a1a] rounded-lg p-5 border border-[#2a2a2a] space-y-4">
+      <form
+        onSubmit={addPattern}
+        className="bg-[#1a1a1a] rounded-lg p-5 border border-[#2a2a2a] space-y-4"
+      >
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-semibold text-white">Add filter rule</p>
@@ -474,7 +512,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
             <input
               type="text"
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={e => setNewName(e.target.value)}
               placeholder="e.g. Analytics, CDN, Third-party scripts"
               className="w-full px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             />
@@ -488,7 +526,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
               <input
                 type="text"
                 value={newPattern}
-                onChange={(e) => setNewPattern(e.target.value)}
+                onChange={e => setNewPattern(e.target.value)}
                 placeholder="Enter partial URL (e.g. /metrics, anthropic.com/api)"
                 className="flex-1 px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
@@ -532,7 +570,9 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
               <Lightbulb className="w-4 h-4 text-amber-300" />
               Suggested rules
             </h4>
-            <span className="text-xs text-slate-500">Top {suggestions.length} frequent domains</span>
+            <span className="text-xs text-slate-500">
+              Top {suggestions.length} frequent domains
+            </span>
           </div>
           {suggestionsLoading && suggestions.length === 0 ? (
             <p className="text-sm text-slate-400 flex items-center gap-2">
@@ -540,11 +580,11 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
               Loading suggestions...
             </p>
           ) : suggestions.length === 0 ? (
-            <p className="text-sm text-slate-500">No suggestions available yet. Generate traffic to see recommendations.</p>
+            <p className="text-sm text-slate-500">
+              No suggestions available yet. Generate traffic to see recommendations.
+            </p>
           ) : (
-            <div className="space-y-2">
-              {suggestionRows}
-            </div>
+            <div className="space-y-2">{suggestionRows}</div>
           )}
         </div>
       )}
@@ -559,7 +599,9 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
           <div className="text-center py-8">
             <SkipForward className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <p className="text-sm text-slate-400">
-              {bypassMode === 'focus' ? 'No Process rules configured.' : 'No Redirect rules configured.'}
+              {bypassMode === 'focus'
+                ? 'No Process rules configured.'
+                : 'No Redirect rules configured.'}
             </p>
             <p className="text-xs text-slate-500 mt-2">
               {bypassMode === 'focus'
@@ -569,7 +611,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
           </div>
         ) : (
           <div className="space-y-2">
-            {patterns.map((rule) => (
+            {patterns.map(rule => (
               <div
                 key={rule.id}
                 className={`flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg border transition-colors ${
@@ -581,12 +623,15 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
                 }`}
               >
                 <div className="flex-1 min-w-0 mr-4">
-                  {rule.name && (
-                    <p className="text-xs text-slate-500 mb-1">{rule.name}</p>
-                  )}
-                  <p className={`text-sm font-mono truncate ${
-                    rule.enabled ? 'text-slate-300' : 'text-slate-500'
-                  }`} title={rule.url}>{rule.url}</p>
+                  {rule.name && <p className="text-xs text-slate-500 mb-1">{rule.name}</p>}
+                  <p
+                    className={`text-sm font-mono truncate ${
+                      rule.enabled ? 'text-slate-300' : 'text-slate-500'
+                    }`}
+                    title={rule.url}
+                  >
+                    {rule.url}
+                  </p>
                 </div>
                 <div className="flex items-center space-x-2 shrink-0">
                   <button
@@ -626,7 +671,7 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
         )}
       </div>
     </div>
-  );
+  )
 }
 
-export default FilterRules;
+export default FilterRules

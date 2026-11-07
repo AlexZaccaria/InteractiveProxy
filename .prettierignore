@@ -1,7 +1,5 @@
-# The client keeps its own style until the Vite migration (Phase 3)
-client/
-
 # Generated or third-party
+client/dist/
 node_modules/
 package-lock.json
 server/storage/

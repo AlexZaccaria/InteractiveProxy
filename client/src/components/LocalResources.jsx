@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { 
-  Trash2, 
-  FileText, 
-  Image, 
+import React, { useState } from 'react'
+import {
+  Trash2,
+  FileText,
+  Image,
   File,
   HardDrive,
   Link as LinkIcon,
@@ -11,10 +11,10 @@ import {
   CheckCircle,
   AlertCircle,
   Power
-} from 'lucide-react';
-import axios from 'axios';
-import Spinner from './Spinner';
-import { buildApiUrl } from '../config/apiConfig';
+} from 'lucide-react'
+import axios from 'axios'
+import Spinner from './Spinner'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Panel for listing and managing local resource overrides.
@@ -31,146 +31,146 @@ import { buildApiUrl } from '../config/apiConfig';
  * @param {(enabled: boolean) => void} [props.onModeChange] Called when the global local-resources toggle is changed.
  */
 function LocalResources({ resources, onDelete, onRefresh, enabled = true, onModeChange }) {
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [mode, setMode] = useState('file'); // 'file' or 'text'
-  const [url, setUrl] = useState('');
-  const [file, setFile] = useState(null);
-  const [textContent, setTextContent] = useState('');
-  const [contentType, setContentType] = useState('text/plain');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [deletingUrl, setDeletingUrl] = useState(null);
-  const [togglingUrl, setTogglingUrl] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [mode, setMode] = useState('file') // 'file' or 'text'
+  const [url, setUrl] = useState('')
+  const [file, setFile] = useState(null)
+  const [textContent, setTextContent] = useState('')
+  const [contentType, setContentType] = useState('text/plain')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [deletingUrl, setDeletingUrl] = useState(null)
+  const [togglingUrl, setTogglingUrl] = useState(null)
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
+  const handleFileChange = e => {
+    const selectedFile = e.target.files[0]
     if (selectedFile) {
-      setFile(selectedFile);
+      setFile(selectedFile)
       if (!contentType || contentType === 'text/plain') {
-        setContentType(selectedFile.type || 'application/octet-stream');
+        setContentType(selectedFile.type || 'application/octet-stream')
       }
     }
-  };
+  }
 
-  const handleDelete = async (resourceUrl) => {
-    if (!onDelete) return;
+  const handleDelete = async resourceUrl => {
+    if (!onDelete) return
     try {
-      setDeletingUrl(resourceUrl);
-      await onDelete(resourceUrl);
+      setDeletingUrl(resourceUrl)
+      await onDelete(resourceUrl)
     } catch (err) {
-      console.error('Error deleting local resource:', err);
+      console.error('Error deleting local resource:', err)
     } finally {
-      setDeletingUrl(null);
+      setDeletingUrl(null)
     }
-  };
+  }
 
-  const handleToggleEnabled = async (resource) => {
-    if (!resource || !resource.url) return;
+  const handleToggleEnabled = async resource => {
+    if (!resource || !resource.url) return
     try {
-      setTogglingUrl(resource.url);
-      const nextEnabled = resource.enabled === false ? true : false;
+      setTogglingUrl(resource.url)
+      const nextEnabled = resource.enabled === false ? true : false
       await axios.post(buildApiUrl('/api/resources/toggle'), {
         url: resource.url,
         enabled: nextEnabled
-      });
-      if (onRefresh) onRefresh();
+      })
+      if (onRefresh) onRefresh()
     } catch (err) {
-      console.error('Error toggling local resource:', err);
+      console.error('Error toggling local resource:', err)
     } finally {
-      setTogglingUrl(null);
+      setTogglingUrl(null)
     }
-  };
+  }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
+  const handleSubmit = async e => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
 
     if (!url) {
-      setError('URL is required');
-      return;
+      setError('URL is required')
+      return
     }
 
     if (mode === 'file' && !file) {
-      setError('Select a file to upload');
-      return;
+      setError('Select a file to upload')
+      return
     }
 
     if (mode === 'text' && !textContent) {
-      setError('Please enter text content');
-      return;
+      setError('Please enter text content')
+      return
     }
 
-    setLoading(true);
+    setLoading(true)
 
     try {
-      const formData = new FormData();
-      formData.append('url', url);
-      formData.append('contentType', contentType);
+      const formData = new FormData()
+      formData.append('url', url)
+      formData.append('contentType', contentType)
 
       if (mode === 'file') {
-        formData.append('file', file);
+        formData.append('file', file)
       } else {
-        formData.append('content', textContent);
+        formData.append('content', textContent)
       }
 
       await axios.post(buildApiUrl('/api/resources'), formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
-      });
+      })
 
-      setSuccess('Resource added successfully!');
-      
+      setSuccess('Resource added successfully!')
+
       setTimeout(() => {
-        setUrl('');
-        setFile(null);
-        setTextContent('');
-        setContentType('text/plain');
-        setSuccess('');
-        setShowAddForm(false);
-        if (onRefresh) onRefresh();
-      }, 1500);
+        setUrl('')
+        setFile(null)
+        setTextContent('')
+        setContentType('text/plain')
+        setSuccess('')
+        setShowAddForm(false)
+        if (onRefresh) onRefresh()
+      }, 1500)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error uploading resource');
+      setError(err.response?.data?.error || 'Error uploading resource')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
-  const formatBytes = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-  };
+  }
+  const formatBytes = bytes => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+  }
 
-  const getFileIcon = (contentType) => {
+  const getFileIcon = contentType => {
     if (contentType.startsWith('image/')) {
-      return <Image className="w-5 h-5 text-purple-400" />;
+      return <Image className="w-5 h-5 text-purple-400" />
     } else if (contentType.includes('json') || contentType.includes('javascript')) {
-      return <FileText className="w-5 h-5 text-blue-400" />;
+      return <FileText className="w-5 h-5 text-blue-400" />
     } else if (contentType.includes('text')) {
-      return <FileText className="w-5 h-5 text-green-400" />;
+      return <FileText className="w-5 h-5 text-green-400" />
     }
-    return <File className="w-5 h-5 text-slate-400" />;
-  };
+    return <File className="w-5 h-5 text-slate-400" />
+  }
 
-  const getContentTypeBadge = (contentType) => {
+  const getContentTypeBadge = contentType => {
     if (contentType.startsWith('image/')) {
-      return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
+      return 'bg-purple-500/20 text-purple-400 border-purple-500/30'
     } else if (contentType.includes('json')) {
-      return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+      return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
     } else if (contentType.includes('javascript')) {
-      return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+      return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
     } else if (contentType.includes('html')) {
-      return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+      return 'bg-orange-500/20 text-orange-400 border-orange-500/30'
     } else if (contentType.includes('text')) {
-      return 'bg-green-500/20 text-green-400 border-green-500/30';
+      return 'bg-green-500/20 text-green-400 border-green-500/30'
     }
-    return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
-  };
+    return 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+  }
 
   return (
     <div className="space-y-4">
@@ -227,9 +227,10 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
           <div className="text-sm text-slate-300">
             <p className="font-medium text-emerald-400 mb-1">How it works</p>
             <p>
-              Local resources intercept matching URLs and serve your custom content instead of forwarding the request.
-              When a request URL contains your specified pattern, the proxy returns your local file or text content immediately.
-              This is useful for testing, mocking APIs, or replacing remote assets with local versions.
+              Local resources intercept matching URLs and serve your custom content instead of
+              forwarding the request. When a request URL contains your specified pattern, the proxy
+              returns your local file or text content immediately. This is useful for testing,
+              mocking APIs, or replacing remote assets with local versions.
             </p>
           </div>
         </div>
@@ -281,7 +282,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
               <input
                 type="text"
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={e => setUrl(e.target.value)}
                 placeholder="e.g. /api/data.json or https://example.com/api/data.json"
                 className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
                 required
@@ -295,7 +296,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
               </label>
               <select
                 value={contentType}
-                onChange={(e) => setContentType(e.target.value)}
+                onChange={e => setContentType(e.target.value)}
                 className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               >
                 <option value="text/plain">text/plain</option>
@@ -349,15 +350,13 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                 </label>
                 <textarea
                   value={textContent}
-                  onChange={(e) => setTextContent(e.target.value)}
+                  onChange={e => setTextContent(e.target.value)}
                   placeholder="Enter text content, JSON, HTML, etc..."
                   rows={8}
                   className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono resize-none"
                   required
                 />
-                <p className="mt-2 text-xs text-slate-400">
-                  {textContent.length} characters
-                </p>
+                <p className="mt-2 text-xs text-slate-400">{textContent.length} characters</p>
               </div>
             )}
 
@@ -418,8 +417,8 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {resources.map((resource) => {
-            const isEnabled = resource.enabled !== false;
+          {resources.map(resource => {
+            const isEnabled = resource.enabled !== false
             return (
               <div
                 key={resource.url}
@@ -433,26 +432,26 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2 mb-2">
                       {getFileIcon(resource.contentType)}
-                      <span className={`px-2 py-1 rounded text-xs font-medium border ${getContentTypeBadge(resource.contentType)}`}>
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-medium border ${getContentTypeBadge(resource.contentType)}`}
+                      >
                         {resource.contentType}
                       </span>
                       <span className="px-2 py-1 rounded text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30">
                         {formatBytes(resource.size)}
                       </span>
                     </div>
-                    
+
                     <div className="flex items-start space-x-2 mb-2">
                       <LinkIcon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                      <p className="text-white font-mono text-sm break-all">
-                        {resource.url}
-                      </p>
+                      <p className="text-white font-mono text-sm break-all">{resource.url}</p>
                     </div>
-                    
+
                     <p className="text-slate-400 text-xs mb-1">
                       File: {resource.originalName || resource.filename}
                     </p>
                   </div>
-                  
+
                   <div className="ml-4 flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => handleToggleEnabled(resource)}
@@ -486,12 +485,12 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
                   </div>
                 </div>
               </div>
-            );
+            )
           })}
         </div>
       )}
     </div>
-  );
+  )
 }
 
-export default LocalResources;
+export default LocalResources

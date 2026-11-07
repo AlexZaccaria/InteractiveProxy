@@ -1,4 +1,4 @@
-import React from 'react';
+import React from 'react'
 
 function Spinner({ size = 'md', className = '' }) {
   const sizeMap = {
@@ -6,17 +6,15 @@ function Spinner({ size = 'md', className = '' }) {
     md: { wrapper: 'w-10 h-10', ring: 'border-[2px]' },
     lg: { wrapper: 'w-14 h-14', ring: 'border-[3px]' },
     xl: { wrapper: 'w-20 h-20', ring: 'border-[3px]' }
-  };
+  }
 
-  const sizes = sizeMap[size] || sizeMap.md;
+  const sizes = sizeMap[size] || sizeMap.md
 
   return (
     <div className={`flex items-center justify-center ${className}`}>
       <div className={`relative ${sizes.wrapper}`}>
         {/* Base ring */}
-        <div
-          className={`absolute inset-0 rounded-full ${sizes.ring} border-slate-800/80`}
-        />
+        <div className={`absolute inset-0 rounded-full ${sizes.ring} border-slate-800/80`} />
 
         {/* Animated arc */}
         <div
@@ -33,7 +31,7 @@ function Spinner({ size = 'md', className = '' }) {
         <div className="absolute inset-[6px] rounded-full bg-[#050509] shadow-[0_0_20px_rgba(59,130,246,0.4)]" />
       </div>
     </div>
-  );
+  )
 }
 
-export default Spinner;
+export default Spinner

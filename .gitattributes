@@ -8,6 +8,8 @@
 *.cjs text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
 .prettierrc text eol=lf
 .prettierignore text eol=lf
 *.json text eol=lf
@@ -25,7 +27,7 @@
 *.jpeg binary
 *.gif binary
 *.ico binary
-*.svg text
+*.svg text eol=lf
 
 # Fonts
 *.woff binary

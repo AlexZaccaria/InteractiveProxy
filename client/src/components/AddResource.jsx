@@ -1,15 +1,8 @@
-import React, { useState } from 'react';
-import { 
-  Upload, 
-  FileText, 
-  Link as LinkIcon,
-  CheckCircle,
-  AlertCircle,
-  Code
-} from 'lucide-react';
-import axios from 'axios';
-import Spinner from './Spinner';
-import { buildApiUrl } from '../config/apiConfig';
+import React, { useState } from 'react'
+import { Upload, FileText, Link as LinkIcon, CheckCircle, AlertCircle, Code } from 'lucide-react'
+import axios from 'axios'
+import Spinner from './Spinner'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Form for creating a new local resource override.
@@ -21,82 +14,82 @@ import { buildApiUrl } from '../config/apiConfig';
  * @param {() => void} props.onSuccess Callback invoked after a resource is successfully created.
  */
 function AddResource({ onSuccess }) {
-  const [mode, setMode] = useState('file'); // 'file' or 'text'
-  const [url, setUrl] = useState('');
-  const [file, setFile] = useState(null);
-  const [textContent, setTextContent] = useState('');
-  const [contentType, setContentType] = useState('text/plain');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [mode, setMode] = useState('file') // 'file' or 'text'
+  const [url, setUrl] = useState('')
+  const [file, setFile] = useState(null)
+  const [textContent, setTextContent] = useState('')
+  const [contentType, setContentType] = useState('text/plain')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
+  const handleFileChange = e => {
+    const selectedFile = e.target.files[0]
     if (selectedFile) {
-      setFile(selectedFile);
+      setFile(selectedFile)
       // Auto-detect content type
       if (!contentType || contentType === 'text/plain') {
-        setContentType(selectedFile.type || 'application/octet-stream');
+        setContentType(selectedFile.type || 'application/octet-stream')
       }
     }
-  };
+  }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
+  const handleSubmit = async e => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
 
     if (!url) {
-      setError('L\'URL è obbligatorio');
-      return;
+      setError("L'URL è obbligatorio")
+      return
     }
 
     if (mode === 'file' && !file) {
-      setError('Select a file to upload');
-      return;
+      setError('Select a file to upload')
+      return
     }
 
     if (mode === 'text' && !textContent) {
-      setError('Inserisci il contenuto testuale');
-      return;
+      setError('Inserisci il contenuto testuale')
+      return
     }
 
-    setLoading(true);
+    setLoading(true)
 
     try {
-      const formData = new FormData();
-      formData.append('url', url);
-      formData.append('contentType', contentType);
+      const formData = new FormData()
+      formData.append('url', url)
+      formData.append('contentType', contentType)
 
       if (mode === 'file') {
-        formData.append('file', file);
+        formData.append('file', file)
       } else {
-        formData.append('content', textContent);
+        formData.append('content', textContent)
       }
 
       await axios.post(buildApiUrl('/api/resources'), formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
-      });
+      })
 
-      setSuccess('Resource added successfully!');
-      
+      setSuccess('Resource added successfully!')
+
       // Reset form
       setTimeout(() => {
-        setUrl('');
-        setFile(null);
-        setTextContent('');
-        setContentType('text/plain');
-        setSuccess('');
-        onSuccess();
-      }, 1500);
+        setUrl('')
+        setFile(null)
+        setTextContent('')
+        setContentType('text/plain')
+        setSuccess('')
+        onSuccess()
+      }, 1500)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error uploading resource');
+      setError(err.response?.data?.error || 'Error uploading resource')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -127,7 +120,7 @@ function AddResource({ onSuccess }) {
               <span>Upload File</span>
             </div>
           </button>
-          
+
           <button
             type="button"
             onClick={() => setMode('text')}
@@ -156,24 +149,23 @@ function AddResource({ onSuccess }) {
             <input
               type="text"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={e => setUrl(e.target.value)}
               placeholder="es: /api/data.json o https://example.com/api/data.json"
               className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               required
             />
             <p className="mt-2 text-xs text-slate-400">
-              Enter the full or partial URL you want to intercept. Requests containing this URL will serve the local resource.
+              Enter the full or partial URL you want to intercept. Requests containing this URL will
+              serve the local resource.
             </p>
           </div>
 
           {/* Content Type */}
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Content Type
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Content Type</label>
             <select
               value={contentType}
-              onChange={(e) => setContentType(e.target.value)}
+              onChange={e => setContentType(e.target.value)}
               className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             >
               <option value="text/plain">text/plain</option>
@@ -233,15 +225,13 @@ function AddResource({ onSuccess }) {
               </label>
               <textarea
                 value={textContent}
-                onChange={(e) => setTextContent(e.target.value)}
+                onChange={e => setTextContent(e.target.value)}
                 placeholder="Inserisci il contenuto testuale, JSON, HTML, ecc..."
                 rows={12}
                 className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono resize-none"
                 required
               />
-              <p className="mt-2 text-xs text-slate-400">
-                {textContent.length} caratteri
-              </p>
+              <p className="mt-2 text-xs text-slate-400">{textContent.length} caratteri</p>
             </div>
           )}
 
@@ -296,7 +286,7 @@ function AddResource({ onSuccess }) {
         </ul>
       </div>
     </div>
-  );
+  )
 }
 
-export default AddResource;
+export default AddResource

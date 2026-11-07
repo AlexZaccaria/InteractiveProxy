@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { buildApiUrl } from '../config/apiConfig';
+import { useEffect, useRef, useState } from 'react'
+import { buildApiUrl } from '../config/apiConfig'
 
-const EVENT_NAMES = ['hello', 'log', 'stats', 'config', 'rules', 'logs-cleared'];
+const EVENT_NAMES = ['hello', 'log', 'stats', 'config', 'rules', 'logs-cleared']
 
 /**
  * @typedef {(data: any, event: MessageEvent) => void} ProxyEventHandler
@@ -22,47 +22,47 @@ const EVENT_NAMES = ['hello', 'log', 'stats', 'config', 'rules', 'logs-cleared']
  *   when it is false (no stream, or a connection currently being retried).
  */
 export function useProxyEvents(handlers, { enabled = true } = {}) {
-  const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
-  const [connected, setConnected] = useState(false);
+  const handlersRef = useRef(handlers)
+  handlersRef.current = handlers
+  const [connected, setConnected] = useState(false)
 
   useEffect(() => {
     if (!enabled || typeof EventSource === 'undefined') {
-      setConnected(false);
-      return undefined;
+      setConnected(false)
+      return undefined
     }
 
-    const source = new EventSource(buildApiUrl('/api/events'));
+    const source = new EventSource(buildApiUrl('/api/events'))
 
     /** @type {Array<[string, EventListener]>} */
-    const listeners = EVENT_NAMES.map((name) => {
+    const listeners = EVENT_NAMES.map(name => {
       /** @type {EventListener} */
-      const listener = (event) => {
-        const message = /** @type {MessageEvent} */ (event);
-        let data = null;
+      const listener = event => {
+        const message = /** @type {MessageEvent} */ (event)
+        let data = null
         try {
-          data = message.data ? JSON.parse(message.data) : null;
+          data = message.data ? JSON.parse(message.data) : null
         } catch {
-          data = null;
+          data = null
         }
-        const handler = handlersRef.current ? handlersRef.current[name] : undefined;
+        const handler = handlersRef.current ? handlersRef.current[name] : undefined
         if (typeof handler === 'function') {
-          handler(data, message);
+          handler(data, message)
         }
-      };
-      source.addEventListener(name, listener);
-      return [name, listener];
-    });
+      }
+      source.addEventListener(name, listener)
+      return [name, listener]
+    })
 
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+    source.onopen = () => setConnected(true)
+    source.onerror = () => setConnected(false)
 
     return () => {
-      listeners.forEach(([name, listener]) => source.removeEventListener(name, listener));
-      source.close();
-      setConnected(false);
-    };
-  }, [enabled]);
+      listeners.forEach(([name, listener]) => source.removeEventListener(name, listener))
+      source.close()
+      setConnected(false)
+    }
+  }, [enabled])
 
-  return connected;
+  return connected
 }

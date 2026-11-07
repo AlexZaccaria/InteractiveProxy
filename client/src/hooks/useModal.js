@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react'
 
 /**
  * @typedef {Object} ModalState
@@ -24,7 +24,7 @@ const CLOSED_STATE = {
   inputPlaceholder: '',
   examples: [],
   onConfirm: null
-};
+}
 
 /**
  * State and helpers of the application modal: a confirm dialog, a prompt
@@ -32,11 +32,11 @@ const CLOSED_STATE = {
  * answer when the modal closes.
  */
 export function useModal() {
-  const [modalState, setModalState] = useState(CLOSED_STATE);
+  const [modalState, setModalState] = useState(CLOSED_STATE)
 
   const closeModal = useCallback(() => {
-    setModalState(prev => ({ ...prev, isOpen: false }));
-  }, []);
+    setModalState(prev => ({ ...prev, isOpen: false }))
+  }, [])
 
   const showConfirm = useCallback(
     /**
@@ -46,7 +46,7 @@ export function useModal() {
      * @returns {Promise<boolean>}
      */
     (title, message, onConfirm) => {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         setModalState({
           isOpen: true,
           title,
@@ -56,15 +56,15 @@ export function useModal() {
           inputValue: '',
           inputPlaceholder: '',
           examples: [],
-          onConfirm: (result) => {
-            resolve(result);
-            if (onConfirm) onConfirm(result);
+          onConfirm: result => {
+            resolve(result)
+            if (onConfirm) onConfirm(result)
           }
-        });
-      });
+        })
+      })
     },
     []
-  );
+  )
 
   const showPrompt = useCallback(
     /**
@@ -76,7 +76,7 @@ export function useModal() {
      * @returns {Promise<string | null>}
      */
     (title, message, defaultValue = '', placeholder = '', examples = []) => {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         setModalState({
           isOpen: true,
           title,
@@ -86,14 +86,14 @@ export function useModal() {
           inputValue: defaultValue,
           inputPlaceholder: placeholder,
           examples,
-          onConfirm: (result) => {
-            resolve(result);
+          onConfirm: result => {
+            resolve(result)
           }
-        });
-      });
+        })
+      })
     },
     []
-  );
+  )
 
   const showAlert = useCallback(
     /**
@@ -103,7 +103,7 @@ export function useModal() {
      * @returns {Promise<boolean>}
      */
     (title, message, type = 'info') => {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         setModalState({
           isOpen: true,
           title,
@@ -114,13 +114,13 @@ export function useModal() {
           inputPlaceholder: '',
           examples: [],
           onConfirm: () => {
-            resolve(true);
+            resolve(true)
           }
-        });
-      });
+        })
+      })
     },
     []
-  );
+  )
 
   return {
     modalState,
@@ -128,5 +128,5 @@ export function useModal() {
     showConfirm,
     showPrompt,
     showAlert
-  };
+  }
 }

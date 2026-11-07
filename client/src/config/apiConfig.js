@@ -16,37 +16,38 @@
 /* global __PROXY_PORTS__ */
 
 /** @type {ProxyPorts} */
-const ports = typeof __PROXY_PORTS__ !== 'undefined'
-  ? __PROXY_PORTS__
-  : { uiPort: 3050, backendPort: 8050, backendHost: 'localhost', backendProtocol: 'http' };
+const ports =
+  typeof __PROXY_PORTS__ !== 'undefined'
+    ? __PROXY_PORTS__
+    : { uiPort: 3050, backendPort: 8050, backendHost: 'localhost', backendProtocol: 'http' }
 
 /**
  * Port where the UI development server runs.
  *
  * @type {number}
  */
-export const UI_PORT = ports.uiPort;
+export const UI_PORT = ports.uiPort
 
 /**
  * Port where the proxy/backend HTTP server listens.
  *
  * @type {number}
  */
-export const BACKEND_PORT = ports.backendPort;
+export const BACKEND_PORT = ports.backendPort
 
 /**
  * Hostname for the backend server.
  *
  * @type {string}
  */
-export const BACKEND_HOST = ports.backendHost;
+export const BACKEND_HOST = ports.backendHost
 
 /**
  * Protocol used to talk to the backend server.
  *
  * @type {'http' | 'https'}
  */
-export const BACKEND_PROTOCOL = ports.backendProtocol;
+export const BACKEND_PROTOCOL = ports.backendProtocol
 
 /**
  * True when the UI is being served by the proxy itself (production build)
@@ -58,7 +59,7 @@ export const BACKEND_PROTOCOL = ports.backendProtocol;
 const SERVED_BY_BACKEND =
   typeof window !== 'undefined' &&
   Boolean(window.location) &&
-  String(window.location.port) === String(BACKEND_PORT);
+  String(window.location.port) === String(BACKEND_PORT)
 
 /**
  * Base URL for all backend API requests.
@@ -70,7 +71,7 @@ const SERVED_BY_BACKEND =
  */
 export const API_BASE_URL = SERVED_BY_BACKEND
   ? ''
-  : `${BACKEND_PROTOCOL}://${BACKEND_HOST}:${BACKEND_PORT}`;
+  : `${BACKEND_PROTOCOL}://${BACKEND_HOST}:${BACKEND_PORT}`
 
 /**
  * Build a fully-qualified backend URL from a relative API path.
@@ -83,13 +84,13 @@ export const API_BASE_URL = SERVED_BY_BACKEND
  */
 export function buildApiUrl(path) {
   if (!path) {
-    return API_BASE_URL;
+    return API_BASE_URL
   }
 
   if (/^https?:\/\//i.test(path)) {
-    return path;
+    return path
   }
 
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${API_BASE_URL}${normalizedPath}`;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalizedPath}`
 }

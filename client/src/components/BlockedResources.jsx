@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Trash2, Power, ShieldAlert, AlertCircle } from 'lucide-react';
-import Spinner from './Spinner';
-import { buildApiUrl } from '../config/apiConfig';
+import React, { useState, useEffect, useCallback } from 'react'
+import { Trash2, Power, ShieldAlert, AlertCircle } from 'lucide-react'
+import Spinner from './Spinner'
+import { buildApiUrl } from '../config/apiConfig'
 
 /**
  * Panel for viewing and managing blocked URL rules.
@@ -16,91 +16,97 @@ import { buildApiUrl } from '../config/apiConfig';
  * @param {(title: string, message: string, kind: string) => Promise<boolean>} [props.showConfirm]
  */
 function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
-  const [blockedRules, setBlockedRules] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [togglingId, setTogglingId] = useState(null);
+  const [blockedRules, setBlockedRules] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
+  const [togglingId, setTogglingId] = useState(null)
 
-  const normalizeBlockedRules = (payload) => {
-    if (!payload) return [];
-    if (Array.isArray(payload)) return payload;
-    if (Array.isArray(payload.blockedRules)) return payload.blockedRules;
-    return [];
-  };
+  const normalizeBlockedRules = payload => {
+    if (!payload) return []
+    if (Array.isArray(payload)) return payload
+    if (Array.isArray(payload.blockedRules)) return payload.blockedRules
+    return []
+  }
 
   const fetchBlockedUrls = useCallback(async () => {
     try {
-      setLoading(true);
-      const response = await fetch(buildApiUrl('/api/blocked'));
-      const data = await response.json();
-      setBlockedRules(normalizeBlockedRules(data));
+      setLoading(true)
+      const response = await fetch(buildApiUrl('/api/blocked'))
+      const data = await response.json()
+      setBlockedRules(normalizeBlockedRules(data))
     } catch (error) {
-      console.error('Error fetching blocked URLs:', error);
+      console.error('Error fetching blocked URLs:', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    fetchBlockedUrls();
-  }, [fetchBlockedUrls]);
+    fetchBlockedUrls()
+  }, [fetchBlockedUrls])
 
-  const unblockRule = useCallback(async (rule) => {
-    if (!rule) return;
+  const unblockRule = useCallback(
+    async rule => {
+      if (!rule) return
 
-    let confirmed = true;
+      let confirmed = true
 
-    if (showConfirm) {
+      if (showConfirm) {
+        try {
+          confirmed = await showConfirm(
+            'Remove blocked URL',
+            `Allow requests matching ${rule.url} to proceed? They will no longer be blocked.`
+          )
+        } catch (error) {
+          console.error('Error showing confirmation modal:', error)
+          confirmed = false
+        }
+      }
+
+      if (!confirmed) return
+
       try {
-        confirmed = await showConfirm(
-          'Remove blocked URL',
-          `Allow requests matching ${rule.url} to proceed? They will no longer be blocked.`
-        );
+        setDeletingId(rule.id || rule.url)
+        const response = await fetch(buildApiUrl('/api/blocked'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: rule.id, url: rule.url, action: 'remove' })
+        })
+
+        if (response.ok) {
+          await fetchBlockedUrls()
+        }
       } catch (error) {
-        console.error('Error showing confirmation modal:', error);
-        confirmed = false;
+        console.error('Error unblocking URL:', error)
+      } finally {
+        setDeletingId(null)
       }
-    }
+    },
+    [fetchBlockedUrls, showConfirm]
+  )
 
-    if (!confirmed) return;
+  const toggleRuleEnabled = useCallback(
+    async rule => {
+      if (!rule) return
+      try {
+        setTogglingId(rule.id || rule.url)
+        const response = await fetch(buildApiUrl('/api/blocked'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: rule.id, action: 'update', enabled: !rule.enabled })
+        })
 
-    try {
-      setDeletingId(rule.id || rule.url);
-      const response = await fetch(buildApiUrl('/api/blocked'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: rule.id, url: rule.url, action: 'remove' })
-      });
-
-      if (response.ok) {
-        await fetchBlockedUrls();
+        if (response.ok) {
+          await fetchBlockedUrls()
+        }
+      } catch (error) {
+        console.error('Error updating blocked rule:', error)
+      } finally {
+        setTogglingId(null)
       }
-    } catch (error) {
-      console.error('Error unblocking URL:', error);
-    } finally {
-      setDeletingId(null);
-    }
-  }, [fetchBlockedUrls, showConfirm]);
-
-  const toggleRuleEnabled = useCallback(async (rule) => {
-    if (!rule) return;
-    try {
-      setTogglingId(rule.id || rule.url);
-      const response = await fetch(buildApiUrl('/api/blocked'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: rule.id, action: 'update', enabled: !rule.enabled })
-      });
-
-      if (response.ok) {
-        await fetchBlockedUrls();
-      }
-    } catch (error) {
-      console.error('Error updating blocked rule:', error);
-    } finally {
-      setTogglingId(null);
-    }
-  }, [fetchBlockedUrls]);
+    },
+    [fetchBlockedUrls]
+  )
 
   return (
     <div className="space-y-4">
@@ -136,7 +142,8 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
             <div>
               <h3 className="text-base font-semibold text-white">Blocked Resources</h3>
               <p className="text-xs text-slate-400">
-                {blockedRules.length} {blockedRules.length === 1 ? 'blocked resource' : 'blocked resources'}
+                {blockedRules.length}{' '}
+                {blockedRules.length === 1 ? 'blocked resource' : 'blocked resources'}
               </p>
             </div>
           </div>
@@ -149,8 +156,9 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
           <div className="text-sm text-slate-200">
             <p className="font-medium text-orange-300 mb-1">How blocking works</p>
             <p>
-              Requests whose URL contains one of the patterns below will be stopped before reaching the remote server.
-              Use this to silence noisy trackers, disable unwanted assets, or temporarily block flaky backends while debugging.
+              Requests whose URL contains one of the patterns below will be stopped before reaching
+              the remote server. Use this to silence noisy trackers, disable unwanted assets, or
+              temporarily block flaky backends while debugging.
             </p>
           </div>
         </div>
@@ -166,15 +174,13 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
           <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] text-center">
             <ShieldAlert className="w-16 h-16 text-slate-600 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-white mb-2">No blocked resources</h3>
-            <p className="text-slate-400 mb-6">
-              Block URLs from logs to prevent them from loading
-            </p>
+            <p className="text-slate-400 mb-6">Block URLs from logs to prevent them from loading</p>
           </div>
         ) : (
           <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a] space-y-3">
-            {blockedRules.map((rule) => {
+            {blockedRules.map(rule => {
               const displayName =
-                typeof rule.name === 'string' && rule.name.trim() ? rule.name.trim() : '';
+                typeof rule.name === 'string' && rule.name.trim() ? rule.name.trim() : ''
 
               return (
                 <div
@@ -183,11 +189,7 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      {displayName && (
-                        <p className="text-xs text-slate-500 mb-1">
-                          {displayName}
-                        </p>
-                      )}
+                      {displayName && <p className="text-xs text-slate-500 mb-1">{displayName}</p>}
                       <p className="text-sm text-slate-200 font-mono truncate" title={rule.url}>
                         {rule.url}
                       </p>
@@ -224,13 +226,13 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
                     </div>
                   </div>
                 </div>
-              );
+              )
             })}
           </div>
         )}
       </div>
     </div>
-  );
+  )
 }
 
-export default BlockedResources;
+export default BlockedResources
