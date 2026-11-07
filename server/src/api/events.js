@@ -15,6 +15,7 @@
 
 const express = require('express')
 const { buildClientLogSummaryView } = require('../logs/views')
+const { logError } = require('../util/logger')
 
 const DEFAULT_KEEP_ALIVE_MS = 15000
 const DEFAULT_STATS_COALESCE_MS = 250
@@ -64,7 +65,7 @@ function createEventBus () {
         try {
           listener(event)
         } catch (error) {
-          console.error('[proxy] Event listener failed:', error)
+          logError('events', 'Event listener failed', error)
         }
       }
       return event
@@ -214,7 +215,9 @@ function createEventsRoutes ({
     if (!clients.delete(res)) return
     try {
       res.end()
-    } catch {}
+    } catch {
+      // Best-effort: the response may already be closed by the client.
+    }
     stopKeepAliveIfIdle()
   }
 

@@ -184,6 +184,26 @@ const DEBUG_LOG_ENABLED = typeof process.env.PROXY_DEBUG_LOG === 'string'
   ? ['1', 'true', 'yes'].includes(process.env.PROXY_DEBUG_LOG.toLowerCase())
   : false
 
+// Level of the structured logger (pino): PROXY_LOG_LEVEL wins, otherwise
+// PROXY_DEBUG_LOG=true means debug and the default is info.
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']
+const envLogLevel = typeof process.env.PROXY_LOG_LEVEL === 'string'
+  ? process.env.PROXY_LOG_LEVEL.trim().toLowerCase()
+  : ''
+const LOG_LEVEL = LOG_LEVELS.includes(envLogLevel)
+  ? envLogLevel
+  : (DEBUG_LOG_ENABLED ? 'debug' : 'info')
+
+// Output of the logger: `json` (one object per line, for pino-pretty and log
+// collectors) or `pretty` (`[proxy][scope] message` lines through the
+// console). Default: pretty on a terminal, json when stdout is piped.
+const envLogFormat = typeof process.env.PROXY_LOG_FORMAT === 'string'
+  ? process.env.PROXY_LOG_FORMAT.trim().toLowerCase()
+  : ''
+const LOG_FORMAT = envLogFormat === 'json' || envLogFormat === 'pretty'
+  ? envLogFormat
+  : (process.stdout.isTTY ? 'pretty' : 'json')
+
 // TLS strictness for upstream connections (false by default to preserve current dev behaviour).
 const STRICT_TLS_ENABLED = typeof process.env.PROXY_STRICT_TLS === 'string'
   ? ['1', 'true', 'yes'].includes(process.env.PROXY_STRICT_TLS.toLowerCase())
@@ -214,6 +234,8 @@ module.exports = {
   LOG_DECOMPRESS_MAX_BYTES,
   MITM_BYPASS_REWRITES_ENABLED,
   DEBUG_LOG_ENABLED,
+  LOG_LEVEL,
+  LOG_FORMAT,
   STRICT_TLS_ENABLED,
   STRICT_TLS_CA_FILE,
   PROTOBUF_MAX_FIELDS,

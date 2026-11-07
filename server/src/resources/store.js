@@ -12,6 +12,7 @@ const fs = require('fs')
 const path = require('path')
 const fsPromises = fs.promises
 const { safeString } = require('../util/strings')
+const { logError } = require('../util/logger')
 
 /**
  * @typedef {object} LocalResource
@@ -60,7 +61,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
       try {
         listener()
       } catch (error) {
-        console.error('[proxy] Resource change listener failed:', error)
+        logError('resources', 'Resource change listener failed', error)
       }
     }
   }
@@ -74,7 +75,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
         const data = JSON.parse(fs.readFileSync(file, 'utf8'))
         localResources = new Map(Object.entries(data))
       } catch (error) {
-        console.error('[proxy] Error loading local resources:', error)
+        logError('resources', 'Error loading local resources', error)
       }
     }
   }
@@ -87,7 +88,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
     try {
       await fsPromises.writeFile(file, JSON.stringify(data, null, 2))
     } catch (error) {
-      console.error('[proxy] Error saving local resources:', error)
+      logError('resources', 'Error saving local resources', error)
     }
   }
 
@@ -162,7 +163,7 @@ function createResourceStore ({ file, storageDir, configStore }) {
       // If the file is already missing, keep behaviour simple and just log
       const code = /** @type {{ code?: string } | null} */ (fsError)?.code
       if (!fsError || code !== 'ENOENT') {
-        console.error('[proxy] Error deleting local resource file:', fsError)
+        logError('resources', 'Error deleting local resource file', fsError)
         throw fsError
       }
     }
@@ -214,7 +215,9 @@ function createResourceStore ({ file, storageDir, configStore }) {
           res.statusCode = 500
           try {
             res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          } catch {}
+          } catch {
+            // Headers already sent: the error body goes out without a content type.
+          }
           res.end(JSON.stringify({ error: 'Error serving local resource' }))
         } else {
           res.end()
@@ -222,7 +225,9 @@ function createResourceStore ({ file, storageDir, configStore }) {
       } catch {
         try {
           res.end()
-        } catch {}
+        } catch {
+          // Response already closed by the client.
+        }
       }
     }
 
@@ -234,16 +239,18 @@ function createResourceStore ({ file, storageDir, configStore }) {
           res.setHeader('Content-Type', resource.contentType)
           res.setHeader('X-Proxy-Source', sourceTag)
         }
-      } catch {}
+      } catch {
+        // Headers already sent by an earlier error path: the stream is still piped.
+      }
 
       stream.on('error', error => {
-        console.error(`${errorPrefix}:`, error)
+        logError('resources', errorPrefix, error)
         sendError()
       })
 
       stream.pipe(res)
     } catch (error) {
-      console.error(`${errorPrefix}:`, error)
+      logError('resources', errorPrefix, error)
       sendError()
     }
   }

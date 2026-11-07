@@ -617,7 +617,9 @@ function extractJsonFromProtobufBuffer (buffer) {
               }
             }
           }
-        } catch {}
+        } catch {
+          // Not a nested protobuf message: the field is treated as text or bytes below.
+        }
 
         if (!handled) {
           try {
@@ -641,7 +643,9 @@ function extractJsonFromProtobufBuffer (buffer) {
                 handled = true
               }
             }
-          } catch {}
+          } catch {
+            // Not decodable as UTF-8 text: the field is kept as raw bytes below.
+          }
         }
 
         if (!handled) {

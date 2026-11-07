@@ -52,6 +52,9 @@ async function loadServer () {
   process.env.PROXY_STORAGE_DIR = storageDir
   process.env.PROXY_CERTS_DIR = path.join(tmpDir, 'certs')
   process.env.PROXY_LOGS_DIR = path.join(tmpDir, 'logs')
+  // Test processes run with stdout piped; keep the console-based log format
+  // so tests can capture warnings by replacing console.warn.
+  process.env.PROXY_LOG_FORMAT = 'pretty'
   delete process.env.PROXY_UI_ORIGINS
 
   const proxy = require('../../index.js')

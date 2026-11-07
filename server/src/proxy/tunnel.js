@@ -34,19 +34,19 @@ function createRawTunnel ({ clientSocket, targetHost, targetPort, head }) {
   })
 
   const closeSockets = () => {
-    try { clientSocket.destroy() } catch {}
-    try { targetSocket.destroy() } catch {}
+    try { clientSocket.destroy() } catch { /* already destroyed */ }
+    try { targetSocket.destroy() } catch { /* already destroyed */ }
   }
 
   targetSocket.on('error', closeSockets)
   clientSocket.on('error', closeSockets)
 
   clientSocket.on('close', () => {
-    try { targetSocket.end() } catch {}
+    try { targetSocket.end() } catch { /* already closed */ }
   })
 
   targetSocket.on('close', () => {
-    try { clientSocket.end() } catch {}
+    try { clientSocket.end() } catch { /* already closed */ }
   })
 
   return targetSocket
@@ -129,8 +129,8 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictT
   }
 
   const destroyBoth = () => {
-    try { clientSocket.destroy() } catch {}
-    try { targetSocket.destroy() } catch {}
+    try { clientSocket.destroy() } catch { /* already destroyed */ }
+    try { targetSocket.destroy() } catch { /* already destroyed */ }
   }
 
   targetSocket.on('error', () => {
@@ -142,11 +142,11 @@ function createRawWebSocketTunnel ({ req, clientSocket, head, targetUrl, strictT
   })
 
   clientSocket.on('close', () => {
-    try { targetSocket.end() } catch {}
+    try { targetSocket.end() } catch { /* already closed */ }
   })
 
   targetSocket.on('close', () => {
-    try { clientSocket.end() } catch {}
+    try { clientSocket.end() } catch { /* already closed */ }
   })
 }
 

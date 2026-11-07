@@ -14,6 +14,7 @@
 
 const { getLogUrlString, getFileTypeFromLogEntry, ensureLogSearchSnapshots } = require('./search')
 const { computeLogEntryMetrics } = require('./stats')
+const { logDebug, logError } = require('../util/logger')
 
 /** @typedef {import('./search').LogEntry} LogEntry */
 
@@ -95,7 +96,9 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
             entry.hiddenByBlockedRules = patterns.some(pattern => urlString.includes(pattern))
           }
         }
-      } catch {}
+      } catch (error) {
+        logDebug('logs', 'Could not evaluate the blocked patterns for a log entry', error)
+      }
 
       // Precompute base search text for global search (URL, method, target/local info)
       const parts = [
@@ -142,7 +145,7 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
       try {
         listener(entry)
       } catch (error) {
-        console.error('[proxy] Log entry listener failed:', error)
+        logError('logs', 'Log entry listener failed', error)
       }
     }
 
@@ -176,7 +179,7 @@ function createLogStore ({ maxEntries, ruleStore, isInteractive, getBlockedPatte
       try {
         listener()
       } catch (error) {
-        console.error('[proxy] Log clear listener failed:', error)
+        logError('logs', 'Log clear listener failed', error)
       }
     }
   }

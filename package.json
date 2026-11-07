@@ -10,7 +10,7 @@
   "scripts": {
     "server": "node server/index.js",
     "client": "node dev-client.js",
-    "dev": "concurrently -n server,client -c blue,magenta \"npm run server\" \"npm run client\"",
+    "dev": "concurrently -n server,client -c blue,magenta \"node scripts/devServer.js\" \"npm run client\"",
     "start": "node server/index.js",
     "build": "node build-client.js",
     "lint": "eslint .",
@@ -62,6 +62,7 @@
     "eslint-plugin-react": "^7.37.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^16.0.0",
+    "pino-pretty": "^13.2.0",
     "typescript": "^7.0.2"
   }
 }

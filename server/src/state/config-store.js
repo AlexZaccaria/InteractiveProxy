@@ -11,6 +11,7 @@
  */
 
 const fs = require('fs')
+const { logError } = require('../util/logger')
 const fsPromises = fs.promises
 
 /** @typedef {'ignore' | 'focus'} FilterMode */
@@ -84,7 +85,7 @@ function createConfigStore ({ file, ruleStore }) {
       try {
         listener(current)
       } catch (error) {
-        console.error('[proxy] Config change listener failed:', error)
+        logError('config', 'Config change listener failed', error)
       }
     }
   }
@@ -133,7 +134,7 @@ function createConfigStore ({ file, ruleStore }) {
         }
       }
     } catch (error) {
-      console.error('Error loading config:', error)
+      logError('config', 'Error loading config', error)
     }
   }
 
@@ -157,7 +158,7 @@ function createConfigStore ({ file, ruleStore }) {
         } catch (readError) {
           const code = /** @type {{ code?: string } | null} */ (readError)?.code
           if (readError && code !== 'ENOENT') {
-            console.error('Error reading config file:', readError)
+            logError('config', 'Error reading config file', readError)
           }
           existing = {}
         }
@@ -180,7 +181,7 @@ function createConfigStore ({ file, ruleStore }) {
 
         await fsPromises.writeFile(file, JSON.stringify(updated, null, 2))
       } catch (error) {
-        console.error('Error saving config:', error)
+        logError('config', 'Error saving config', error)
       } finally {
         persistWritePromise = null
         if (persistQueued) {

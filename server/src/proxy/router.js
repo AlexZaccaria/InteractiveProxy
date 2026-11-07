@@ -14,6 +14,7 @@ const fs = require('fs')
 const { URL } = require('url')
 const fsPromises = fs.promises
 const { safeTrim, safeString } = require('../util/strings')
+const { logError } = require('../util/logger')
 const {
   normalizeHostValue,
   parseUrlCandidate,
@@ -282,7 +283,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
       try {
         listener({ kind })
       } catch (error) {
-        console.error('[proxy] Router change listener failed:', error)
+        logError('router', 'Router change listener failed', error)
       }
     }
   }
@@ -379,7 +380,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
       // Keep the log filtering patterns in sync with the latest blocked rules.
       recomputeBlockedUrlSubstringsForFilter()
     } catch (error) {
-      console.error('[proxy] Error loading blocked URLs:', error)
+      logError('router', 'Error loading blocked URLs', error)
     }
   }
 
@@ -408,7 +409,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
         }
       }
     } catch (error) {
-      console.error('[proxy] Error loading bypass URLs:', error)
+      logError('router', 'Error loading bypass URLs', error)
     }
   }
 
@@ -425,7 +426,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
       const payload = JSON.stringify(blockedRules, null, 2)
       await fsPromises.writeFile(blockedFile, payload)
     } catch (error) {
-      console.error('[proxy] Error saving blocked URLs:', error)
+      logError('router', 'Error saving blocked URLs', error)
     }
   }
 
@@ -447,7 +448,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
       notifyChange('filter')
       fs.writeFileSync(filterFile, payload)
     } catch (error) {
-      console.error('[proxy] Error saving bypass URLs (sync):', error)
+      logError('router', 'Error saving bypass URLs (sync)', error)
     }
   }
 
@@ -457,7 +458,7 @@ function createRouter ({ configStore, files, port, host, uiOrigins, onBlockedPat
       notifyChange('filter')
       await fsPromises.writeFile(filterFile, payload)
     } catch (error) {
-      console.error('[proxy] Error saving bypass URLs:', error)
+      logError('router', 'Error saving bypass URLs', error)
     }
   }
 

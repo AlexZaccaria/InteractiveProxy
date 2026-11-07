@@ -184,7 +184,9 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs 
     const onClose = () => {
       try {
         abortController.abort()
-      } catch {}
+      } catch {
+        // abort() on a settled controller is a no-op; nothing to report.
+      }
     }
 
     res.on('close', onClose)
@@ -238,7 +240,7 @@ function handleUpstreamError ({ logEntry, error, res, message = 'Bad Gateway', u
       res.end(message)
     }
   } else {
-    try { res.end() } catch {}
+    try { res.end() } catch { /* response already finished */ }
   }
 }
 

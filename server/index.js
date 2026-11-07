@@ -26,6 +26,7 @@ const {
 } = require('./config')
 
 const { safeTrim, queryBool, safeString, parseListQuery } = require('./src/util/strings')
+const { logInfo, logError } = require('./src/util/logger')
 const {
   getHeaderCaseInsensitive,
   getContentType,
@@ -143,7 +144,7 @@ try {
     }
   })
 } catch (error) {
-  console.error('[proxy] Error ensuring storage/log directories:', error)
+  logError('storage', 'Error ensuring storage/log directories', error)
 }
 
 // Upstream access: undici dispatchers, TLS strictness and the shared request
@@ -330,10 +331,10 @@ const { server, start, stop } = createProxyServer({
 if (require.main === module) {
   start()
     .then(address => {
-      console.log(`[proxy] listening on http://${address.address}:${address.port}`)
+      logInfo('startup', `listening on http://${address.address}:${address.port}`)
     })
     .catch(error => {
-      console.error(`[proxy] failed to start on ${HOST}:${PORT}:`, error.message)
+      logError('startup', `failed to start on ${HOST}:${PORT}`, error)
       process.exit(1)
     })
 }

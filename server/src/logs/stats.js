@@ -214,7 +214,9 @@ function extractHostInfoFromLog (logEntry) {
           configurable: false,
           enumerable: false
         })
-      } catch {}
+      } catch {
+        // The entry may be frozen: the cache is optional and the value is recomputed next time.
+      }
       return parsed
     }
   }
@@ -231,7 +233,9 @@ function extractHostInfoFromLog (logEntry) {
         configurable: false,
         enumerable: false
       })
-    } catch {}
+    } catch {
+      // The entry may be frozen: the cache is optional and the value is recomputed next time.
+    }
     return info
   }
 
@@ -308,7 +312,9 @@ function computeLogEntryMetrics (logEntry) {
       if (typeof logEntry.rawRequestBodyBase64 === 'string' && logEntry.rawRequestBodyBase64) {
         try {
           requestBytes = Buffer.from(logEntry.rawRequestBodyBase64, 'base64').length
-        } catch {}
+        } catch {
+          // Malformed base64 preview: the size stays unknown.
+        }
       }
 
       if (!requestBytes && logEntry.headers) {
@@ -332,7 +338,9 @@ function computeLogEntryMetrics (logEntry) {
       } else if (typeof logEntry.rawResponseBodyBase64 === 'string' && logEntry.rawResponseBodyBase64) {
         try {
           responseBytes = Buffer.from(logEntry.rawResponseBodyBase64, 'base64').length
-        } catch {}
+        } catch {
+          // Malformed base64 preview: the size stays unknown.
+        }
       }
 
       if (responseBytes > 0) {

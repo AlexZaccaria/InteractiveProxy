@@ -12,7 +12,7 @@
 
 const zlib = require('zlib')
 const { LOG_DECOMPRESS_MAX_BYTES } = require('../../config')
-const { logDebug } = require('../util/logger')
+const { logDebug, logWarn } = require('../util/logger')
 const { safeString } = require('../util/strings')
 
 /**
@@ -33,7 +33,7 @@ const ZSTD_SUPPORTED =
   typeof zlib.zstdDecompressSync === 'function'
 
 if (!ZSTD_SUPPORTED) {
-  console.warn('[proxy] zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched')
+  logWarn('codecs', 'zstd is not supported by this Node.js version; zstd bodies will be forwarded untouched')
 }
 
 // Content types whose bodies are worth decompressing for inspection.

@@ -287,7 +287,9 @@ function applyCacheBypassHeadersToResponse (res, sourceTag) {
     if (sourceTag) {
       res.setHeader('X-Proxy-Source', sourceTag)
     }
-  } catch {}
+  } catch {
+    // Headers already sent: nothing can be added.
+  }
 }
 
 /**

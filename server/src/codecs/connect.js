@@ -343,7 +343,9 @@ function decodeConnectPayload (buffer, headers = {}) {
             enumerable: false,
             configurable: false
           })
-        } catch {}
+        } catch {
+          // The frame object may be frozen; the decoded-buffer cache is optional.
+        }
       }
 
       frameIndex += 1
@@ -511,7 +513,9 @@ function buildConnectSearchContentForLog (connectData) {
       if (frame.json) {
         try {
           appendSegment(JSON.stringify(frame.json))
-        } catch {}
+        } catch {
+          // Values that cannot be stringified (BigInt, cycles) are left out of the search text.
+        }
       }
 
       // Frame binary data is not included in the search index to keep

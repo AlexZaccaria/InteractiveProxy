@@ -8,6 +8,7 @@
  */
 
 const express = require('express')
+const { logError } = require('../util/logger')
 
 /**
  * @typedef {object} DashboardRoutesDeps
@@ -49,7 +50,7 @@ function createDashboardRoutes ({ logStore, stats, router: proxyRouter, resource
     try {
       res.json(stats.buildAuditSnapshot(logStore))
     } catch (error) {
-      console.error('[proxy] Error building audit snapshot:', error)
+      logError('api', 'Error building audit snapshot', error)
       res.status(500).json({ error: 'Failed to build audit snapshot' })
     }
   })

@@ -108,7 +108,9 @@ The proxy server can be configured using environment variables.
 | `PROXY_STREAM_UNINSPECTED_RESPONSES`| `true` | Pipe upstream responses to the client as they arrive (HTTP and HTTPS MITM) when no edit rule can apply to them and nothing needs the body for logging: interactive mode off, clearly binary content, `text/event-stream`, or a declared size above `PROXY_STREAM_THRESHOLD_BYTES`. Such responses are logged as `[streamed response]` with their final size. Set to `false` to buffer every response |
 | `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` (1 MiB) | With interactive mode on, responses whose `content-length` exceeds this are streamed instead of previewed; `0` never streams by size alone |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED`| `true` | Apply rewrites even for direct MITM flows |
-| `PROXY_DEBUG_LOG` | `false` | Enable debug logging |
+| `PROXY_DEBUG_LOG` | `false` | Enable debug logging (same as `PROXY_LOG_LEVEL=debug`) |
+| `PROXY_LOG_LEVEL` | `info` | Logger level: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent` |
+| `PROXY_LOG_FORMAT` | `pretty` on a terminal, `json` when piped | `json` = one JSON object per line (pino; pipe into `pino-pretty` or a collector), `pretty` = `[proxy][scope] message` lines on the console |
 | `PROXY_STRICT_TLS` | `false` | Enforce strict TLS for upstream |
 | `PROXY_STRICT_TLS_CA_FILE` | `""` | Path to additional CA bundle |
 | `PROXY_BODY_LIMIT` | `10mb` | Max request body size |

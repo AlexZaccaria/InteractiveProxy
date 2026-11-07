@@ -14,6 +14,7 @@
  */
 
 const { safeString } = require('../util/strings')
+const { logDebug } = require('../util/logger')
 const { buildJsonPathRuleContext } = require('../rules/url-match')
 const { attachRewriteMetadata, hasAppliedRules } = require('../rules/metadata')
 const {
@@ -353,7 +354,9 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
         if (fallbackText) {
           logEntry.body = fallbackText
         }
-      } catch {}
+      } catch (error) {
+        logDebug('rewrite', 'Could not build a text fallback for the request body log', error)
+      }
     }
 
     // Optional fallback for non-JSON content-types in contexts (such as HTTPS
@@ -365,7 +368,9 @@ function createHttpJsonRewriter ({ ruleStore, textRules, jsonPathRules, isIntera
         if (fallbackText) {
           logEntry.body = fallbackText
         }
-      } catch {}
+      } catch (error) {
+        logDebug('rewrite', 'Could not build a text fallback for the request body log', error)
+      }
     }
 
     return { buffer: nextBuffer }

@@ -13,7 +13,7 @@
 const fs = require('fs')
 const fsPromises = fs.promises
 const { safeString } = require('../util/strings')
-const { logWarn } = require('../util/logger')
+const { logWarn, logError } = require('../util/logger')
 const { buildUrlMatchContext, textRuleMatchesUrl } = require('./url-match')
 const {
   deserializeEditRuleFromDisk,
@@ -35,7 +35,7 @@ const {
 /**
  * @typedef {object} RuleStoreLogger
  * @property {(scope: string, message: string) => void} warn
- * @property {(...args: any[]) => void} error
+ * @property {(scope: string, message: string, error?: unknown) => void} error
  */
 
 /**
@@ -94,7 +94,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
   /** @type {RuleStoreLogger} */
   const log = logger || {
     warn: (scope, message) => logWarn(scope, message),
-    error: (...args) => console.error(...args)
+    error: (scope, message, error) => logError(scope, message, error)
   }
 
   /** @type {EditRule[]} */
@@ -126,7 +126,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
       try {
         listener({ kind })
       } catch (error) {
-        log.error('[proxy] Rule store change listener failed:', error)
+        log.error('rules', 'Rule store change listener failed', error)
       }
     }
   }
@@ -168,7 +168,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
         }
       }
     } catch (error) {
-      log.error('[proxy] Error loading edit rules:', error)
+      log.error('rules', 'Error loading edit rules', error)
       rules = []
     }
   }
@@ -189,7 +189,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
       const payload = JSON.stringify(diskRules, null, 2)
       await fsPromises.writeFile(rulesFile, payload)
     } catch (error) {
-      log.error('[proxy] Error saving edit rules:', error)
+      log.error('rules', 'Error saving edit rules', error)
     }
   }
 
@@ -203,7 +203,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
         }
       }
     } catch (error) {
-      log.error('[proxy] Error loading edit rule presets:', error)
+      log.error('rules', 'Error loading edit rule presets', error)
       presets = []
     }
   }
@@ -215,7 +215,7 @@ function createRuleStore ({ rulesFile, presetsFile, storageDir, logger }) {
       const payload = JSON.stringify(presets, null, 2)
       await fsPromises.writeFile(presetsFile, payload)
     } catch (error) {
-      log.error('[proxy] Error saving edit rule presets:', error)
+      log.error('rules', 'Error saving edit rule presets', error)
     }
   }
 

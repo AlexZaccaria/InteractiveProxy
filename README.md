@@ -184,7 +184,7 @@ proxy/
 npm install              # Install everything (workspace)
 
 # Development
-npm run dev              # Start server + UI dev server
+npm run dev              # Start server + UI dev server (server logs rendered by pino-pretty)
 npm run server           # Proxy server only
 npm run client           # Web interface only
 
