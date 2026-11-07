@@ -173,11 +173,13 @@ function createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInterac
 
     // Rules operate on the body exactly as parsed: a string field that happens
     // to contain JSON stays a string in what goes upstream. The nested-JSON
-    // normalisation is applied only to the views returned for logging, which
-    // are deep clones so the forwarded object is never touched. The clones are
-    // gated by captureBeforeJson so non-logging callers skip them.
+    // normalisation is applied only to the views returned for logging. The
+    // "before" view is a deep clone taken before the rules mutate the object;
+    // the "after" view normalises the object itself once the forwarded body
+    // has been serialised, so a rewritten body costs one clone, not two. Both
+    // are gated by captureBeforeJson so non-logging callers skip them.
     /** @param {any} value */
-    const toDisplayJson = value => {
+    const cloneForDisplay = value => {
       try {
         return normalizeNestedJsonStrings(JSON.parse(JSON.stringify(value)))
       } catch {
@@ -185,16 +187,16 @@ function createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInterac
       }
     }
 
-    const beforeJson = captureBeforeJson ? toDisplayJson(parsed) : null
+    const beforeJson = captureBeforeJson ? cloneForDisplay(parsed) : null
 
     const jsonPathResult = jsonPathRules.applyJsonPathRulesToObject(parsed, jsonPathContext)
     const resultObject = jsonPathResult ? jsonPathResult.object : parsed
-    const json = captureBeforeJson ? toDisplayJson(resultObject) : resultObject
 
     if (!jsonPathResult || !jsonPathResult.changed) {
+      // Nothing changed: the "after" view is the "before" view.
       return {
         buffer: input,
-        json,
+        json: captureBeforeJson ? beforeJson : resultObject,
         beforeJson,
         appliedRuleIds: jsonPathResult ? jsonPathResult.appliedRuleIds || [] : [],
         changed: false,
@@ -203,6 +205,7 @@ function createHttpJsonRewriter({ ruleStore, textRules, jsonPathRules, isInterac
     }
 
     const updatedDecoded = Buffer.from(JSON.stringify(resultObject), 'utf8')
+    const json = captureBeforeJson ? normalizeNestedJsonStrings(resultObject) : resultObject
 
     let nextBuffer = input
     if (decompressed) {
