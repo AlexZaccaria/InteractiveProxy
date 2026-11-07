@@ -156,6 +156,14 @@ const UPSTREAM_BODY_TIMEOUT_MS = Number.isFinite(Number(process.env.PROXY_UPSTRE
   ? Math.max(0, Number(process.env.PROXY_UPSTREAM_BODY_TIMEOUT_MS))
   : 0
 
+// HTTP/2 towards TLS upstreams that offer it through ALPN (undici `allowH2`;
+// plain http upstreams stay HTTP/1.1). Off by default: h1-only upstreams are
+// not affected either way, but h2 changes the header semantics
+// (pseudo-headers, no connection-specific headers), so it is opt-in.
+const UPSTREAM_H2 = typeof process.env.PROXY_UPSTREAM_H2 === 'string'
+  ? ['1', 'true', 'yes'].includes(process.env.PROXY_UPSTREAM_H2.toLowerCase())
+  : false
+
 // Streaming: responses that no rule can rewrite and that need no inspection
 // for logging (interactive mode off, clearly binary content, event streams,
 // bodies larger than STREAM_THRESHOLD_BYTES) are piped to the client as they
@@ -245,6 +253,7 @@ module.exports = {
   WS_MAX_TEXT_BYTES,
   UPSTREAM_HEADERS_TIMEOUT_MS,
   UPSTREAM_BODY_TIMEOUT_MS,
+  UPSTREAM_H2,
   STREAM_UNINSPECTED_RESPONSES,
   STREAM_THRESHOLD_BYTES,
   WS_LOG_BODY_ENABLED,

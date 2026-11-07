@@ -224,12 +224,11 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
    * @param {import('http').IncomingMessage} clientReq
    * @param {import('stream').Duplex} clientSocket
    * @param {string} targetHost Host header sent to the target.
-   * @param {number} _targetPort Unused: the port travels inside `fullUrl`.
-   * @param {string} fullUrl Target URL (http(s) or ws(s) scheme).
+   * @param {string} fullUrl Target URL (http(s) or ws(s) scheme), port included when not the default.
    * @param {{ bypass?: boolean, head?: Buffer }} [options] `bypass` relays without rewrites or logging; `head` is the first packet of the upgraded socket.
    * @returns {void}
    */
-  function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, _targetPort, fullUrl, { bypass = false, head = Buffer.alloc(0) } = {}) {
+  function handleWebSocketUpgrade (clientReq, clientSocket, targetHost, fullUrl, { bypass = false, head = Buffer.alloc(0) } = {}) {
     const rawUrl = fullUrl || ''
     const wsUrl = httpUrlToWebSocketUrl(rawUrl) || rawUrl
     const connectionId = Date.now() + Math.random()
@@ -500,9 +499,8 @@ function createWebSocketProxy ({ router, addLog, entries, webSocketRewriter, caB
     }
 
     const targetHost = parsed.hostname
-    const targetPort = parsed.port ? Number(parsed.port) : ((parsed.protocol === 'https:' || parsed.protocol === 'wss:') ? 443 : 80)
 
-    handleWebSocketUpgrade(req, socket, targetHost, targetPort, targetUrl, { bypass: false, head })
+    handleWebSocketUpgrade(req, socket, targetHost, targetUrl, { bypass: false, head })
   }
 
   return {

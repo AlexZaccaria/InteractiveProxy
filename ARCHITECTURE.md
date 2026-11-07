@@ -375,7 +375,14 @@ UI Toggle → POST /api/interactive-mode
   mid-stream destroys the client response instead of answering 502.
   `PROXY_STREAM_UNINSPECTED_RESPONSES=false` buffers everything.
 - **Compression support** (gzip, deflate, br, zstd via Node's built-in `zlib`)
-- **Connection pooling** for proxy requests
+- **Connection pooling** for proxy requests (undici agents, one for `http://`
+  and one for `https://` targets, 128 connections each, 60 s keep-alive)
+- **HTTP/2 upstreams** (opt-in, `PROXY_UPSTREAM_H2=true`): the `https://`
+  agent negotiates h2 through ALPN and falls back to HTTP/1.1 for upstreams
+  that do not offer it; the request headers are mapped to h2 by undici
+  (`Host` becomes `:authority`, `Connection` is dropped). Off by default
+  because of those header-semantic differences; the MITM side towards the
+  client stays HTTP/1.1 in every case.
 - **Interactive Mode** to disable logging overhead
 
 ### Limits

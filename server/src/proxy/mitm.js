@@ -17,6 +17,7 @@
  * socket's remote endpoint.
  */
 
+const http = require('http')
 const https = require('https')
 const tls = require('tls')
 const { URL } = require('url')
@@ -84,6 +85,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {Pick<HttpFlow, 'handleDirectHttpFlow' | 'hasApplicableRules'>} httpFlow
  * @property {Pick<WebSocketProxy, 'handleWebSocketUpgrade'>} webSocketProxy
  * @property {BypassCounter} bypassCounter
+ * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
  */
 
 /**
@@ -102,7 +104,8 @@ function createMitmHandler ({
   httpJson,
   httpFlow,
   webSocketProxy,
-  bypassCounter
+  bypassCounter,
+  stats
 }) {
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
   const { performUpstreamRequest, attachAbortOnClose } = upstream
@@ -346,7 +349,15 @@ function createMitmHandler ({
       socket.destroy()
       return
     }
-    const { host: targetHost, port: targetPort, authority: targetAuthority } = target
+    // The proxy speaks no upgrade protocol but WebSocket: anything else
+    // (e.g. `Upgrade: h2c`) is forwarded as an ordinary request.
+    const upgradeHeader = String(clientReq.headers.upgrade || '').trim().toLowerCase()
+    if (upgradeHeader !== 'websocket') {
+      forwardUpgradeAsPlainRequest(clientReq, socket, head)
+      return
+    }
+
+    const { host: targetHost, authority: targetAuthority } = target
     const requestUrl = /** @type {string} */ (clientReq.url)
     const fullUrl = `https://${targetAuthority}${requestUrl}`
     const method = /** @type {string} */ (clientReq.method)
@@ -379,24 +390,81 @@ function createMitmHandler ({
       bypassCounter.increment()
       logWebSocketDirectTunnel({ targetUrl: fullUrl, headers: clientReq.headers, suffix: ' (MITM bypass)' })
 
-      handleWebSocketUpgrade(clientReq, socket, targetHost, targetPort, fullUrl, { bypass: true, head })
+      handleWebSocketUpgrade(clientReq, socket, targetHost, fullUrl, { bypass: true, head })
       return
     }
 
     // WebSocket upgrade with full MITM (rewrites + logging)
-    handleWebSocketUpgrade(clientReq, socket, targetHost, targetPort, fullUrl, { bypass: false, head })
+    handleWebSocketUpgrade(clientReq, socket, targetHost, fullUrl, { bypass: false, head })
+  }
+
+  /**
+   * A tunnel request that asks for an upgrade other than WebSocket reaches
+   * the `upgrade` listener with its socket detached from the HTTP parser.
+   * The proxy cannot speak that protocol, so the request is forwarded as an
+   * ordinary one: the upgrade headers are dropped, a response object is
+   * attached to the socket by hand and the connection is closed after the
+   * answer, as Node does for a server without an `upgrade` listener.
+   *
+   * @param {import('http').IncomingMessage} clientReq
+   * @param {import('stream').Duplex} socket The decrypted (TLS) socket.
+   * @param {Buffer} head Bytes received after the headers: the request body, if any.
+   * @returns {void}
+   */
+  function forwardUpgradeAsPlainRequest (clientReq, socket, head) {
+    const requestStart = Date.now()
+    // undici refuses upgrade/keep-alive headers and the h2c settings make no
+    // sense without the upgrade.
+    delete clientReq.headers.upgrade
+    delete clientReq.headers['http2-settings']
+    delete clientReq.headers['keep-alive']
+    clientReq.headers.connection = 'close'
+
+    const netSocket = /** @type {import('net').Socket} */ (socket)
+    const res = new http.ServerResponse(clientReq)
+    res.shouldKeepAlive = false
+    res.assignSocket(netSocket)
+    res.once('finish', () => {
+      res.detachSocket(netSocket)
+      netSocket.end()
+    })
+
+    processDecryptedRequest(clientReq, res, head && head.length ? head : Buffer.alloc(0), requestStart)
   }
 
   /**
    * One decrypted request of a tunnel: the same blocked / direct / local
    * resource / forward pipeline as plain HTTP (WebSocket upgrades arrive
-   * through handleDecryptedUpgrade instead).
+   * through handleDecryptedUpgrade instead). Collects the body, then hands
+   * over to processDecryptedRequest.
    *
    * @param {import('http').IncomingMessage} clientReq
    * @param {import('http').ServerResponse} clientRes
+   * @returns {void}
+   */
+  function handleDecryptedRequest (clientReq, clientRes) {
+    const requestStart = Date.now()
+
+    // Collect request body
+    /** @type {Buffer[]} */
+    const chunks = []
+    clientReq.on('data', chunk => chunks.push(chunk))
+    clientReq.on('end', () => {
+      processDecryptedRequest(clientReq, clientRes, Buffer.concat(chunks), requestStart)
+    })
+  }
+
+  /**
+   * The pipeline of one decrypted request once its body is available
+   * (blocked / direct / local resource / forward, with rewrites and logging).
+   *
+   * @param {import('http').IncomingMessage} clientReq
+   * @param {import('http').ServerResponse} clientRes
+   * @param {Buffer} requestBody
+   * @param {number} requestStart
    * @returns {Promise<void>}
    */
-  async function handleDecryptedRequest (clientReq, clientRes) {
+  async function processDecryptedRequest (clientReq, clientRes, requestBody, requestStart) {
     const target = tunnelTargets.get(socketKey(clientReq.socket))
     if (!target) {
       // Only reachable if a connection outlived its tunnel bookkeeping.
@@ -408,18 +476,12 @@ function createMitmHandler ({
     const requestUrl = /** @type {string} */ (clientReq.url)
     const fullUrl = `https://${targetAuthority}${requestUrl}`
     const method = /** @type {string} */ (clientReq.method)
-    const requestStart = Date.now()
     const clientIp = clientReq.socket?.remoteAddress || clientReq.connection?.remoteAddress || 'unknown'
     const parsedFullUrl = new URL(fullUrl)
+    /** @type {Buffer} */
+    let body = requestBody
 
-    // Collect request body
-    /** @type {Buffer[]} */
-    const chunks = []
-    clientReq.on('data', chunk => chunks.push(chunk))
-    clientReq.on('end', async () => {
-      /** @type {Buffer} */
-      let body = Buffer.concat(chunks)
-
+    {
       const routingContext = router.buildRoutingContext({
         requestUrl,
         fullUrl,
@@ -482,7 +544,8 @@ function createMitmHandler ({
         }
 
         clientRes.writeHead(204)
-        return clientRes.end()
+        clientRes.end()
+        return
       }
 
       if (body.length > 0) {
@@ -583,6 +646,7 @@ function createMitmHandler ({
             const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes)
             if (logEntry) {
               logEntry.responseSize = bytes
+              stats.recordStreamedResponseSize(logEntry, bytes)
             }
             return
           }
@@ -626,7 +690,7 @@ function createMitmHandler ({
           clientRes.removeListener('close', onClose)
         }
       }
-    })
+    }
   }
 
   return { handleConnect, close }

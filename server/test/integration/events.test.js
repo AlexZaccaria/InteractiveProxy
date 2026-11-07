@@ -29,9 +29,17 @@ let proxy
 /** @type {Set<{ close: () => void }>} */
 const openStreams = new Set()
 
+/** A response large enough to be streamed instead of previewed (above the 1 MiB threshold). */
+const BIG_BINARY = Buffer.alloc(3 * 1024 * 1024, 0xab)
+
 function startUpstream () {
   return new Promise((resolve, reject) => {
     upstream = http.createServer((req, res) => {
+      if (req.url === '/big.bin') {
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': BIG_BINARY.length })
+        res.end(BIG_BINARY)
+        return
+      }
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ ok: true, url: req.url, method: req.method }))
     })
@@ -287,6 +295,26 @@ describe('GET /api/events', () => {
     assert.equal(typeof stats.data.filterMetrics.totalFiltered, 'number')
     assert.equal(typeof stats.data.editedRequests, 'number')
     assert.ok(stats.data.performance && stats.data.payloads && stats.data.routes)
+    stream.close()
+  })
+
+  it('reports the size of a streamed response in a stats event once the transfer ends', async () => {
+    const stream = await openStream()
+    await stream.next('hello')
+
+    // The log event of a streamed entry arrives before the body has been
+    // piped; the stats event that carries its size follows the transfer.
+    const sized = stream.next(
+      'stats',
+      data => data.payloads.responseBytes.max >= BIG_BINARY.length,
+      5000
+    )
+    const response = await request({ path: `http://127.0.0.1:${upstreamPort}/big.bin` })
+    assert.equal(response.status, 200)
+    assert.equal(Buffer.byteLength(response.body, 'utf8') > 0, true)
+
+    const stats = await sized
+    assert.ok(stats.data.payloads.responseBytes.max >= BIG_BINARY.length)
     stream.close()
   })
 

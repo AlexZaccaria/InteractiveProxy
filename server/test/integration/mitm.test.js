@@ -262,6 +262,34 @@ test('a client that sends no SNI gets the certificate of the CONNECT host and is
   secure.destroy()
 })
 
+test('a non-WebSocket Upgrade request inside a tunnel is forwarded as a plain request', async () => {
+  const { socket } = await openTunnel(`127.0.0.1:${upstreamPort}`)
+  const secure = await secureTunnel(socket, 'localhost')
+
+  const res = await requestOverSocket(secure, {
+    method: 'GET',
+    path: '/plain',
+    headers: {
+      host: `127.0.0.1:${upstreamPort}`,
+      connection: 'Upgrade',
+      upgrade: 'h2c',
+      'http2-settings': 'AAMAAABkAAQAoAAAAAIAAAAA'
+    }
+  })
+  assert.equal(res.status, 200)
+  const echoed = JSON.parse(res.body)
+  assert.equal(echoed.method, 'GET')
+  assert.equal(echoed.url, '/plain')
+  assert.equal(echoed.headers.upgrade, undefined, 'the upgrade header is not forwarded')
+  assert.equal(echoed.headers['http2-settings'], undefined)
+  assert.equal(echoed.headers.host, `127.0.0.1:${upstreamPort}`)
+
+  const logs = await api('GET', '/api/logs?sources=mitm&limit=200')
+  assert.ok(logs.json.items.some(item => item.fullUrl === `https://127.0.0.1:${upstreamPort}/plain`))
+
+  secure.destroy()
+})
+
 // --- Response streaming through the MITM tunnel ----------------------------
 
 const BIG_BINARY = crypto.randomBytes(3 * 1024 * 1024)
@@ -390,6 +418,25 @@ test('a 3 MiB binary response through MITM is streamed intact and logged with it
   assert.equal(entry.responseSize, BIG_BINARY.length)
 
   secure.destroy()
+})
+
+test('the dashboard counts the bytes of a streamed response once its transfer ends', async () => {
+  // Runs right after the streamed big.bin, which is the only entry of the
+  // window since that test cleared the logs.
+  const dashboard = await api('GET', '/api/dashboard')
+  assert.ok(
+    dashboard.json.payloads.responseBytes.max >= BIG_BINARY.length,
+    `responseBytes.max is ${dashboard.json.payloads.responseBytes.max}`
+  )
+  assert.ok(dashboard.json.payloads.responseBytes.avg >= BIG_BINARY.length)
+
+  const routes = [
+    ...dashboard.json.routes.slowest,
+    ...Object.values(dashboard.json.routes.byHandling).flat()
+  ]
+  const route = routes.find(item => item.host === '127.0.0.1' && item.path === '/big.bin')
+  assert.ok(route, 'the streamed route is in the snapshot')
+  assert.ok(route.avgBytes >= BIG_BINARY.length, `avgBytes is ${route.avgBytes}`)
 })
 
 test('an event stream through MITM reaches the client incrementally', async () => {

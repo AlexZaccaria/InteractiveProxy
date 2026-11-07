@@ -38,6 +38,7 @@ function loadCaBundle (file) {
  * @property {string | null} caBundle Additional CA bundle (PEM) for strict mode.
  * @property {number} headersTimeoutMs Undici headers timeout; 0 keeps the undici default.
  * @property {number} bodyTimeoutMs Undici body timeout; 0 keeps the undici default.
+ * @property {boolean} [allowH2] Negotiate HTTP/2 with TLS upstreams through ALPN (plain http stays HTTP/1.1).
  */
 
 /**
@@ -68,11 +69,12 @@ function loadCaBundle (file) {
  * @param {UpstreamOptions} options
  * @returns {Upstream}
  */
-function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs }) {
+function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs, allowH2 = false }) {
   const httpDispatcher = new Agent({
     connections: 128,
     keepAliveTimeout: 60_000,
-    keepAliveMaxTimeout: 600_000
+    keepAliveMaxTimeout: 600_000,
+    allowH2
   })
 
   const httpsConnectOptions = strictTls
@@ -88,6 +90,7 @@ function createUpstream ({ strictTls, caBundle, headersTimeoutMs, bodyTimeoutMs 
     connections: 128,
     keepAliveTimeout: 60_000,
     keepAliveMaxTimeout: 600_000,
+    allowH2,
     connect: httpsConnectOptions
   })
 

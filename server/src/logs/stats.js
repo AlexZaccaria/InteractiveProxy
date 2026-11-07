@@ -458,6 +458,8 @@ function sortRouteSnapshots (a, b) {
 /**
  * @typedef {object} Stats
  * @property {(logEntry: LogEntry | null | undefined, direction: 1 | -1) => void} applyDashboardStatsDelta
+ * @property {(logEntry: LogEntry | null | undefined, bytes: number) => void} recordStreamedResponseSize Account for the body of a streamed response once its size is known.
+ * @property {(listener: () => void) => () => void} onChange Listen for changes made outside the add/remove cycle; returns the unsubscribe function.
  * @property {() => void} reset Zero every counter (used by DELETE /api/logs).
  * @property {() => DashboardStats} getDashboardStats The live counters.
  * @property {() => DashboardPerformanceStats} getPerformanceStats The live counters.
@@ -625,6 +627,84 @@ function createStats () {
     }
   }
 
+  /** @type {Set<() => void>} */
+  const changeListeners = new Set()
+
+  /**
+   * Listen for aggregate changes that happen outside the add/remove cycle of
+   * the log store (today: the size of a streamed response, known only when
+   * its transfer ends).
+   *
+   * @param {() => void} listener
+   * @returns {() => void} Unsubscribe.
+   */
+  function onChange (listener) {
+    changeListeners.add(listener)
+    return () => { changeListeners.delete(listener) }
+  }
+
+  function notifyChange () {
+    for (const listener of changeListeners) {
+      try {
+        listener()
+      } catch (error) {
+        logDebug('stats', 'A stats change listener failed', error)
+      }
+    }
+  }
+
+  /**
+   * Account for the body of a streamed response, whose size is known only
+   * when the transfer ends: the entry entered the window with
+   * `responseSize: null`, so its bytes reached neither the payload
+   * aggregates nor its route. Applies what applyDashboardStatsDelta(entry, 1)
+   * would have applied for that size and stores it on the entry, so that the
+   * entry's eviction subtracts the same amount. Idempotent per entry.
+   *
+   * @param {LogEntry | null | undefined} logEntry
+   * @param {number} bytes
+   */
+  function recordStreamedResponseSize (logEntry, bytes) {
+    if (!logEntry || typeof logEntry !== 'object') return
+    if (!Number.isFinite(bytes) || bytes < 0) return
+    if (typeof logEntry.responseBytes === 'number') return
+
+    logEntry.responseSize = bytes
+    logEntry.responseBytes = bytes
+
+    performanceStats.payloads.response.count += 1
+    performanceStats.payloads.response.totalBytes += bytes
+    performanceStats.payloads.response.maxBytes = Math.max(performanceStats.payloads.response.maxBytes, bytes)
+
+    const hostInfo = extractHostInfoFromLog(logEntry)
+    if (hostInfo && hostInfo.host) {
+      const pathKey = sanitizePathForSuggestions(hostInfo.path)
+      const routeKey = `${hostInfo.host}${pathKey}`
+      let route = routeStats.get(routeKey)
+      if (!route) {
+        // The entry's route was dropped at add time because its duration
+        // rounded to 0 ms (routes exist only with a positive total); recreate
+        // it with this entry so the streamed bytes stay visible.
+        const src = typeof logEntry.source === 'string' && logEntry.source ? logEntry.source : 'unknown'
+        const totalMs = typeof logEntry.totalDurationMs === 'number' ? logEntry.totalDurationMs : 0
+        route = {
+          host: hostInfo.host,
+          path: pathKey,
+          count: 1,
+          totalMs,
+          maxMs: totalMs,
+          totalResponseBytes: 0,
+          sourceCounts: Object.create(null)
+        }
+        route.sourceCounts[src] = 1
+      }
+      route.totalResponseBytes += bytes
+      routeStats.set(routeKey, route)
+    }
+
+    notifyChange()
+  }
+
   function reset () {
     dashboardStats = createEmptyDashboardStats()
     performanceStats = createEmptyPerformanceStats()
@@ -758,6 +838,8 @@ function createStats () {
 
   return {
     applyDashboardStatsDelta,
+    recordStreamedResponseSize,
+    onChange,
     reset,
     getDashboardStats: () => dashboardStats,
     getPerformanceStats: () => performanceStats,

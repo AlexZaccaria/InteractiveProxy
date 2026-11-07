@@ -105,6 +105,7 @@ The proxy server can be configured using environment variables.
 | `PROXY_WS_LOG_BODY_ENABLED` | `true` | Enable/disable WebSocket body logging |
 | `PROXY_UPSTREAM_HEADERS_TIMEOUT_MS` | `0` (default) | Timeout for upstream headers |
 | `PROXY_UPSTREAM_BODY_TIMEOUT_MS` | `0` (default) | Timeout for upstream body |
+| `PROXY_UPSTREAM_H2` | `false` | Speak HTTP/2 to TLS upstreams that offer it through ALPN (undici `allowH2`); plain `http://` upstreams stay HTTP/1.1. Off by default because h2 changes the header semantics (pseudo-headers such as `:authority`, no connection-specific headers); upstreams that only speak HTTP/1.1 are unaffected either way |
 | `PROXY_STREAM_UNINSPECTED_RESPONSES`| `true` | Pipe upstream responses to the client as they arrive (HTTP and HTTPS MITM) when no edit rule can apply to them and nothing needs the body for logging: interactive mode off, clearly binary content, `text/event-stream`, or a declared size above `PROXY_STREAM_THRESHOLD_BYTES`. Such responses are logged as `[streamed response]` with their final size. Set to `false` to buffer every response |
 | `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` (1 MiB) | With interactive mode on, responses whose `content-length` exceeds this are streamed instead of previewed; `0` never streams by size alone |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED`| `true` | Apply rewrites even for direct MITM flows |

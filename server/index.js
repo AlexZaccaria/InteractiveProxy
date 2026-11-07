@@ -22,7 +22,8 @@ const {
   STRICT_TLS_CA_FILE,
   BODY_LIMIT,
   UPSTREAM_HEADERS_TIMEOUT_MS,
-  UPSTREAM_BODY_TIMEOUT_MS
+  UPSTREAM_BODY_TIMEOUT_MS,
+  UPSTREAM_H2
 } = require('./config')
 
 const { safeTrim, queryBool, safeString, parseListQuery } = require('./src/util/strings')
@@ -153,7 +154,8 @@ const upstream = createUpstream({
   strictTls: STRICT_TLS_ENABLED,
   caBundle: loadCaBundle(STRICT_TLS_CA_FILE),
   headersTimeoutMs: UPSTREAM_HEADERS_TIMEOUT_MS,
-  bodyTimeoutMs: UPSTREAM_BODY_TIMEOUT_MS
+  bodyTimeoutMs: UPSTREAM_BODY_TIMEOUT_MS,
+  allowH2: UPSTREAM_H2
 })
 
 // Live edit rules: rules, presets, compiled caches, the enabled flag and the
@@ -233,6 +235,16 @@ const logStore = createLogStore({
 })
 /** @param {Record<string, any>} entry */
 const addLog = entry => logStore.add(entry)
+// Streamed responses learn their size only when the transfer ends; the flows
+// report it here, and the window may have evicted the entry in the meantime.
+/** @type {Pick<import('./src/logs/stats').Stats, 'recordStreamedResponseSize'>} */
+const streamedSizeStats = {
+  recordStreamedResponseSize: (entry, bytes) => {
+    if (entry && logStore.findById(entry.id) === entry) {
+      stats.recordStreamedResponseSize(entry, bytes)
+    }
+  }
+}
 /** @param {Record<string, any>} [query] */
 const filterLogsCore = query => filterLogsCoreForStore(query, logStore)
 /** @param {{ limit?: number }} [options] */
@@ -276,6 +288,7 @@ const httpFlow = createHttpFlow({
   ruleStore,
   attachRewriteMetadata,
   bypassCounter,
+  stats: streamedSizeStats,
   port: PORT
 })
 const apiRouter = createApiRouter({
@@ -317,7 +330,8 @@ const mitm = createMitmHandler({
   httpJson: httpJsonRewriter,
   httpFlow,
   webSocketProxy,
-  bypassCounter
+  bypassCounter,
+  stats: streamedSizeStats
 })
 const { server, start, stop } = createProxyServer({
   app,

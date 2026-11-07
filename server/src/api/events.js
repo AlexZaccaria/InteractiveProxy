@@ -186,6 +186,12 @@ function createEventsRoutes ({
     setImmediate(publishStats)
   })
 
+  // Aggregates that change outside the add/remove cycle of the window (the
+  // size of a streamed response, known when its transfer ends).
+  stats.onChange(() => {
+    scheduleStats()
+  })
+
   configStore.onChange(snapshot => {
     bus.publish('config', snapshot)
   })

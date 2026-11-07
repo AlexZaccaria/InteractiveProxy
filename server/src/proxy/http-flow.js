@@ -73,6 +73,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {RuleStore} ruleStore
  * @property {(logEntry: LogEntry | null | undefined, appliedRuleIds: string[], phase: string) => void} attachRewriteMetadata
  * @property {BypassCounter} bypassCounter
+ * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
  * @property {number} port Listening port, the default authority of client-facing URLs.
  */
 
@@ -141,6 +142,7 @@ function createHttpFlow ({
   ruleStore,
   attachRewriteMetadata,
   bypassCounter,
+  stats,
   port
 }) {
   const { createHttpFlowLogEntry, recordUpstreamErrorOnLog } = entries
@@ -610,6 +612,7 @@ function createHttpFlow ({
             const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res)
             if (logEntry) {
               logEntry.responseSize = bytes
+              stats.recordStreamedResponseSize(logEntry, bytes)
             }
             return
           }
