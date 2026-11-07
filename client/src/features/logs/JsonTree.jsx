@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useMemo, useState } from 'react'
 import { JSONTree } from 'react-json-tree'
 import { buildJsonPathFromKeyPath, buildJsonPathRuleSeed, isJsonTreeRootNode } from './jsonPath'
+import { useProxyStore } from '../../store/useProxyStore'
+import Tooltip from '../../components/Tooltip'
 
 /**
  * The JSON viewer of the log details: react-json-tree in the proxy's
@@ -9,12 +10,13 @@ import { buildJsonPathFromKeyPath, buildJsonPathRuleSeed, isJsonTreeRootNode } f
  * by default with an "Expand all" switch per tree.
  */
 
-// App-themed base16 palette for react-json-tree, tuned to match the proxy UI
-// with enhanced contrast and distinct colors for better readability.
+// App-themed base16 palette for react-json-tree in the dark theme, tuned to
+// match the proxy UI with enhanced contrast and distinct colors for better
+// readability. The surface values are the dark tokens of index.css.
 export const jsonTreeTheme = {
   scheme: 'proxy-dark',
   author: 'interactive-proxy',
-  // background + depth (aligned with bg-[#0f0f0f] / bg-[#050505])
+  // background + depth (aligned with bg-surface-inset / bg-surface-sunken)
   base00: '#0f0f0f', // main tree background
   base01: '#1a1a1a', // slightly lighter for depth
   base02: '#252525', // nested level background
@@ -33,6 +35,29 @@ export const jsonTreeTheme = {
   base0D: '#facc15', // amber-300 — keys, property names (warm, clearly distinct from strings)
   base0E: '#c084fc', // purple-400 — functions, symbols
   base0F: '#fb923c' // orange-400 — regex, special types
+}
+
+// The same roles in the light theme: the surfaces are the light tokens of
+// index.css, the accents the 600/700 shades of the same hues.
+export const jsonTreeLightTheme = {
+  scheme: 'proxy-light',
+  author: 'interactive-proxy',
+  base00: '#fafafa',
+  base01: '#f4f4f5',
+  base02: '#e4e4e7',
+  base03: '#71717a',
+  base04: '#52525b',
+  base05: '#3f3f46',
+  base06: '#27272a',
+  base07: '#18181b',
+  base08: '#dc2626', // red-600 — null, undefined, errors
+  base09: '#0d9488', // teal-600 — numbers
+  base0A: '#b45309', // amber-700 — booleans
+  base0B: '#3f3f46', // zinc-700 — strings
+  base0C: '#0891b2', // cyan-600 — dates, special values
+  base0D: '#b45309', // amber-700 — keys
+  base0E: '#9333ea', // purple-600 — functions, symbols
+  base0F: '#ea580c' // orange-600 — regex, special types
 }
 
 /**
@@ -76,82 +101,46 @@ export function hasCollapsedNodes(data, depth) {
 }
 
 /**
- * A key label that seeds a rewrite rule when clicked, with a tooltip
- * (rendered in a portal) that shows the path.
+ * A key label that seeds a rewrite rule when clicked or activated with
+ * Enter or Space, with a tooltip that shows the path.
  *
  * @param {{ labelText: string, path: string, onActivate: () => void }} props
  */
 export function JsonTreeClickableLabel({ labelText, path, onActivate }) {
-  const [showTooltip, setShowTooltip] = useState(false)
-  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 })
-  const anchorRef = useRef(null)
-  const hideTimeoutRef = useRef(null)
-
-  const updateTooltipPosition = useCallback(() => {
-    const element = anchorRef.current
-    if (!element) return
-    const rect = element.getBoundingClientRect()
-    const tooltipWidth = 280 // similar to other tooltips
-    const margin = 6
-    setTooltipPosition({
-      top: rect.bottom + margin,
-      left: Math.max(8, rect.left - tooltipWidth / 2)
-    })
-  }, [])
-
-  const cancelHide = useCallback(() => {
-    if (hideTimeoutRef.current) {
-      clearTimeout(hideTimeoutRef.current)
-      hideTimeoutRef.current = null
-    }
-  }, [])
-
-  const scheduleHide = useCallback(() => {
-    cancelHide()
-    hideTimeoutRef.current = setTimeout(() => setShowTooltip(false), 120)
-  }, [cancelHide])
-
-  const handleClick = event => {
+  /** @param {import('react').SyntheticEvent} event */
+  const activate = event => {
     event.stopPropagation()
     event.preventDefault()
     if (typeof onActivate === 'function') onActivate()
   }
 
-  const handleMouseEnter = () => {
-    cancelHide()
-    updateTooltipPosition()
-    setShowTooltip(true)
-  }
-
   return (
-    <>
+    <Tooltip
+      title="Create a rewrite rule"
+      description={
+        <>
+          <p>Click to create a rewrite rule for this field.</p>
+          <div className="text-fg-faint truncate mt-0.5">
+            Path: <code className="text-[10px] text-blue-300">{path}</code>
+          </div>
+        </>
+      }
+      placement="bottom-start"
+      panelClassName="max-w-72"
+      inline
+    >
       <span
-        ref={anchorRef}
-        className="cursor-pointer underline decoration-dotted decoration-slate-500/70 hover:decoration-slate-300"
-        onClick={handleClick}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={scheduleHide}
+        role="button"
+        tabIndex={0}
+        className="cursor-pointer underline decoration-dotted decoration-slate-500/70 hover:decoration-slate-300 focus:outline-hidden focus-visible:decoration-slate-300"
+        onClick={activate}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') activate(event)
+        }}
       >
         {labelText}
       </span>
-      {showTooltip &&
-        createPortal(
-          <div
-            className="fixed w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-2 text-[11px] text-slate-300 shadow-2xl"
-            style={{ zIndex: 99999, top: tooltipPosition.top, left: tooltipPosition.left }}
-            onMouseEnter={cancelHide}
-            onMouseLeave={scheduleHide}
-          >
-            <div className="space-y-0.5">
-              <div>Click to create a rewrite rule for this field.</div>
-              <div className="text-slate-500 truncate">
-                Path: <code className="text-[10px] text-blue-300">{path}</code>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
-    </>
+    </Tooltip>
   )
 }
 
@@ -206,6 +195,7 @@ export function createJsonTreeLabelRenderer(
  * @param {(seed: import('./jsonPath').JsonPathRuleSeed) => void} [props.onCreateJsonPathRule]
  */
 export function JsonTree({ data, title, contextLabel, urlPattern, target, onCreateJsonPathRule }) {
+  const theme = useProxyStore(state => state.theme)
   const [expandAll, setExpandAll] = useState(false)
   const canExpandMore = useMemo(() => hasCollapsedNodes(data, JSON_TREE_DEFAULT_DEPTH), [data])
 
@@ -221,7 +211,7 @@ export function JsonTree({ data, title, contextLabel, urlPattern, target, onCrea
       {(title || showSwitch) && (
         <div className="flex items-center justify-between gap-2 mb-1">
           {title ? (
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
               {title}
             </div>
           ) : (
@@ -241,7 +231,7 @@ export function JsonTree({ data, title, contextLabel, urlPattern, target, onCrea
       <JSONTree
         key={expandAll ? 'all' : 'depth'}
         data={data}
-        theme={jsonTreeTheme}
+        theme={theme === 'dark' ? jsonTreeTheme : jsonTreeLightTheme}
         invertTheme={false}
         hideRoot={false}
         shouldExpandNodeInitially={expandAll ? expandEverything : expandToDefaultDepth}
@@ -259,7 +249,7 @@ export function JsonTree({ data, title, contextLabel, urlPattern, target, onCrea
  */
 export function JsonPanel(props) {
   return (
-    <div className="bg-[#0f0f0f] rounded px-3 py-2 border border-[#2a2a2a] max-h-96 overflow-y-auto">
+    <div className="bg-surface-inset rounded px-3 py-2 border border-edge max-h-96 overflow-y-auto">
       <JsonTree {...props} />
     </div>
   )
@@ -286,7 +276,7 @@ export function JsonBeforeAfter({
 }) {
   const shared = { contextLabel, urlPattern, target, onCreateJsonPathRule }
   return (
-    <div className="text-xs text-slate-200 grid grid-cols-1 md:grid-cols-2 gap-3">
+    <div className="text-xs text-fg-base grid grid-cols-1 md:grid-cols-2 gap-3">
       <JsonPanel title="After rewrite" data={after} {...shared} />
       <JsonPanel title="Before rewrite" data={before} {...shared} />
     </div>

@@ -33,7 +33,7 @@ export function SourceIcon({ source }) {
     case 'error':
       return <AlertCircle className="w-4 h-4 text-red-400" />
     default:
-      return <LinkIcon className="w-4 h-4 text-slate-400" />
+      return <LinkIcon className="w-4 h-4 text-fg-muted" />
   }
 }
 
@@ -68,7 +68,7 @@ const METHOD_BADGES = {
  * @returns {string}
  */
 export function getMethodBadgeClass(method) {
-  return METHOD_BADGES[method] || 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+  return METHOD_BADGES[method] || 'bg-fg-faint/20 text-fg-muted border-fg-faint/30'
 }
 
 /**
@@ -107,7 +107,7 @@ export function getContentTypeInfo(log) {
     case 'font':
       return { icon: FileText, label: 'FONT', color: 'text-pink-400' }
     default:
-      return { icon: File, label: 'FILE', color: 'text-slate-400' }
+      return { icon: File, label: 'FILE', color: 'text-fg-muted' }
   }
 }
 

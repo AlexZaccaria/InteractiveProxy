@@ -52,19 +52,19 @@ function RuleList({
 
   if (loading && rules.length === 0) {
     return (
-      <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] flex flex-col items-center justify-center text-center">
+      <div className="bg-surface-raised rounded-lg p-12 border border-edge flex flex-col items-center justify-center text-center">
         <Spinner size="md" />
-        <p className="mt-3 text-sm text-slate-400">Loading edit rules...</p>
+        <p className="mt-3 text-sm text-fg-muted">Loading edit rules...</p>
       </div>
     )
   }
 
   if (rules.length === 0 && !isCreating) {
     return (
-      <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] text-center">
-        <Edit3 className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-        <h3 className="text-xl font-semibold text-white mb-2">No editing rules</h3>
-        <p className="text-slate-400 mb-6">
+      <div className="bg-surface-raised rounded-lg p-12 border border-edge text-center">
+        <Edit3 className="w-16 h-16 text-fg-dim mx-auto mb-4" />
+        <h3 className="text-xl font-semibold text-fg mb-2">No editing rules</h3>
+        <p className="text-fg-muted mb-6">
           Create rules to modify intercepted requests and responses in real-time
         </p>
       </div>

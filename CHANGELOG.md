@@ -37,6 +37,9 @@
 - `image/svg+xml` responses are treated as text; file types are also derived from the URL extension when the response has no content type.
 - Logging goes through `pino` with a level (`PROXY_LOG_LEVEL`) and a format (`PROXY_LOG_FORMAT`); `npm run dev` renders it through `pino-pretty`.
 - The JSON trees in the request details open to depth 2, with an "Expand all" switch on each tree; before, every node of every tree was expanded, whatever the size of the payload.
+- The UI no longer forces a 1024 px minimum width: the header is one row from 1280 px and puts the counters on a second row below that; below 768 px the view buttons of the header are hidden, the tab bar scrolls sideways and the forms stack in one column.
+- The audit panel has a button in the header (the triple click on the title still works) and closes with Escape.
+- Every form field has an id and a label, every icon-only button an accessible name, the tab bar follows the WAI-ARIA tabs pattern (arrow keys move between tabs), and the dialogs keep the focus inside, close with Escape and give the focus back when they close.
 - Node.js 22.15 and npm 10 are required.
 
 ### Added
@@ -46,6 +49,8 @@
 - Non-WebSocket `Upgrade` requests inside a MITM tunnel are forwarded as plain requests.
 - The proxy serves the built UI from its own port (`npm run build && npm start`).
 - Streamed responses contribute their size to the dashboard statistics.
+- A light theme next to the dark one: the header button switches, the choice is stored under `proxy.theme`, and without a choice the UI follows the operating system.
+- Keyboard shortcuts: `/` focuses the URL search, `e` exports, `c` clears the logs, `1`–`5` switch tab, `?` opens the list, `Esc` closes panels and leaves text fields.
 - `docs/API.md`, this changelog, and a rewrite of the other documents.
 
 ### Internal
@@ -57,7 +62,8 @@
 - The client's server data goes through TanStack Query (`client/src/lib/api.js`, `queries.js`, `queryClient.js`): one query per endpoint, mutations that invalidate what they change, the event stream applied to the cache from `App.jsx`, polling as `refetchInterval` only while the stream is not open; the flags, the filter mode and the UI state shared across tabs live in a zustand store (`client/src/store/useProxyStore.js`). `axios` is gone.
 - The Requests tab is a feature folder (`client/src/features/logs/`): a hook for the filters, a hook that reads the pages of `GET /api/logs` as a TanStack infinite query (one request refreshes the whole window the client holds when a `log` event arrives), a list virtualised with `@tanstack/react-virtual`, one memoised component per card, and the details of an entry in a chunk loaded on first use; the body sections share one `GET /api/logs/:id` per entry. It replaces one 3,149-line component whose sub-components were created inside the render.
 - The Edited tab is a feature folder (`client/src/features/rules/`): a hook for the create/edit form (mode, fields, the preset chosen from the dropdown, the JSONPath seed from the log view) with pure builders and validation, one component each for the explanatory box, the form, the text and JSONPath fields, the preset dropdown, the list and the memoised rule card, and the pure preset helpers in their own module; the native file picker is a mutation of `queries.js`, next to the value-file upload. Each rule card shows how many logged entries the rule modified. It replaces one 2,146-line component.
-- Client tests with Vitest, jsdom and Testing Library (`npm run test:client`, also in CI): the JSONPath helpers, the filter query strings and the storage migration, the filter and list hooks, the filter bar and the log card; the preset helpers, the rule form hook and the rule card.
+- The colours of the client are semantic tokens (`client/src/index.css`: surfaces, borders, text levels and a neutral accent as CSS variables per theme, exposed to Tailwind through `@theme inline`); the components no longer carry hard-coded hex values. The unused `AddResource` component is gone.
+- Client tests with Vitest, jsdom and Testing Library (`npm run test:client`, also in CI): the JSONPath helpers, the filter query strings and the storage migration, the filter and list hooks, the filter bar and the log card; the preset helpers, the rule form hook and the rule card; the theme helpers and store, the keyboard shortcuts hook and the modal.
 - 305 tests with `node:test`: unit tests of the codecs, rules, routing and logs, and integration tests against local HTTP, HTTPS, HTTP/2 and WebSocket upstreams.
 - The log window is a ring buffer with an index by id.
 

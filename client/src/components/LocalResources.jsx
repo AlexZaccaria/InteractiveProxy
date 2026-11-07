@@ -16,6 +16,7 @@ import Spinner from './Spinner'
 import { ApiError } from '../lib/api'
 import { useResourceMutations, useResources, useSetFlag } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
+import Tooltip from './Tooltip'
 
 /**
  * Panel for listing and managing local resource overrides.
@@ -162,7 +163,7 @@ function LocalResources({ showConfirm }) {
     } else if (contentType.includes('text')) {
       return <FileText className="w-5 h-5 text-green-400" />
     }
-    return <File className="w-5 h-5 text-slate-400" />
+    return <File className="w-5 h-5 text-fg-muted" />
   }
 
   const getContentTypeBadge = contentType => {
@@ -177,43 +178,40 @@ function LocalResources({ showConfirm }) {
     } else if (contentType.includes('text')) {
       return 'bg-green-500/20 text-green-400 border-green-500/30'
     }
-    return 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+    return 'bg-fg-faint/20 text-fg-muted border-fg-faint/30'
   }
 
   return (
     <div className="space-y-4">
-      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a]">
-        <div className="flex items-center justify-between gap-4">
+      <div className="bg-surface-raised rounded-lg p-4 border border-edge">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="relative group/local-resources">
+            <Tooltip
+              title="Local resources"
+              description={
+                enabled
+                  ? 'Local resources are active and will override matching URLs with your configured files or text.'
+                  : 'Local resources are disabled. Requests will go to the remote server even if a matching local entry exists.'
+              }
+              placement="bottom-start"
+            >
               <button
                 type="button"
                 onClick={() => setLocalResourcesMode.mutate(!enabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   enabled
                     ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
-                    : 'bg-slate-700/40 border-slate-600/50 text-slate-400'
+                    : 'bg-accent-neutral/40 border-fg-dim/50 text-fg-muted'
                 }`}
                 aria-pressed={!!enabled}
               >
                 <HardDrive className="w-4 h-4" />
                 <span className="text-xs font-medium tracking-wide">{enabled ? 'ON' : 'OFF'}</span>
               </button>
-              <div
-                className="invisible group-hover/local-resources:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
-                style={{ zIndex: 99999 }}
-              >
-                <div className="font-semibold mb-1 text-slate-200">Local resources</div>
-                <p>
-                  {enabled
-                    ? 'Local resources are active and will override matching URLs with your configured files or text.'
-                    : 'Local resources are disabled. Requests will go to the remote server even if a matching local entry exists.'}
-                </p>
-              </div>
-            </div>
+            </Tooltip>
             <div>
-              <h3 className="text-base font-semibold text-white">Local Resources</h3>
-              <p className="text-xs text-slate-400">
+              <h3 className="text-base font-semibold text-fg">Local Resources</h3>
+              <p className="text-xs text-fg-muted">
                 {resources.length} {resources.length === 1 ? 'resource loaded' : 'resources loaded'}
               </p>
             </div>
@@ -221,7 +219,7 @@ function LocalResources({ showConfirm }) {
           <button
             onClick={() => setShowAddForm(true)}
             disabled={showAddForm}
-            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-white disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50 transition-colors text-xs font-medium"
+            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-fg disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50 transition-colors text-xs font-medium"
           >
             <Plus className="w-4 h-4" />
             <span>Add Resource</span>
@@ -232,7 +230,7 @@ function LocalResources({ showConfirm }) {
       <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-          <div className="text-sm text-slate-300">
+          <div className="text-sm text-fg-body">
             <p className="font-medium text-emerald-400 mb-1">How it works</p>
             <p>
               Local resources intercept matching URLs and serve your custom content instead of
@@ -245,24 +243,28 @@ function LocalResources({ showConfirm }) {
       </div>
 
       {showAddForm && (
-        <div className="bg-[#1a1a1a] rounded-lg p-5 border border-[#2a2a2a]">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-surface-raised rounded-lg p-5 border border-edge">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
-              <h4 className="text-sm font-semibold text-white">Add local resource</h4>
-              <p className="text-xs text-slate-400">
+              <h4 className="text-sm font-semibold text-fg">Add local resource</h4>
+              <p className="text-xs text-fg-muted">
                 Serve a local file or inline content when the request URL matches.
               </p>
             </div>
 
             {/* Mode Selection */}
-            <div className="inline-flex items-center rounded-full bg-[#050508] border border-[#252525] p-0.5">
+            <div
+              role="group"
+              aria-label="Resource kind"
+              className="inline-flex items-center rounded-full bg-surface-sunken border border-edge-subtle p-0.5"
+            >
               <button
                 type="button"
                 onClick={() => setMode('file')}
                 className={`px-3 h-8 text-xs font-medium tracking-wide rounded-full transform transition-all duration-150 ${
                   mode === 'file'
-                    ? 'bg-slate-800 text-slate-100 scale-100'
-                    : 'bg-transparent text-slate-400 hover:bg-[#161616] hover:text-slate-100 scale-95'
+                    ? 'bg-surface-active text-fg-strong scale-100'
+                    : 'bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-strong scale-95'
                 }`}
               >
                 File
@@ -272,8 +274,8 @@ function LocalResources({ showConfirm }) {
                 onClick={() => setMode('text')}
                 className={`px-3 h-8 text-xs font-medium tracking-wide rounded-full transform transition-all duration-150 ml-0.5 ${
                   mode === 'text'
-                    ? 'bg-[#101716] border border-emerald-600/60 text-emerald-200 scale-100'
-                    : 'bg-transparent text-slate-400 hover:bg-[#161616] hover:text-slate-100 scale-95'
+                    ? 'bg-emerald-500/10 border border-emerald-600/60 text-emerald-200 scale-100'
+                    : 'bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-strong scale-95'
                 }`}
               >
                 Text
@@ -284,28 +286,38 @@ function LocalResources({ showConfirm }) {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* URL Input */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+              <label
+                htmlFor="local-resource-url"
+                className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+              >
                 URL to intercept
               </label>
               <input
                 type="text"
+                id="local-resource-url"
+                name="local-resource-url"
                 value={url}
                 onChange={e => setUrl(e.target.value)}
                 placeholder="e.g. /api/data.json or https://example.com/api/data.json"
-                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg placeholder-fg-muted focus:outline-hidden focus:ring-1 focus:ring-blue-500"
                 required
               />
             </div>
 
             {/* Content Type */}
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+              <label
+                htmlFor="local-resource-content-type"
+                className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+              >
                 Content type
               </label>
               <select
+                id="local-resource-content-type"
+                name="local-resource-content-type"
                 value={contentType}
                 onChange={e => setContentType(e.target.value)}
-                className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               >
                 <option value="text/plain">text/plain</option>
                 <option value="text/html">text/html</option>
@@ -323,20 +335,22 @@ function LocalResources({ showConfirm }) {
             {/* File Upload Mode */}
             {mode === 'file' && (
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                <span className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2">
                   File to upload
-                </label>
+                </span>
                 <div className="relative">
                   <input
                     type="file"
                     id="file-upload"
+                    name="file-upload"
+                    aria-label="File to upload"
                     onChange={handleFileChange}
                     className="hidden"
                     required
                   />
                   <label
                     htmlFor="file-upload"
-                    className="flex items-center justify-center w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-slate-400 hover:border-blue-500 hover:text-blue-400 cursor-pointer transition-colors"
+                    className="flex items-center justify-center w-full px-3 py-2 bg-surface border border-edge rounded-lg text-sm text-fg-muted hover:border-blue-500 hover:text-blue-400 cursor-pointer transition-colors"
                   >
                     <Upload className="w-4 h-4 mr-2" />
                     <span>{file ? file.name : 'Choose a file...'}</span>
@@ -353,18 +367,23 @@ function LocalResources({ showConfirm }) {
             {/* Text Content Mode */}
             {mode === 'text' && (
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                <label
+                  htmlFor="local-resource-content"
+                  className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+                >
                   Content
                 </label>
                 <textarea
+                  id="local-resource-content"
+                  name="local-resource-content"
                   value={textContent}
                   onChange={e => setTextContent(e.target.value)}
                   placeholder="Enter text content, JSON, HTML, etc..."
                   rows={8}
-                  className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono resize-none"
+                  className="w-full px-3 py-2 bg-surface border border-edge rounded-lg text-xs text-fg placeholder-fg-muted focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono resize-none"
                   required
                 />
-                <p className="mt-2 text-xs text-slate-400">{textContent.length} characters</p>
+                <p className="mt-2 text-xs text-fg-muted">{textContent.length} characters</p>
               </div>
             )}
 
@@ -385,11 +404,11 @@ function LocalResources({ showConfirm }) {
             )}
 
             {/* Submit Button */}
-            <div className="flex items-center gap-3 pt-4 border-t border-[#2a2a2a]">
+            <div className="flex items-center gap-3 pt-4 border-t border-edge">
               <button
                 type="submit"
                 disabled={loading}
-                className="flex-1 inline-flex items-center justify-center gap-2 px-4 h-8 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-white disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50 transition-colors text-xs font-medium"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 h-8 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/30 hover:text-fg disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50 transition-colors text-xs font-medium"
               >
                 {loading ? (
                   <>
@@ -406,7 +425,7 @@ function LocalResources({ showConfirm }) {
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="inline-flex items-center justify-center px-4 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs font-medium text-slate-300 hover:bg-[#1a1a1a] hover:text-white transition-colors"
+                className="inline-flex items-center justify-center px-4 h-8 rounded-lg bg-surface border border-edge text-xs font-medium text-fg-body hover:bg-surface-raised hover:text-fg transition-colors"
               >
                 Cancel
               </button>
@@ -416,10 +435,10 @@ function LocalResources({ showConfirm }) {
       )}
 
       {resources.length === 0 ? (
-        <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] text-center">
-          <HardDrive className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-white mb-2">No local resources</h3>
-          <p className="text-slate-400 mb-6">
+        <div className="bg-surface-raised rounded-lg p-12 border border-edge text-center">
+          <HardDrive className="w-16 h-16 text-fg-dim mx-auto mb-4" />
+          <h3 className="text-xl font-semibold text-fg mb-2">No local resources</h3>
+          <p className="text-fg-muted mb-6">
             Upload files or text content to override remote resources.
           </p>
         </div>
@@ -430,10 +449,10 @@ function LocalResources({ showConfirm }) {
             return (
               <div
                 key={resource.url}
-                className={`bg-[#0a0a0a] rounded-lg border p-4 transition-colors ${
+                className={`bg-surface rounded-lg border p-4 transition-colors ${
                   isEnabled
-                    ? 'border-[#2a2a2a] hover:border-emerald-500/70'
-                    : 'border-slate-700/40 opacity-70'
+                    ? 'border-edge hover:border-emerald-500/70'
+                    : 'border-edge/40 opacity-70'
                 }`}
               >
                 <div className="flex items-start justify-between">
@@ -445,51 +464,55 @@ function LocalResources({ showConfirm }) {
                       >
                         {resource.contentType}
                       </span>
-                      <span className="px-2 py-1 rounded text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30">
+                      <span className="px-2 py-1 rounded text-xs font-medium border bg-fg-faint/20 text-fg-muted border-fg-faint/30">
                         {formatBytes(resource.size)}
                       </span>
                     </div>
 
                     <div className="flex items-start space-x-2 mb-2">
-                      <LinkIcon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-                      <p className="text-white font-mono text-sm break-all">{resource.url}</p>
+                      <LinkIcon className="w-4 h-4 text-fg-muted mt-0.5 shrink-0" />
+                      <p className="text-fg font-mono text-sm break-all">{resource.url}</p>
                     </div>
 
-                    <p className="text-slate-400 text-xs mb-1">
+                    <p className="text-fg-muted text-xs mb-1">
                       File: {resource.originalName || resource.filename}
                     </p>
                   </div>
 
                   <div className="ml-4 flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleToggleEnabled(resource)}
-                      disabled={togglingUrl === resource.url}
-                      className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors border text-xs font-medium ${
-                        isEnabled
-                          ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-200 hover:bg-emerald-600/30'
-                          : 'bg-slate-700/20 border-slate-600/60 text-slate-400 hover:bg-slate-700/30'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      title={isEnabled ? 'Disable local resource' : 'Enable local resource'}
-                    >
-                      {togglingUrl === resource.url ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Power className="w-4 h-4" />
-                      )}
-                    </button>
+                    <Tooltip title={isEnabled ? 'Disable local resource' : 'Enable local resource'}>
+                      <button
+                        onClick={() => handleToggleEnabled(resource)}
+                        disabled={togglingUrl === resource.url}
+                        className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors border text-xs font-medium ${
+                          isEnabled
+                            ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-200 hover:bg-emerald-600/30'
+                            : 'bg-accent-neutral/20 border-fg-dim/60 text-fg-muted hover:bg-accent-neutral/30'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        aria-label={isEnabled ? 'Disable local resource' : 'Enable local resource'}
+                      >
+                        {togglingUrl === resource.url ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Power className="w-4 h-4" />
+                        )}
+                      </button>
+                    </Tooltip>
 
-                    <button
-                      onClick={() => handleDelete(resource.url)}
-                      disabled={deletingUrl === resource.url}
-                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
-                      title="Delete resource"
-                    >
-                      {deletingUrl === resource.url ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
+                    <Tooltip title="Delete resource">
+                      <button
+                        onClick={() => handleDelete(resource.url)}
+                        disabled={deletingUrl === resource.url}
+                        className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
+                        aria-label="Delete resource"
+                      >
+                        {deletingUrl === resource.url ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               </div>

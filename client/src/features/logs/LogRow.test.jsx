@@ -43,7 +43,7 @@ function renderRow(overrides = {}) {
 
 describe('LogRow', () => {
   it('shows the badges, the URL and the time', () => {
-    renderRow()
+    renderRow({ rewritesPinned: true })
     expect(screen.getByText('POST')).toBeInTheDocument()
     expect(screen.getByText('MITM')).toBeInTheDocument()
     expect(screen.getByText('201')).toBeInTheDocument()

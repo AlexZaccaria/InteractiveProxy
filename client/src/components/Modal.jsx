@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { X, AlertCircle, HelpCircle, Info } from 'lucide-react'
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /**
  * Generic modal dialog used for alerts, confirmations and optional text input.
+ * While open it keeps the keyboard focus inside (Tab cycles through its
+ * controls), Escape cancels, and the element focused before it opened gets
+ * the focus back when it closes.
  *
  * @param {Object} props
  * @param {boolean} props.isOpen Whether the modal is visible.
@@ -29,18 +35,24 @@ function Modal({
   examples = []
 }) {
   const [inputText, setInputText] = useState(inputValue)
-  const confirmButtonRef = useRef(null)
+  const dialogRef = useRef(/** @type {HTMLDivElement | null} */ (null))
+  const confirmButtonRef = useRef(/** @type {HTMLButtonElement | null} */ (null))
 
   useEffect(() => {
     setInputText(inputValue)
   }, [inputValue])
 
-  // When the modal opens without an input field, move keyboard focus to the
-  // primary action button so that users can immediately confirm with Enter.
+  // Initial focus: the text input when there is one, else the primary
+  // action so that Enter confirms. The previously focused element is
+  // restored when the dialog closes.
   useEffect(() => {
-    if (!isOpen || showInput) return
-    if (confirmButtonRef.current) {
+    if (!isOpen) return undefined
+    const previous = document.activeElement
+    if (!showInput && confirmButtonRef.current) {
       confirmButtonRef.current.focus()
+    }
+    return () => {
+      if (previous instanceof HTMLElement && document.contains(previous)) previous.focus()
     }
   }, [isOpen, showInput])
 
@@ -60,6 +72,30 @@ function Modal({
     onClose()
   }
 
+  /** @param {React.KeyboardEvent<HTMLDivElement>} event */
+  const handleKeyDown = event => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      handleCancel()
+      return
+    }
+    if (event.key !== 'Tab' || !dialogRef.current) return
+    const focusable = Array.from(dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+      element => element instanceof HTMLElement
+    )
+    if (focusable.length === 0) return
+    const first = /** @type {HTMLElement} */ (focusable[0])
+    const last = /** @type {HTMLElement} */ (focusable[focusable.length - 1])
+    const active = document.activeElement
+    if (event.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   const getIcon = () => {
     switch (type) {
       case 'confirm':
@@ -75,31 +111,45 @@ function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg shadow-2xl max-w-md w-full animate-in fade-in zoom-in duration-200">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        aria-describedby="modal-message"
+        onKeyDown={handleKeyDown}
+        className="bg-surface-raised border border-edge rounded-lg shadow-2xl max-w-md w-full animate-in fade-in zoom-in duration-200"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[#2a2a2a]">
+        <div className="flex items-center justify-between p-4 border-b border-edge">
           <div className="flex items-center gap-3">
             {getIcon()}
-            <h3 className="text-lg font-semibold text-white">{title}</h3>
+            <h3 id="modal-title" className="text-lg font-semibold text-fg">
+              {title}
+            </h3>
           </div>
           <button
+            type="button"
             onClick={handleCancel}
-            className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
+            aria-label="Close"
+            className="p-1 hover:bg-surface-highlight rounded transition-colors"
           >
-            <X className="w-5 h-5 text-slate-400" />
+            <X className="w-5 h-5 text-fg-muted" />
           </button>
         </div>
 
         {/* Content */}
         <div className="p-4 space-y-4">
-          <p className="text-sm text-slate-300 whitespace-pre-line">{message}</p>
+          <p id="modal-message" className="text-sm text-fg-body whitespace-pre-line">
+            {message}
+          </p>
 
           {/* Examples */}
           {examples.length > 0 && (
-            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-3 space-y-2">
-              <p className="text-xs font-semibold text-slate-400">Examples:</p>
+            <div className="bg-surface border border-edge rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-fg-muted">Examples:</p>
               {examples.map((example, index) => (
-                <div key={index} className="text-xs text-slate-400">
+                <div key={index} className="text-xs text-fg-muted">
                   <span className="text-blue-400">•</span> {example}
                 </div>
               ))}
@@ -108,36 +158,44 @@ function Modal({
 
           {/* Input */}
           {showInput && (
-            <input
-              type="text"
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              placeholder={inputPlaceholder}
-              className="w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
-              autoFocus
-              onKeyDown={e => {
-                if (e.key === 'Enter') handleConfirm()
-                if (e.key === 'Escape') handleCancel()
-              }}
-            />
+            <>
+              <label htmlFor="modal-input" className="sr-only">
+                {title}
+              </label>
+              <input
+                type="text"
+                id="modal-input"
+                name="modal-input"
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                placeholder={inputPlaceholder}
+                className="w-full px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleConfirm()
+                }}
+              />
+            </>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-[#2a2a2a]">
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-edge">
           <button
+            type="button"
             onClick={handleCancel}
-            className="inline-flex items-center justify-center px-4 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs font-medium text-slate-300 hover:bg-[#1a1a1a] hover:text-white transition-colors"
+            className="inline-flex items-center justify-center px-4 h-8 rounded-lg bg-surface border border-edge text-xs font-medium text-fg-body hover:bg-surface-raised hover:text-fg transition-colors"
           >
             Cancel
           </button>
           <button
+            type="button"
             ref={confirmButtonRef}
             onClick={handleConfirm}
             className={`inline-flex items-center justify-center px-4 h-8 rounded-lg text-xs font-medium transition-colors border ${
               type === 'warning' || type === 'error'
-                ? 'bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30 hover:text-white'
-                : 'bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-white'
+                ? 'bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30 hover:text-fg'
+                : 'bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-fg'
             }`}
           >
             {type === 'confirm' || type === 'warning' ? 'Confirm' : 'OK'}

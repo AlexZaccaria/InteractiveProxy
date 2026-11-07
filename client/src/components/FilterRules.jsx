@@ -18,6 +18,7 @@ import {
   useSetFlag
 } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
+import Tooltip from './Tooltip'
 
 /** Suggestions polling period while the event stream is not open (Redirect mode only). */
 const SUGGESTIONS_POLL_MS = 1000
@@ -209,19 +210,19 @@ function FilterRules({ showConfirm }) {
       return (
         <div
           key={pattern}
-          className={`flex flex-row items-center justify-between gap-3 p-4 bg-[#0a0a0a] rounded-lg border transition-colors ${
+          className={`flex flex-row items-center justify-between gap-3 p-4 bg-surface rounded-lg border transition-colors ${
             bypassMode === 'focus'
-              ? 'border-[#2a2a2a] hover:border-purple-500/70'
-              : 'border-[#2a2a2a] hover:border-blue-500/70'
+              ? 'border-edge hover:border-purple-500/70'
+              : 'border-edge hover:border-blue-500/70'
           }`}
         >
-          <div className="flex-1 min-w-0 flex flex-col gap-1 text-sm text-slate-300">
+          <div className="flex-1 min-w-0 flex flex-col gap-1 text-sm text-fg-body">
             <div className="flex items-center gap-2">
               <Lightbulb className="w-4 h-4 text-amber-300" />
               <span className="font-mono">{pattern}</span>
-              <span className="text-xs text-slate-500">{count} hits</span>
+              <span className="text-xs text-fg-faint">{count} hits</span>
             </div>
-            <div className="text-xs text-slate-500 break-all whitespace-normal" title={pathSummary}>
+            <div className="text-xs text-fg-faint break-all whitespace-normal">
               Hot paths: {pathSummary}
             </div>
           </div>
@@ -230,10 +231,10 @@ function FilterRules({ showConfirm }) {
             disabled={isLoading}
             className={`inline-flex items-center justify-center px-3 h-8 rounded-lg border transition-colors text-xs font-medium ${
               bypassMode === 'focus'
-                ? 'bg-purple-600/20 border-purple-500/50 text-purple-200 hover:bg-purple-600/30 hover:text-white'
-                : 'bg-blue-600/20 border-blue-500/50 text-blue-200 hover:bg-blue-600/30 hover:text-white'
-            } disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50`}
-            title="Add rule from suggestion"
+                ? 'bg-purple-600/20 border-purple-500/50 text-purple-200 hover:bg-purple-600/30 hover:text-fg'
+                : 'bg-blue-600/20 border-blue-500/50 text-blue-200 hover:bg-blue-600/30 hover:text-fg'
+            } disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50`}
+            aria-label="Add rule from suggestion"
           >
             {isLoading ? (
               <>
@@ -254,10 +255,18 @@ function FilterRules({ showConfirm }) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a]">
-        <div className="flex items-center justify-between gap-4">
+      <div className="bg-surface-raised rounded-lg p-4 border border-edge">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="relative group/filter-rules">
+            <Tooltip
+              title="Filter rules"
+              description={
+                filterRulesEnabled
+                  ? 'Filter rules are active and control which requests are bypassed or focused through the proxy pipeline.'
+                  : 'Filter rules are disabled. All requests go through the proxy pipeline without automatic bypass based on filter rules.'
+              }
+              placement="bottom-start"
+            >
               <button
                 type="button"
                 onClick={() => setFilterRulesMode.mutate(!filterRulesEnabled)}
@@ -266,7 +275,7 @@ function FilterRules({ showConfirm }) {
                     ? bypassMode === 'focus'
                       ? 'bg-purple-600/20 border-purple-600/30 text-purple-300'
                       : 'bg-blue-600/20 border-blue-500/40 text-blue-200'
-                    : 'bg-slate-700/40 border-slate-600/50 text-slate-400'
+                    : 'bg-accent-neutral/40 border-fg-dim/50 text-fg-muted'
                 }`}
                 aria-pressed={!!filterRulesEnabled}
               >
@@ -279,23 +288,12 @@ function FilterRules({ showConfirm }) {
                   {filterRulesEnabled ? 'ON' : 'OFF'}
                 </span>
               </button>
-              <div
-                className="invisible group-hover/filter-rules:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
-                style={{ zIndex: 99999 }}
-              >
-                <div className="font-semibold mb-1 text-slate-200">Filter rules</div>
-                <p>
-                  {filterRulesEnabled
-                    ? 'Filter rules are active and control which requests are bypassed or focused through the proxy pipeline.'
-                    : 'Filter rules are disabled. All requests go through the proxy pipeline without automatic bypass based on filter rules.'}
-                </p>
-              </div>
-            </div>
+            </Tooltip>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-semibold text-white">Filter Rules</h3>
+                <h3 className="text-base font-semibold text-fg">Filter Rules</h3>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-fg-muted">
                 {patterns.length} {patterns.length === 1 ? 'active rule' : 'active rules'} · Mode{' '}
                 <span
                   className={`font-semibold ${
@@ -308,14 +306,18 @@ function FilterRules({ showConfirm }) {
             </div>
           </div>
 
-          <div className="inline-flex items-center rounded-full bg-[#050508] border border-[#252525] p-0.5">
+          <div
+            role="group"
+            aria-label="Filter mode"
+            className="inline-flex items-center rounded-full bg-surface-sunken border border-edge-subtle p-0.5"
+          >
             <button
               type="button"
               onClick={() => setFilterMode.mutate('ignore')}
               className={`px-3 h-8 text-xs font-medium tracking-wide rounded-full transform transition-all duration-150 ${
                 bypassMode !== 'focus'
                   ? 'bg-blue-600/20 border border-blue-500/60 text-blue-200 scale-100'
-                  : 'bg-transparent text-slate-400 hover:bg-[#161616] hover:text-slate-100 scale-95'
+                  : 'bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-strong scale-95'
               }`}
             >
               Redirect
@@ -326,7 +328,7 @@ function FilterRules({ showConfirm }) {
               className={`px-3 h-8 text-xs font-medium tracking-wide rounded-full transform transition-all duration-150 ml-0.5 ${
                 bypassMode === 'focus'
                   ? 'bg-purple-600/20 border border-purple-500/60 text-purple-200 scale-100'
-                  : 'bg-transparent text-slate-400 hover:bg-[#161616] hover:text-slate-100 scale-95'
+                  : 'bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-strong scale-95'
               }`}
             >
               Process
@@ -348,7 +350,7 @@ function FilterRules({ showConfirm }) {
               bypassMode === 'focus' ? 'text-purple-400' : 'text-blue-400'
             }`}
           />
-          <div className="text-sm text-slate-300">
+          <div className="text-sm text-fg-body">
             <p
               className={`font-medium mb-1 ${
                 bypassMode === 'focus' ? 'text-purple-400' : 'text-blue-400'
@@ -385,12 +387,12 @@ function FilterRules({ showConfirm }) {
 
       <form
         onSubmit={addPattern}
-        className="bg-[#1a1a1a] rounded-lg p-5 border border-[#2a2a2a] space-y-4"
+        className="bg-surface-raised rounded-lg p-5 border border-edge space-y-4"
       >
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-white">Add filter rule</p>
-            <p className="text-xs text-slate-400">
+            <p className="text-sm font-semibold text-fg">Add filter rule</p>
+            <p className="text-xs text-fg-muted">
               Applies while in {bypassMode === 'focus' ? 'Process' : 'Redirect'} mode.
             </p>
           </div>
@@ -398,39 +400,49 @@ function FilterRules({ showConfirm }) {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+            <label
+              htmlFor="filter-rule-name"
+              className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+            >
               Name (optional)
             </label>
             <input
               type="text"
+              id="filter-rule-name"
+              name="filter-rule-name"
               value={newName}
               onChange={e => setNewName(e.target.value)}
               placeholder="e.g. Analytics, CDN, Third-party scripts"
-              className="w-full px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+              className="w-full px-3 h-8 rounded-lg bg-surface border border-edge text-xs text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+            <label
+              htmlFor="filter-rule-pattern"
+              className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+            >
               Match pattern
             </label>
             <div className="flex flex-row items-center gap-2">
               <input
                 type="text"
+                id="filter-rule-pattern"
+                name="filter-rule-pattern"
                 value={newPattern}
                 onChange={e => setNewPattern(e.target.value)}
                 placeholder="Enter partial URL (e.g. /metrics, anthropic.com/api)"
-                className="flex-1 px-3 h-8 rounded-lg bg-[#0a0a0a] border border-[#2a2a2a] text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                className="flex-1 px-3 h-8 rounded-lg bg-surface border border-edge text-xs text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="submit"
                 disabled={isLoading || !newPattern.trim()}
                 className={`inline-flex items-center justify-center px-4 h-8 rounded-lg transition-colors text-xs font-medium border ${
                   bypassMode === 'focus'
-                    ? 'bg-purple-600/20 border-purple-500/40 text-purple-200 hover:bg-purple-600/30 hover:text-white'
-                    : 'bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-white'
-                } disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50`}
-                title="Add rule"
+                    ? 'bg-purple-600/20 border-purple-500/40 text-purple-200 hover:bg-purple-600/30 hover:text-fg'
+                    : 'bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30 hover:text-fg'
+                } disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50`}
+                aria-label="Add rule"
               >
                 {isLoading ? (
                   <>
@@ -456,23 +468,21 @@ function FilterRules({ showConfirm }) {
       )}
 
       {bypassMode !== 'focus' && (
-        <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a] space-y-3">
+        <div className="bg-surface-raised rounded-lg p-4 border border-edge space-y-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-fg flex items-center gap-2">
               <Lightbulb className="w-4 h-4 text-amber-300" />
               Suggested rules
             </h4>
-            <span className="text-xs text-slate-500">
-              Top {suggestions.length} frequent domains
-            </span>
+            <span className="text-xs text-fg-faint">Top {suggestions.length} frequent domains</span>
           </div>
           {suggestionsLoading && suggestions.length === 0 ? (
-            <p className="text-sm text-slate-400 flex items-center gap-2">
+            <p className="text-sm text-fg-muted flex items-center gap-2">
               <Spinner size="sm" color="blue" />
               Loading suggestions...
             </p>
           ) : suggestions.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-fg-faint">
               No suggestions available yet. Generate traffic to see recommendations.
             </p>
           ) : (
@@ -481,21 +491,21 @@ function FilterRules({ showConfirm }) {
         </div>
       )}
 
-      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a]">
+      <div className="bg-surface-raised rounded-lg p-4 border border-edge">
         {isLoading && patterns.length === 0 ? (
-          <div className="flex items-center justify-center gap-2 py-4 text-sm text-slate-400">
+          <div className="flex items-center justify-center gap-2 py-4 text-sm text-fg-muted">
             <Spinner size="md" color="blue" />
             <span>Loading rules...</span>
           </div>
         ) : patterns.length === 0 ? (
           <div className="text-center py-8">
-            <SkipForward className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-            <p className="text-sm text-slate-400">
+            <SkipForward className="w-10 h-10 text-fg-dim mx-auto mb-3" />
+            <p className="text-sm text-fg-muted">
               {bypassMode === 'focus'
                 ? 'No Process rules configured.'
                 : 'No Redirect rules configured.'}
             </p>
-            <p className="text-xs text-slate-500 mt-2">
+            <p className="text-xs text-fg-faint mt-2">
               {bypassMode === 'focus'
                 ? 'Add patterns to inspect only specific domains through the proxy pipeline.'
                 : 'Add patterns to skip decoding and logging for high-volume or low-value traffic.'}
@@ -506,56 +516,59 @@ function FilterRules({ showConfirm }) {
             {patterns.map(rule => (
               <div
                 key={rule.id}
-                className={`flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg border transition-colors ${
+                className={`flex items-center justify-between p-4 bg-surface rounded-lg border transition-colors ${
                   rule.enabled
                     ? bypassMode === 'focus'
-                      ? 'border-[#2a2a2a] hover:border-purple-500/70'
-                      : 'border-[#2a2a2a] hover:border-blue-500/70'
-                    : 'border-slate-700/30 opacity-60'
+                      ? 'border-edge hover:border-purple-500/70'
+                      : 'border-edge hover:border-blue-500/70'
+                    : 'border-edge/30 opacity-60'
                 }`}
               >
                 <div className="flex-1 min-w-0 mr-4">
-                  {rule.name && <p className="text-xs text-slate-500 mb-1">{rule.name}</p>}
+                  {rule.name && <p className="text-xs text-fg-faint mb-1">{rule.name}</p>}
                   <p
-                    className={`text-sm font-mono truncate ${
-                      rule.enabled ? 'text-slate-300' : 'text-slate-500'
+                    className={`text-sm font-mono break-all ${
+                      rule.enabled ? 'text-fg-body' : 'text-fg-faint'
                     }`}
-                    title={rule.url}
                   >
                     {rule.url}
                   </p>
                 </div>
                 <div className="flex items-center space-x-2 shrink-0">
-                  <button
-                    onClick={() => togglePattern(rule.id, rule.enabled)}
-                    disabled={activeRuleId === rule.id && isLoading}
-                    className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors text-xs font-medium ${
-                      rule.enabled
-                        ? bypassMode === 'focus'
-                          ? 'bg-purple-600/20 border border-purple-500/60 text-purple-200 hover:bg-purple-600/30'
-                          : 'bg-blue-600/20 border border-blue-500/60 text-blue-200 hover:bg-blue-600/30'
-                        : 'bg-slate-700/20 border border-slate-600/50 text-slate-400 hover:bg-slate-700/30'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={rule.enabled ? 'Disable' : 'Enable'}
-                  >
-                    {activeRuleId === rule.id && isLoading ? (
-                      <Spinner size="sm" />
-                    ) : (
-                      <Power className="w-4 h-4" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => removePattern(rule.id)}
-                    disabled={activeRuleId === rule.id && isLoading}
-                    className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Remove"
-                  >
-                    {activeRuleId === rule.id && isLoading ? (
-                      <Spinner size="sm" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                  </button>
+                  <Tooltip title={rule.enabled ? 'Disable' : 'Enable'}>
+                    <button
+                      onClick={() => togglePattern(rule.id, rule.enabled)}
+                      disabled={activeRuleId === rule.id && isLoading}
+                      className={`inline-flex items-center justify-center gap-2 px-3 h-8 rounded-lg transition-colors text-xs font-medium ${
+                        rule.enabled
+                          ? bypassMode === 'focus'
+                            ? 'bg-purple-600/20 border border-purple-500/60 text-purple-200 hover:bg-purple-600/30'
+                            : 'bg-blue-600/20 border border-blue-500/60 text-blue-200 hover:bg-blue-600/30'
+                          : 'bg-accent-neutral/20 border border-fg-dim/50 text-fg-muted hover:bg-accent-neutral/30'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      aria-label={rule.enabled ? 'Disable' : 'Enable'}
+                    >
+                      {activeRuleId === rule.id && isLoading ? (
+                        <Spinner size="sm" />
+                      ) : (
+                        <Power className="w-4 h-4" />
+                      )}
+                    </button>
+                  </Tooltip>
+                  <Tooltip title="Remove">
+                    <button
+                      onClick={() => removePattern(rule.id)}
+                      disabled={activeRuleId === rule.id && isLoading}
+                      className="inline-flex items-center justify-center gap-2 px-3 h-8 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      aria-label="Remove"
+                    >
+                      {activeRuleId === rule.id && isLoading ? (
+                        <Spinner size="sm" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
             ))}

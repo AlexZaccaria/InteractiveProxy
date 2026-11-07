@@ -14,7 +14,7 @@ function Spinner({ size = 'md', className = '' }) {
     <div className={`flex items-center justify-center ${className}`}>
       <div className={`relative ${sizes.wrapper}`}>
         {/* Base ring */}
-        <div className={`absolute inset-0 rounded-full ${sizes.ring} border-slate-800/80`} />
+        <div className={`absolute inset-0 rounded-full ${sizes.ring} border-edge`} />
 
         {/* Animated arc */}
         <div
@@ -28,7 +28,7 @@ function Spinner({ size = 'md', className = '' }) {
         />
 
         {/* Soft inner glow */}
-        <div className="absolute inset-[6px] rounded-full bg-[#050509] shadow-[0_0_20px_rgba(59,130,246,0.4)]" />
+        <div className="absolute inset-[6px] rounded-full bg-surface-sunken shadow-[0_0_20px_rgba(59,130,246,0.4)]" />
       </div>
     </div>
   )

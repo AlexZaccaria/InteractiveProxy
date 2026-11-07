@@ -2,11 +2,12 @@ import { Copy, Info } from 'lucide-react'
 import { useFilePicker } from '../../lib/queries'
 import { coerceJsonPathScalar } from './presets'
 import TargetSelector from './TargetSelector'
+import Tooltip from '../../components/Tooltip'
 
 /** @typedef {import('./useRuleForm').RuleFormData} RuleFormData */
 
 const INPUT_CLASS =
-  'w-full px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500'
+  'w-full px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-amber-500'
 
 const VALUE_MODES = [
   { key: 'text', label: 'Manual' },
@@ -80,11 +81,16 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
   return (
     <>
       <div>
-        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+        <label
+          htmlFor="rule-json-url"
+          className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+        >
           URL pattern
         </label>
         <input
           type="text"
+          id="rule-json-url"
+          name="rule-json-url"
           value={formData.url}
           onChange={e => onChange({ url: e.target.value })}
           placeholder="es: /api/v1/users oppure https://example.com/api"
@@ -94,7 +100,7 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
 
       <div className="flex flex-col sm:flex-row gap-4 items-start">
         <div className="sm:w-64">
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+          <label className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2">
             Apply to
           </label>
           <TargetSelector
@@ -105,11 +111,16 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
         </div>
 
         <div className="flex-1">
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+          <label
+            htmlFor="rule-json-path"
+            className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+          >
             JSON path
           </label>
           <input
             type="text"
+            id="rule-json-path"
+            name="rule-json-path"
             value={formData.path}
             onChange={e => onChange({ path: e.target.value })}
             placeholder="es: root.data[0].user.name"
@@ -120,7 +131,7 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
 
       <div className="flex flex-col sm:flex-row gap-4 items-start">
         <div className="sm:w-64">
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+          <label className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2">
             Input Type
           </label>
           <div className="flex w-full gap-2">
@@ -132,8 +143,8 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
                   : 'bg-amber-600/20 border-amber-500/60 text-amber-200'
               const inactiveClasses =
                 option.key === 'file'
-                  ? 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-green-500 hover:text-green-400'
-                  : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 hover:border-amber-500 hover:text-amber-200'
+                  ? 'bg-surface border-edge text-fg-body hover:border-green-500 hover:text-green-400'
+                  : 'bg-surface border-edge text-fg-body hover:border-amber-500 hover:text-amber-200'
               return (
                 <button
                   key={option.key}
@@ -152,24 +163,24 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
 
         <div className="flex-1">
           <div className="flex items-start gap-1.5 mb-2">
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-fg-muted">
               Value
             </label>
-            <div className="relative group/json-value-help inline-flex items-center">
-              <Info className="w-3.5 h-3.5 text-slate-500 cursor-help hover:text-slate-300" />
-              <div
-                className="invisible group-hover/json-value-help:visible absolute left-0 bottom-full mb-2 w-72 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-[11px] text-slate-300 shadow-2xl"
-                style={{ zIndex: 99999 }}
+            <Tooltip
+              title="JSON-aware replacement"
+              description="When the target field is an object or array, the proxy will try to parse this value as JSON. If parsing succeeds, the entire object will be replaced with the new one (for example by pasting a stringified JSON object)."
+              placement="bottom-start"
+              className="items-center"
+            >
+              <button
+                type="button"
+                aria-label="About the value"
+                className="inline-flex items-center text-fg-faint cursor-help hover:text-fg-body focus:outline-hidden focus-visible:text-fg-body"
               >
-                <div className="font-semibold mb-1 text-slate-200">JSON-aware replacement</div>
-                <p>
-                  When the target field is an object or array, the proxy will try to parse this
-                  value as JSON. If parsing succeeds, the entire object will be replaced with the
-                  new one (for example by pasting a stringified JSON object).
-                </p>
-              </div>
-            </div>
-            <span className="text-[11px] text-slate-500">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </Tooltip>
+            <span className="text-[11px] text-fg-faint">
               [Detected type:{' '}
               <span className="text-amber-200 font-semibold">{formData.valueType}</span>]
             </span>
@@ -184,7 +195,7 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
               >
                 {isPickingFile ? 'Picking...' : 'Choose file'}
               </button>
-              <div className="flex-1 min-w-0 px-3 h-8 rounded-lg border border-[#2a2a2a] bg-[#0a0a0a] text-[11px] text-slate-400 flex items-center">
+              <div className="flex-1 min-w-0 px-3 h-8 rounded-lg border border-edge bg-surface text-[11px] text-fg-muted flex items-center">
                 <span className="truncate">
                   {formData.jsonValueFileToken
                     ? formData.jsonValueFileToken
@@ -194,22 +205,29 @@ function JsonPathEditor({ formData, onChange, showAlert }) {
             </div>
           ) : (
             <div className="flex items-center gap-2 min-h-[32px]">
+              <label htmlFor="rule-json-value" className="sr-only">
+                Value
+              </label>
               <input
                 type="text"
+                id="rule-json-value"
+                name="rule-json-value"
                 value={formData.value}
                 onChange={handleValueTextChange}
                 placeholder="Insert a value"
-                className="flex-1 px-3 h-8 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-xs text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                className="flex-1 px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-amber-500"
               />
-              <button
-                type="button"
-                onClick={handleCopyValue}
-                disabled={!formData.value}
-                className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[#2a2a2a] bg-[#0a0a0a] text-slate-400 hover:border-amber-500 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Copy current value"
-              >
-                <Copy className="w-4 h-4" />
-              </button>
+              <Tooltip title="Copy current value">
+                <button
+                  type="button"
+                  onClick={handleCopyValue}
+                  disabled={!formData.value}
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-edge bg-surface text-fg-muted hover:border-amber-500 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Copy current value"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
+              </Tooltip>
             </div>
           )}
         </div>

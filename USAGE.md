@@ -24,7 +24,22 @@ Request bodies of any content type are forwarded byte for byte. Requests address
 
 ## The UI
 
-The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, an export button for the current log view and a button that clears the logs. Below it, five tabs.
+The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, the theme switch, the audit panel button, the keyboard shortcuts button, an export button for the current log view and a button that clears the logs. Below it, five tabs.
+
+The layout adapts to the window: from 1280 px wide the header is one row; below that the counters move to a second row under the title and the actions, and below 768 px the theme, audit and shortcuts buttons are hidden (the `?` key still opens the shortcuts panel) and the tab bar scrolls sideways. The dark theme is the default when the operating system prefers it; the Sun/Moon button in the header switches theme and the choice is kept in the browser's `localStorage` under `proxy.theme`. Without a stored choice the UI follows the system preference, also when it changes.
+
+Keyboard shortcuts, listed in the panel the `?` key or the keyboard button opens:
+
+| Key | Action |
+|---|---|
+| `/` | Switch to the Requests tab and focus the URL search |
+| `e` | Export the current log view (the same as the export button) |
+| `c` | Clear the logs, after confirmation |
+| `1` – `5` | Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local |
+| `?` | Show or hide the shortcuts panel |
+| `Esc` | Close the shortcuts panel or the audit panel; in a text field, leave the field |
+
+Shortcuts are ignored while a text field has the focus (except `Esc`), while a dialog is open, and when a modifier key is held. The tab bar also follows the keyboard: with a tab focused, the arrow keys, Home and End move between tabs.
 
 ### Requests
 
@@ -70,7 +85,7 @@ Local resources are files or inline text served instead of the upstream response
 
 ### Audit panel
 
-A triple click on the title in the top-left corner opens the audit panel: upstream latency percentiles, upstream errors by category, the slowest routes grouped by handling (processed, redirected, blocked, served) and the hosts with the highest average latency. The data comes from `GET /api/audit` and `GET /api/dashboard`.
+The chart button in the header (or a triple click on the title in the top-left corner) opens the audit panel: upstream latency percentiles, upstream errors by category, the slowest routes grouped by handling (processed, redirected, blocked, served) and the hosts with the highest average latency. The data comes from `GET /api/audit` and `GET /api/dashboard`. `Esc` or the close button closes it.
 
 ### Interactive mode
 

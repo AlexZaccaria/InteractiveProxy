@@ -104,18 +104,18 @@ export default function LogList({
 
   if (showLoading && !hasItems) {
     return (
-      <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] flex flex-col items-center justify-center text-center">
+      <div className="bg-surface-raised rounded-lg p-12 border border-edge flex flex-col items-center justify-center text-center">
         <Spinner size="md" color="blue" />
-        <p className="mt-3 text-sm text-slate-400">Loading requests...</p>
+        <p className="mt-3 text-sm text-fg-muted">Loading requests...</p>
       </div>
     )
   }
 
   if (!hasItems) {
     return (
-      <div className="bg-[#1a1a1a] rounded-lg p-8 border border-[#2a2a2a] text-center">
-        <AlertCircle className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-        <p className="text-slate-400">No requests found</p>
+      <div className="bg-surface-raised rounded-lg p-8 border border-edge text-center">
+        <AlertCircle className="w-12 h-12 text-fg-dim mx-auto mb-3" />
+        <p className="text-fg-muted">No requests found</p>
       </div>
     )
   }
@@ -158,9 +158,9 @@ export default function LogList({
         })}
       </div>
       {isFetchingNextPage && (
-        <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] flex flex-col items-center justify-center text-center mt-4">
+        <div className="bg-surface-raised rounded-lg p-12 border border-edge flex flex-col items-center justify-center text-center mt-4">
           <Spinner size="md" color="blue" />
-          <p className="mt-3 text-sm text-slate-400">Loading more requests...</p>
+          <p className="mt-3 text-sm text-fg-muted">Loading more requests...</p>
         </div>
       )}
     </div>

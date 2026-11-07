@@ -38,9 +38,7 @@ function TargetSelector({ value, onChange, stretch = false }) {
             type="button"
             onClick={() => onChange(option.key)}
             className={`inline-flex ${stretch ? 'flex-1 ' : ''}items-center justify-center px-3 h-8 rounded-md border text-xs font-medium transition-colors ${
-              isActive
-                ? option.active
-                : `bg-[#0a0a0a] border-[#2a2a2a] text-slate-300 ${option.hover}`
+              isActive ? option.active : `bg-surface border-edge text-fg-body ${option.hover}`
             }`}
           >
             {option.label}

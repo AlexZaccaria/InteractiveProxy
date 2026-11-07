@@ -16,7 +16,7 @@ export function WsMessagePreview({ effectiveLog, bodyToShow, onCreateJsonPathRul
 
   if (!isJSON) {
     return (
-      <pre className="bg-[#0f0f0f] border border-[#2a2a2a] p-3 rounded text-xs text-slate-300 overflow-x-auto max-h-96">
+      <pre className="bg-surface-inset border border-edge p-3 rounded text-xs text-fg-body overflow-x-auto max-h-96">
         {bodyToShow || 'No content available'}
       </pre>
     )
@@ -39,7 +39,7 @@ export function WsMessagePreview({ effectiveLog, bodyToShow, onCreateJsonPathRul
   }
 
   return (
-    <div className="text-xs text-slate-200">
+    <div className="text-xs text-fg-base">
       <JsonPanel
         data={jsonData}
         contextLabel="Response JSON body"

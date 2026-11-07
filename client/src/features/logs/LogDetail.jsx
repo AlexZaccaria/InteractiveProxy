@@ -22,14 +22,14 @@ export default function LogDetail({ log, onCreateJsonPathRule }) {
     Boolean(log.wsSummary && typeof log.wsSummary === 'object')
 
   return (
-    <div className="border-t border-[#2a2a2a] p-4 bg-[#0a0a0a]">
+    <div className="border-t border-edge p-4 bg-surface">
       <div className="space-y-4">
-        <div className="border-b border-slate-700 pb-4">
+        <div className="border-b border-edge-strong pb-4">
           <h3 className="text-base font-bold text-blue-400 mb-3">📤 Request</h3>
 
           <div className="space-y-3">
             <div>
-              <h4 className="text-sm font-semibold text-slate-300 mb-2">Request Headers</h4>
+              <h4 className="text-sm font-semibold text-fg-body mb-2">Request Headers</h4>
               <HeaderList headers={log.headers} />
             </div>
 
@@ -46,7 +46,7 @@ export default function LogDetail({ log, onCreateJsonPathRule }) {
             <div className="space-y-3">
               {log.responseHeaders && (
                 <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-2">Response Headers</h4>
+                  <h4 className="text-sm font-semibold text-fg-body mb-2">Response Headers</h4>
                   <HeaderList headers={log.responseHeaders} />
                 </div>
               )}

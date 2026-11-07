@@ -3,6 +3,7 @@ import { Trash2, Power, ShieldAlert, AlertCircle } from 'lucide-react'
 import Spinner from './Spinner'
 import { useBlockedRuleMutation, useBlockedRules, useSetFlag } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
+import Tooltip from './Tooltip'
 
 /**
  * Panel for viewing and managing blocked URL rules.
@@ -76,38 +77,35 @@ function BlockedResources({ showConfirm }) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a]">
-        <div className="flex items-center justify-between gap-4">
+      <div className="bg-surface-raised rounded-lg p-4 border border-edge">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="relative group/blocked-mode">
+            <Tooltip
+              title="Blocked requests"
+              description={
+                enabled
+                  ? 'Blocking rules are active and matching requests will be stopped.'
+                  : 'Blocking rules are disabled. Requests will not be blocked even if a pattern matches.'
+              }
+              placement="bottom-start"
+            >
               <button
                 type="button"
                 onClick={() => setBlockedRulesMode.mutate(!enabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   enabled
                     ? 'bg-orange-600/20 border-orange-500/40 text-orange-200'
-                    : 'bg-slate-700/40 border-slate-600/50 text-slate-400'
+                    : 'bg-accent-neutral/40 border-fg-dim/50 text-fg-muted'
                 }`}
                 aria-pressed={!!enabled}
               >
                 <ShieldAlert className="w-4 h-4" />
                 <span className="text-xs font-medium tracking-wide">{enabled ? 'ON' : 'OFF'}</span>
               </button>
-              <div
-                className="invisible group-hover/blocked-mode:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
-                style={{ zIndex: 99999 }}
-              >
-                <div className="font-semibold mb-1 text-slate-200">Blocked requests</div>
-                <p>
-                  {enabled
-                    ? 'Blocking rules are active and matching requests will be stopped.'
-                    : 'Blocking rules are disabled. Requests will not be blocked even if a pattern matches.'}
-                </p>
-              </div>
-            </div>
+            </Tooltip>
             <div>
-              <h3 className="text-base font-semibold text-white">Blocked Resources</h3>
-              <p className="text-xs text-slate-400">
+              <h3 className="text-base font-semibold text-fg">Blocked Resources</h3>
+              <p className="text-xs text-fg-muted">
                 {blockedRules.length}{' '}
                 {blockedRules.length === 1 ? 'blocked resource' : 'blocked resources'}
               </p>
@@ -119,7 +117,7 @@ function BlockedResources({ showConfirm }) {
       <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
-          <div className="text-sm text-slate-200">
+          <div className="text-sm text-fg-base">
             <p className="font-medium text-orange-300 mb-1">How blocking works</p>
             <p>
               Requests whose URL contains one of the patterns below will be stopped before reaching
@@ -132,18 +130,18 @@ function BlockedResources({ showConfirm }) {
 
       <div>
         {loading && blockedRules.length === 0 ? (
-          <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] flex flex-col items-center justify-center text-center">
+          <div className="bg-surface-raised rounded-lg p-12 border border-edge flex flex-col items-center justify-center text-center">
             <Spinner size="md" />
-            <p className="mt-3 text-sm text-slate-400">Loading blocked resources...</p>
+            <p className="mt-3 text-sm text-fg-muted">Loading blocked resources...</p>
           </div>
         ) : blockedRules.length === 0 ? (
-          <div className="bg-[#1a1a1a] rounded-lg p-12 border border-[#2a2a2a] text-center">
-            <ShieldAlert className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-white mb-2">No blocked resources</h3>
-            <p className="text-slate-400 mb-6">Block URLs from logs to prevent them from loading</p>
+          <div className="bg-surface-raised rounded-lg p-12 border border-edge text-center">
+            <ShieldAlert className="w-16 h-16 text-fg-dim mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-fg mb-2">No blocked resources</h3>
+            <p className="text-fg-muted mb-6">Block URLs from logs to prevent them from loading</p>
           </div>
         ) : (
-          <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a] space-y-3">
+          <div className="bg-surface-raised rounded-lg p-4 border border-edge space-y-3">
             {blockedRules.map(rule => {
               const displayName =
                 typeof rule.name === 'string' && rule.name.trim() ? rule.name.trim() : ''
@@ -151,44 +149,46 @@ function BlockedResources({ showConfirm }) {
               return (
                 <div
                   key={rule.id || rule.url}
-                  className="bg-[#0a0a0a] rounded-lg border border-[#2a2a2a] p-4 hover:border-orange-500/60 transition-colors"
+                  className="bg-surface rounded-lg border border-edge p-4 hover:border-orange-500/60 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      {displayName && <p className="text-xs text-slate-500 mb-1">{displayName}</p>}
-                      <p className="text-sm text-slate-200 font-mono truncate" title={rule.url}>
-                        {rule.url}
-                      </p>
+                      {displayName && <p className="text-xs text-fg-faint mb-1">{displayName}</p>}
+                      <p className="text-sm text-fg-base font-mono break-all">{rule.url}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => toggleRuleEnabled(rule)}
-                        disabled={togglingId === (rule.id || rule.url)}
-                        className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
-                          rule.enabled
-                            ? 'bg-orange-500/20 border border-orange-500/60 text-orange-200 hover:bg-orange-500/30'
-                            : 'bg-slate-700/20 border border-slate-600/50 text-slate-400 hover:bg-slate-700/30'
-                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                        title={rule.enabled ? 'Disable' : 'Enable'}
-                      >
-                        {togglingId === (rule.id || rule.url) ? (
-                          <Spinner size="sm" />
-                        ) : (
-                          <Power className="w-4 h-4" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => unblockRule(rule)}
-                        disabled={deletingId === (rule.id || rule.url)}
-                        className="flex items-center gap-2 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Remove"
-                      >
-                        {deletingId === (rule.id || rule.url) ? (
-                          <Spinner size="sm" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
+                      <Tooltip title={rule.enabled ? 'Disable' : 'Enable'}>
+                        <button
+                          onClick={() => toggleRuleEnabled(rule)}
+                          disabled={togglingId === (rule.id || rule.url)}
+                          className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                            rule.enabled
+                              ? 'bg-orange-500/20 border border-orange-500/60 text-orange-200 hover:bg-orange-500/30'
+                              : 'bg-accent-neutral/20 border border-fg-dim/50 text-fg-muted hover:bg-accent-neutral/30'
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          aria-label={rule.enabled ? 'Disable' : 'Enable'}
+                        >
+                          {togglingId === (rule.id || rule.url) ? (
+                            <Spinner size="sm" />
+                          ) : (
+                            <Power className="w-4 h-4" />
+                          )}
+                        </button>
+                      </Tooltip>
+                      <Tooltip title="Remove">
+                        <button
+                          onClick={() => unblockRule(rule)}
+                          disabled={deletingId === (rule.id || rule.url)}
+                          className="flex items-center gap-2 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          aria-label="Remove"
+                        >
+                          {deletingId === (rule.id || rule.url) ? (
+                            <Spinner size="sm" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      </Tooltip>
                     </div>
                   </div>
                 </div>

@@ -170,12 +170,12 @@ export function ConnectFramesSection({
   if (!frameList.length) {
     return (
       <details
-        className="bg-[#0f0f0f] border border-[#2a2a2a] rounded self-start"
+        className="bg-surface-inset border border-edge rounded self-start"
         open={!defaultCollapsed}
       >
-        <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400 flex items-center justify-between">
+        <summary className="cursor-pointer px-3 py-2 text-xs text-fg-muted flex items-center justify-between">
           <span>{title}</span>
-          <span className="text-slate-600">(empty)</span>
+          <span className="text-fg-dim">(empty)</span>
         </summary>
       </details>
     )
@@ -185,16 +185,16 @@ export function ConnectFramesSection({
 
   return (
     <details
-      className="bg-[#0f0f0f] border border-[#2a2a2a] rounded self-start"
+      className="bg-surface-inset border border-edge rounded self-start"
       open={!isCollapsed}
       onToggle={event => {
         if (event.currentTarget !== event.target) return
         setIsCollapsed(!event.currentTarget.open)
       }}
     >
-      <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400 hover:text-slate-200 flex items-center justify-between">
+      <summary className="cursor-pointer px-3 py-2 text-xs text-fg-muted hover:text-fg-base flex items-center justify-between">
         <span>{title}</span>
-        <span className="text-slate-500">
+        <span className="text-fg-faint">
           {frameCount} frame{frameCount === 1 ? '' : 's'}
         </span>
       </summary>
@@ -215,7 +215,7 @@ export function ConnectFramesSection({
               return (
                 <div
                   key={`summary-${frame.index}-${frame.length}`}
-                  className={`rounded border border-[#2a2a2a] ${highlight ? 'bg-[#141414]' : 'bg-[#0f0f0f]'} p-2 text-xs text-slate-300`}
+                  className={`rounded border border-edge ${highlight ? 'bg-surface-hover' : 'bg-surface-inset'} p-2 text-xs text-fg-body`}
                 >
                   <details
                     open={isFrameOpen}
@@ -230,8 +230,8 @@ export function ConnectFramesSection({
                   >
                     <summary className="cursor-pointer list-none">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <span className="font-semibold text-slate-200">{frameLabel}</span>
-                        <div className="flex items-center gap-3 text-slate-500">
+                        <span className="font-semibold text-fg-base">{frameLabel}</span>
+                        <div className="flex items-center gap-3 text-fg-faint">
                           <span>{frame.length} bytes</span>
                           {isFirstVisibleFrame && (
                             <button
@@ -249,8 +249,8 @@ export function ConnectFramesSection({
                     {isFrameOpen && (
                       <div className="mt-1">
                         {hasJson ? (
-                          <div className={`text-slate-200 overflow-y-auto ${summaryHeightClass}`}>
-                            <div className="bg-[#0f0f0f] rounded px-3 py-2 border border-[#2a2a2a]">
+                          <div className={`text-fg-base overflow-y-auto ${summaryHeightClass}`}>
+                            <div className="bg-surface-inset rounded px-3 py-2 border border-edge">
                               <JsonTree
                                 title="Decoded Protobuf JSON"
                                 data={frame.json}
@@ -263,7 +263,7 @@ export function ConnectFramesSection({
                           </div>
                         ) : summary ? (
                           <div
-                            className={`text-slate-400 whitespace-pre-wrap break-words overflow-y-auto ${summaryHeightClass}`}
+                            className={`text-fg-muted whitespace-pre-wrap break-words overflow-y-auto ${summaryHeightClass}`}
                           >
                             {summary}
                           </div>

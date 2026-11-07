@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react'
 import { useAudit, useEditRules, useEditRuleUsage } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
@@ -21,6 +21,19 @@ const AUDIT_POLL_MS = 5000
  * @param {{ byHandling?: Record<string, any[]> } | null} [props.routes] The `routes` of the dashboard payload.
  */
 function AuditPanel({ onClose, routes }) {
+  // Escape closes the panel, whatever has the focus.
+  useEffect(() => {
+    /** @param {KeyboardEvent} event */
+    const handleKeyDown = event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   const eventsConnected = useProxyStore(state => state.eventsConnected)
   const auditQuery = useAudit({ refetchInterval: eventsConnected ? false : AUDIT_POLL_MS })
   const rulesQuery = useEditRules()
@@ -117,20 +130,20 @@ function AuditPanel({ onClose, routes }) {
   const renderFlowTable = (title, rows) => {
     if (!rows || rows.length === 0) {
       return (
-        <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3 text-[11px] text-slate-500">
-          <div className="text-xs font-semibold text-slate-300 mb-1">{title}</div>
+        <div className="border border-edge rounded-xl bg-surface-sunken p-3 text-[11px] text-fg-faint">
+          <div className="text-xs font-semibold text-fg-body mb-1">{title}</div>
           <div>No routes observed for this flow yet.</div>
         </div>
       )
     }
 
     return (
-      <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
-        <div className="text-xs font-semibold text-slate-300 mb-2">{title}</div>
+      <div className="border border-edge rounded-xl bg-surface-sunken p-3">
+        <div className="text-xs font-semibold text-fg-body mb-2">{title}</div>
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
+          <table className="w-full text-[11px] text-left text-fg-body border-collapse">
             <thead>
-              <tr className="border-b border-[#2a2a2a] text-slate-400">
+              <tr className="border-b border-edge text-fg-muted">
                 <th className="py-1 pr-2">Host</th>
                 <th className="py-1 pr-2">Path</th>
                 <th className="py-1 pr-2 text-right">Calls</th>
@@ -144,7 +157,7 @@ function AuditPanel({ onClose, routes }) {
               {rows.map(entry => (
                 <tr
                   key={`${entry.handling || 'unknown'}:${entry.host || 'unknown'}${entry.path || '/'}`}
-                  className="border-b border-[#161616] last:border-0"
+                  className="border-b border-edge-subtle last:border-0"
                 >
                   <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                     {entry.host || 'unknown'}
@@ -153,12 +166,12 @@ function AuditPanel({ onClose, routes }) {
                     {entry.path || '/'}
                   </td>
                   <td className="py-1 pr-2 text-right">{entry.count ?? 0}</td>
-                  <td className="py-1 pr-2 text-right text-slate-200">{formatMs(entry.avgMs)}</td>
-                  <td className="py-1 pr-2 text-right text-slate-200">{formatMs(entry.maxMs)}</td>
-                  <td className="py-1 pr-2 text-right text-slate-200">
+                  <td className="py-1 pr-2 text-right text-fg-base">{formatMs(entry.avgMs)}</td>
+                  <td className="py-1 pr-2 text-right text-fg-base">{formatMs(entry.maxMs)}</td>
+                  <td className="py-1 pr-2 text-right text-fg-base">
                     {formatBytes(entry.avgBytes)}
                   </td>
-                  <td className="py-1 pr-2 text-right text-slate-200">
+                  <td className="py-1 pr-2 text-right text-fg-base">
                     {typeof entry.kbPerSecond === 'number' && Number.isFinite(entry.kbPerSecond)
                       ? `${entry.kbPerSecond.toFixed(1)} KB/s`
                       : '-'}
@@ -174,26 +187,32 @@ function AuditPanel({ onClose, routes }) {
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm">
-      <div className="relative max-w-6xl w-full mx-4 max-h-[80vh] rounded-2xl border border-[#2a2a2a] bg-[#050505] shadow-2xl overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="audit-panel-title"
+        className="relative max-w-6xl w-full mx-4 max-h-[80vh] rounded-2xl border border-edge bg-surface-sunken shadow-2xl overflow-hidden"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-[#2a2a2a] bg-[#0b0b0b]">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-edge bg-surface-inset">
           <div className="flex items-center gap-2">
             <div className="bg-blue-500/20 p-1.5 rounded-lg">
               <Activity className="w-4 h-4 text-blue-400" />
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <div
+                id="audit-panel-title"
+                className="text-xs font-semibold uppercase tracking-wide text-fg-muted"
+              >
                 Proxy Audit Panel
               </div>
-              <div className="text-[11px] text-slate-500">
-                Detailed latency and error metrics (secret view)
-              </div>
+              <div className="text-[11px] text-fg-faint">Detailed latency and error metrics</div>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-[#181818] text-slate-400 hover:text-slate-100 transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-hover text-fg-muted hover:text-fg-strong transition-colors"
             aria-label="Close audit panel"
           >
             <X className="w-4 h-4" />
@@ -202,7 +221,7 @@ function AuditPanel({ onClose, routes }) {
 
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(80vh-44px)]">
-          {loading && <div className="text-xs text-slate-400">Loading audit metrics…</div>}
+          {loading && <div className="text-xs text-fg-muted">Loading audit metrics…</div>}
           {error && (
             <div className="text-xs text-red-400 flex items-center gap-2">
               <AlertTriangle className="w-3 h-3" />
@@ -211,25 +230,25 @@ function AuditPanel({ onClose, routes }) {
           )}
 
           {/* Error buckets */}
-          <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
+          <div className="border border-edge rounded-xl bg-surface-sunken p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+              <div className="flex items-center gap-2 text-xs font-semibold text-fg-body">
                 <AlertTriangle className="w-3 h-3 text-red-400" />
                 <span>Upstream error categories</span>
               </div>
-              <div className="text-[11px] text-slate-500">
+              <div className="text-[11px] text-fg-faint">
                 source: /api/logs.upstreamErrorCategory
               </div>
             </div>
             {totalErrors === 0 ? (
-              <div className="text-[11px] text-slate-500">
+              <div className="text-[11px] text-fg-faint">
                 No upstream error entries in the current log window.
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
+                <table className="w-full text-[11px] text-left text-fg-body border-collapse">
                   <thead>
-                    <tr className="border-b border-[#2a2a2a] text-slate-400">
+                    <tr className="border-b border-edge text-fg-muted">
                       <th className="py-1 pr-2">Category</th>
                       <th className="py-1 pr-2 text-right">Count</th>
                       <th className="py-1 pr-2 text-right">Share</th>
@@ -239,10 +258,10 @@ function AuditPanel({ onClose, routes }) {
                     {Object.entries(errorBuckets).map(([category, count]) => {
                       const pct = totalErrors > 0 ? (count / totalErrors) * 100 : 0
                       return (
-                        <tr key={category} className="border-b border-[#161616] last:border-0">
+                        <tr key={category} className="border-b border-edge-subtle last:border-0">
                           <td className="py-1 pr-2 font-mono text-[11px]">{category}</td>
                           <td className="py-1 pr-2 text-right">{count}</td>
-                          <td className="py-1 pr-2 text-right text-slate-400">{pct.toFixed(1)}%</td>
+                          <td className="py-1 pr-2 text-right text-fg-muted">{pct.toFixed(1)}%</td>
                         </tr>
                       )
                     })}
@@ -254,20 +273,20 @@ function AuditPanel({ onClose, routes }) {
 
           {/* Edit rules usage snapshot */}
           {editRuleUsage && editRuleUsage.length > 0 && (
-            <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
+            <div className="border border-edge rounded-xl bg-surface-sunken p-3">
               <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                <div className="flex items-center gap-2 text-xs font-semibold text-fg-body">
                   <BarChart3 className="w-3 h-3 text-cyan-400" />
                   <span>Edit rules usage (current log window)</span>
                 </div>
-                <div className="text-[11px] text-slate-500">
+                <div className="text-[11px] text-fg-faint">
                   source: /api/edit-rules & /api/edit-rules/usage
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
+                <table className="w-full text-[11px] text-left text-fg-body border-collapse">
                   <thead>
-                    <tr className="border-b border-[#2a2a2a] text-slate-400">
+                    <tr className="border-b border-edge text-fg-muted">
                       <th className="py-1 pr-2">Rule</th>
                       <th className="py-1 pr-2">Kind</th>
                       <th className="py-1 pr-2">Target</th>
@@ -278,22 +297,22 @@ function AuditPanel({ onClose, routes }) {
                   </thead>
                   <tbody>
                     {editRuleUsage.map(rule => (
-                      <tr key={rule.id} className="border-b border-[#161616] last:border-0">
+                      <tr key={rule.id} className="border-b border-edge-subtle last:border-0">
                         <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                           {rule.name}
                         </td>
-                        <td className="py-1 pr-2 text-slate-300">{rule.kind}</td>
-                        <td className="py-1 pr-2 text-slate-300">{rule.target}</td>
+                        <td className="py-1 pr-2 text-fg-body">{rule.kind}</td>
+                        <td className="py-1 pr-2 text-fg-body">{rule.target}</td>
                         <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                           {rule.url || '—'}
                         </td>
-                        <td className="py-1 pr-2 text-right text-slate-200">{rule.count}</td>
+                        <td className="py-1 pr-2 text-right text-fg-base">{rule.count}</td>
                         <td className="py-1 pr-2 text-right">
                           <span
                             className={
                               rule.enabled
                                 ? 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-400/60'
-                                : 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-700/40 text-slate-400 border border-slate-600/60'
+                                : 'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent-neutral/40 text-fg-muted border border-fg-dim/60'
                             }
                           >
                             {rule.enabled ? 'ON' : 'OFF'}
@@ -309,13 +328,13 @@ function AuditPanel({ onClose, routes }) {
 
           {/* Per-flow slowest routes from /api/dashboard */}
           {dashboardRoutesByHandling && (
-            <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
+            <div className="border border-edge rounded-xl bg-surface-sunken p-3">
               <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                <div className="flex items-center gap-2 text-xs font-semibold text-fg-body">
                   <BarChart3 className="w-3 h-3 text-purple-400" />
                   <span>Top 10 routes per flow</span>
                 </div>
-                <div className="text-[11px] text-slate-500">
+                <div className="text-[11px] text-fg-faint">
                   grouped by handling (processed, redirected, blocked, served)
                 </div>
               </div>
@@ -332,23 +351,23 @@ function AuditPanel({ onClose, routes }) {
           )}
 
           {/* Top hosts by average latency */}
-          <div className="border border-[#2a2a2a] rounded-xl bg-[#050505] p-3">
+          <div className="border border-edge rounded-xl bg-surface-sunken p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+              <div className="flex items-center gap-2 text-xs font-semibold text-fg-body">
                 <BarChart3 className="w-3 h-3 text-emerald-400" />
                 <span>Top hosts by average upstream latency</span>
               </div>
-              <div className="text-[11px] text-slate-500">limit: 20 hosts, last 1000 logs</div>
+              <div className="text-[11px] text-fg-faint">limit: 20 hosts, last 1000 logs</div>
             </div>
             {hostStats.length === 0 ? (
-              <div className="text-[11px] text-slate-500">
+              <div className="text-[11px] text-fg-faint">
                 No upstream latency data available yet.
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-[11px] text-left text-slate-300 border-collapse">
+                <table className="w-full text-[11px] text-left text-fg-body border-collapse">
                   <thead>
-                    <tr className="border-b border-[#2a2a2a] text-slate-400">
+                    <tr className="border-b border-edge text-fg-muted">
                       <th className="py-1 pr-2">Host</th>
                       <th className="py-1 pr-2 text-right">Calls</th>
                       <th className="py-1 pr-2 text-right">Avg latency</th>
@@ -356,12 +375,12 @@ function AuditPanel({ onClose, routes }) {
                   </thead>
                   <tbody>
                     {hostStats.map(entry => (
-                      <tr key={entry.host} className="border-b border-[#161616] last:border-0">
+                      <tr key={entry.host} className="border-b border-edge-subtle last:border-0">
                         <td className="py-1 pr-2 font-mono text-[11px] truncate max-w-xs">
                           {entry.host}
                         </td>
                         <td className="py-1 pr-2 text-right">{entry.count}</td>
-                        <td className="py-1 pr-2 text-right text-slate-200">
+                        <td className="py-1 pr-2 text-right text-fg-base">
                           {formatMs(entry.avgDuration)}
                         </td>
                       </tr>

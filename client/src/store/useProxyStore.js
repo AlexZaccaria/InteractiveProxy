@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { apiPost } from '../lib/api'
 import { queryClient } from '../lib/queryClient'
+import { applyThemeToDocument, resolveInitialTheme, storeTheme } from '../lib/theme'
 
 /**
  * Global UI state: the proxy's flags (mirrored from GET /api/config and the
@@ -10,6 +11,7 @@ import { queryClient } from '../lib/queryClient'
 
 /** @typedef {import('../lib/types').FilterMode} FilterMode */
 /** @typedef {import('../lib/types').ConfigSnapshot} ConfigSnapshot */
+/** @typedef {import('../lib/theme').Theme} Theme */
 
 /**
  * API flag name → store field.
@@ -47,6 +49,8 @@ export const FLAG_FIELDS = {
  * @property {boolean} eventsConnected
  * @property {string} activeTab
  * @property {boolean} showAuditPanel
+ * @property {boolean} showShortcutsHelp
+ * @property {Theme} theme The theme in use; `setTheme` applies it to the document.
  * @property {JsonPathRuleSeed | null} jsonPathRuleSeed
  * @property {(snapshot: Partial<ConfigSnapshot> | null | undefined) => void} applyConfig Copy the flags present in a config payload.
  * @property {(flag: FlagName, enabled: boolean) => Promise<void>} setFlagOnServer POST the flag, then mirror the server's answer.
@@ -55,6 +59,10 @@ export const FLAG_FIELDS = {
  * @property {(tab: string) => void} setActiveTab
  * @property {(visible: boolean) => void} setShowAuditPanel
  * @property {() => void} toggleAuditPanel
+ * @property {(visible: boolean) => void} setShowShortcutsHelp
+ * @property {() => void} toggleShortcutsHelp
+ * @property {(theme: Theme, options?: { persist?: boolean }) => void} setTheme Apply the theme to the document and, unless `persist` is false, store the choice.
+ * @property {() => void} toggleTheme
  * @property {(seed: JsonPathRuleSeed | null) => void} setJsonPathRuleSeed
  */
 
@@ -68,7 +76,7 @@ function normalizeFilterMode(value) {
 
 export const useProxyStore = create(
   /** @type {import('zustand').StateCreator<ProxyStore>} */ (
-    set => ({
+    (set, get) => ({
       interactiveModeEnabled: true,
       editRulesEnabled: true,
       localResourcesEnabled: true,
@@ -78,6 +86,8 @@ export const useProxyStore = create(
       eventsConnected: false,
       activeTab: 'logs',
       showAuditPanel: false,
+      showShortcutsHelp: false,
+      theme: resolveInitialTheme(),
       jsonPathRuleSeed: null,
 
       applyConfig: snapshot => {
@@ -114,6 +124,19 @@ export const useProxyStore = create(
       setActiveTab: tab => set({ activeTab: tab }),
       setShowAuditPanel: visible => set({ showAuditPanel: visible }),
       toggleAuditPanel: () => set(state => ({ showAuditPanel: !state.showAuditPanel })),
+      setShowShortcutsHelp: visible => set({ showShortcutsHelp: visible }),
+      toggleShortcutsHelp: () => set(state => ({ showShortcutsHelp: !state.showShortcutsHelp })),
+      setTheme: (theme, { persist = true } = {}) => {
+        applyThemeToDocument(theme)
+        if (persist) storeTheme(theme)
+        set({ theme })
+      },
+      toggleTheme: () => {
+        const theme = get().theme === 'dark' ? 'light' : 'dark'
+        applyThemeToDocument(theme)
+        storeTheme(theme)
+        set({ theme })
+      },
       setJsonPathRuleSeed: seed => set({ jsonPathRuleSeed: seed })
     })
   )

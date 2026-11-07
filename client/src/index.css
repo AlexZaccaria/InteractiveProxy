@@ -1,6 +1,180 @@
 @import 'tailwindcss';
 
 /*
+ * Theme. The light values live on :root, the dark ones on `.dark` (set on
+ * <html> by src/lib/theme.js, and by the inline script of index.html before
+ * the first paint). The variables are exposed to Tailwind as colours through
+ * `@theme inline`, so one class (`bg-surface`, `text-fg-muted`, ...) renders
+ * in both themes without `dark:` variants. The dark values are the ones the
+ * UI had before the light theme existed.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, from the page background up */
+  --surface: #f4f4f5; /* page, inputs, inset panels */
+  --surface-raised: #ffffff; /* cards, header, dialogs, tooltips */
+  --surface-sunken: #e4e4e7; /* tab bar, pills, switches */
+  --surface-inset: #fafafa; /* code, JSON trees, menus */
+  --surface-active: #ffffff; /* the selected tab or pill option */
+  --surface-hover: #e4e4e7; /* hover on sunken surfaces */
+  --surface-highlight: #d4d4d8; /* hover on menu rows, pressed buttons */
+
+  /* The neutral tint of switched-off pills and badges */
+  --accent-neutral: #a1a1aa;
+
+  /* Borders */
+  --edge: #d4d4d8;
+  --edge-subtle: #e4e4e7;
+  --edge-strong: #a1a1aa;
+
+  /* Text, from the strongest down */
+  --fg: #09090b;
+  --fg-strong: #18181b;
+  --fg-base: #27272a;
+  --fg-body: #3f3f46;
+  --fg-muted: #52525b;
+  --fg-faint: #71717a;
+  --fg-dim: #a1a1aa;
+
+  /* Scrollbars */
+  --scrollbar-track: #e4e4e7;
+  --scrollbar-thumb: #a1a1aa;
+  --scrollbar-thumb-hover: #71717a;
+
+  /* JSON tree keys by depth, and the guide lines next to them */
+  --json-key-1: #b45309;
+  --json-key-2: #92400e;
+  --json-key-3: #78350f;
+  --json-key-4: #451a03;
+  --json-line-2: rgba(146, 64, 14, 0.35);
+  --json-line-3: rgba(120, 53, 15, 0.45);
+  --json-line-4: rgba(69, 26, 3, 0.55);
+  --json-key-shadow: none;
+  --json-arrow-shadow: drop-shadow(0 0 2px rgba(0, 0, 0, 0.25));
+}
+
+.dark {
+  color-scheme: dark;
+
+  --surface: #0a0a0a;
+  --surface-raised: #1a1a1a;
+  --surface-sunken: #050508;
+  --surface-inset: #0f0f0f;
+  --surface-active: #18181b;
+  --surface-hover: #161616;
+  --surface-highlight: #2a2a2a;
+
+  --accent-neutral: #334155;
+
+  --edge: #2a2a2a;
+  --edge-subtle: #252525;
+  --edge-strong: #334155;
+
+  --fg: #ffffff;
+  --fg-strong: #f1f5f9;
+  --fg-base: #e2e8f0;
+  --fg-body: #cbd5e1;
+  --fg-muted: #94a3b8;
+  --fg-faint: #64748b;
+  --fg-dim: #475569;
+
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #64748b;
+
+  --json-key-1: #facc15;
+  --json-key-2: #eab308;
+  --json-key-3: #d97706;
+  --json-key-4: #b45309;
+  --json-line-2: rgba(234, 179, 8, 0.35);
+  --json-line-3: rgba(217, 119, 6, 0.45);
+  --json-line-4: rgba(180, 83, 9, 0.55);
+  --json-key-shadow: 0 0 1px rgba(255, 255, 255, 0.1);
+  --json-arrow-shadow: drop-shadow(0 0 2px rgba(226, 232, 240, 0.3));
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-inset: var(--surface-inset);
+  --color-surface-active: var(--surface-active);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-highlight: var(--surface-highlight);
+
+  --color-accent-neutral: var(--accent-neutral);
+
+  --color-edge: var(--edge);
+  --color-edge-subtle: var(--edge-subtle);
+  --color-edge-strong: var(--edge-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-strong: var(--fg-strong);
+  --color-fg-base: var(--fg-base);
+  --color-fg-body: var(--fg-body);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-fg-dim: var(--fg-dim);
+}
+
+/*
+ * The accent shades. The components colour text, badges and icons with the
+ * 100–400 shades of Tailwind's palette, chosen for dark surfaces. On the
+ * light surfaces those shades have too little contrast, so outside `.dark`
+ * they resolve to the 600–800 shades of the same hue; the dark theme keeps
+ * Tailwind's values.
+ */
+html:not(.dark) {
+  --color-blue-100: var(--color-blue-800);
+  --color-blue-200: var(--color-blue-700);
+  --color-blue-300: var(--color-blue-700);
+  --color-blue-400: var(--color-blue-600);
+  --color-red-100: var(--color-red-800);
+  --color-red-200: var(--color-red-700);
+  --color-red-300: var(--color-red-700);
+  --color-red-400: var(--color-red-600);
+  --color-green-100: var(--color-green-800);
+  --color-green-200: var(--color-green-700);
+  --color-green-300: var(--color-green-700);
+  --color-green-400: var(--color-green-600);
+  --color-purple-100: var(--color-purple-800);
+  --color-purple-200: var(--color-purple-700);
+  --color-purple-300: var(--color-purple-700);
+  --color-purple-400: var(--color-purple-600);
+  --color-yellow-100: var(--color-yellow-800);
+  --color-yellow-200: var(--color-yellow-700);
+  --color-yellow-300: var(--color-yellow-700);
+  --color-yellow-400: var(--color-yellow-600);
+  --color-emerald-100: var(--color-emerald-800);
+  --color-emerald-200: var(--color-emerald-700);
+  --color-emerald-300: var(--color-emerald-700);
+  --color-emerald-400: var(--color-emerald-600);
+  --color-orange-100: var(--color-orange-800);
+  --color-orange-200: var(--color-orange-700);
+  --color-orange-300: var(--color-orange-700);
+  --color-orange-400: var(--color-orange-600);
+  --color-cyan-100: var(--color-cyan-800);
+  --color-cyan-200: var(--color-cyan-700);
+  --color-cyan-300: var(--color-cyan-700);
+  --color-cyan-400: var(--color-cyan-600);
+  --color-amber-100: var(--color-amber-800);
+  --color-amber-200: var(--color-amber-700);
+  --color-amber-300: var(--color-amber-700);
+  --color-amber-400: var(--color-amber-600);
+  --color-pink-100: var(--color-pink-800);
+  --color-pink-200: var(--color-pink-700);
+  --color-pink-300: var(--color-pink-700);
+  --color-pink-400: var(--color-pink-600);
+  --color-indigo-100: var(--color-indigo-800);
+  --color-indigo-200: var(--color-indigo-700);
+  --color-indigo-300: var(--color-indigo-700);
+  --color-indigo-400: var(--color-indigo-600);
+}
+
+/*
  * Tailwind 4 emits its utilities inside a cascade layer; an unlayered rule
  * such as `* { padding: 0 }` would override every `p-*`/`m-*` class. The
  * base styles therefore live in the `base` layer, where the utilities win.
@@ -18,12 +192,29 @@
       'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #0f172a;
-    color: #e2e8f0;
+    background-color: var(--surface);
+    color: var(--fg-base);
   }
 
-  code {
+  code,
+  kbd {
     font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  }
+}
+
+/* Utilities of the layout: a strip that scrolls without a visible bar,
+   and the tooltip anchor, which must get the pointer events a disabled
+   trigger would otherwise swallow. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer components {
+  .tooltip-anchor > :disabled {
+    pointer-events: none;
   }
 }
 
@@ -34,16 +225,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #475569;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Custom styles for the JSON viewer component to enhance readability and visual hierarchy */
@@ -52,7 +243,7 @@
 ul[style*='list-style: none'] label {
   font-weight: 600 !important;
   letter-spacing: 0.02em !important;
-  text-shadow: 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  text-shadow: var(--json-key-shadow) !important;
   /* prevent the wrapper <label> from adding its own underline */
   text-decoration: none !important;
   border-bottom: none !important;
@@ -64,27 +255,23 @@ ul[style*='list-style: none'] > li > label {
   padding-bottom: 0 !important;
   border-bottom: none !important;
   /* depth 1 (root) key color */
-  color: #facc15 !important;
-  /* amber-300 */
+  color: var(--json-key-1) !important;
 }
 
 /* Depth-based key colors for nested levels */
 /* depth 2 */
 ul[style*='list-style: none'] > li > ul > li > label {
-  color: #eab308 !important;
-  /* amber-500 */
+  color: var(--json-key-2) !important;
 }
 
 /* depth 3 */
 ul[style*='list-style: none'] > li > ul > li > ul > li > label {
-  color: #d97706 !important;
-  /* amber-600 */
+  color: var(--json-key-3) !important;
 }
 
 /* depth 4+ */
 ul[style*='list-style: none'] > li > ul > li > ul > li > ul li > label {
-  color: #b45309 !important;
-  /* amber-700 */
+  color: var(--json-key-4) !important;
 }
 
 /* Style the type indicators (e.g., "13 keys", "{}", "[]") in italic */
@@ -106,24 +293,21 @@ ul[style*='list-style: none'] ul {
 /* Depth-based line colors matching key colors */
 /* depth 2 (children of root) */
 ul[style*='list-style: none'] > li > ul {
-  border-left-color: rgba(234, 179, 8, 0.35) !important;
-  /* amber-500 */
+  border-left-color: var(--json-line-2) !important;
 }
 
 /* depth 3 */
 ul[style*='list-style: none'] > li > ul > li > ul {
-  border-left-color: rgba(217, 119, 6, 0.45) !important;
-  /* amber-600 */
+  border-left-color: var(--json-line-3) !important;
 }
 
 /* depth 4+ */
 ul[style*='list-style: none'] > li > ul > li > ul > li > ul {
-  border-left-color: rgba(180, 83, 9, 0.55) !important;
-  /* amber-700 */
+  border-left-color: var(--json-line-4) !important;
 }
 
 /* Enhance the arrow indicators */
 ul[style*='list-style: none'] div[style*='transform: rotateZ'] {
   opacity: 0.8 !important;
-  filter: drop-shadow(0 0 2px rgba(226, 232, 240, 0.3)) !important;
+  filter: var(--json-arrow-shadow) !important;
 }

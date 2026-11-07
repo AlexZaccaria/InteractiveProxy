@@ -1,110 +1,74 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useId, useState } from 'react'
 import { Check, ChevronDown, Filter, HelpCircle, Info, Search } from 'lucide-react'
 import { FILE_TYPE_OPTIONS, METHOD_OPTIONS, SOURCE_OPTIONS } from './filters'
+import Tooltip from '../../components/Tooltip'
 
 /**
  * The filter bar: the three text searches with the syntax help, the
  * rewritten-only switches, and the source, method and file-type dropdowns.
  */
 
+/** The id of the URL search field; the `/` shortcut focuses it. */
+export const URL_SEARCH_INPUT_ID = 'log-search-url'
+
 /**
- * The help tooltip of the URL search, rendered in a portal under its icon.
+ * The help icon of the URL search, with the syntax in its tooltip.
  */
 function SearchSyntaxHelp() {
-  const [show, setShow] = useState(false)
-  const [position, setPosition] = useState({ top: 0, left: 0 })
-  const anchorRef = useRef(null)
-  const hideTimeoutRef = useRef(null)
-
-  const updatePosition = useCallback(() => {
-    const element = anchorRef.current
-    if (!element) return
-    const rect = element.getBoundingClientRect()
-    const tooltipWidth = 256 // w-64
-    const margin = 8
-    setPosition({ top: rect.bottom + margin, left: Math.max(8, rect.right - tooltipWidth) })
-  }, [])
-
-  const cancelHide = useCallback(() => {
-    if (hideTimeoutRef.current) {
-      clearTimeout(hideTimeoutRef.current)
-      hideTimeoutRef.current = null
-    }
-  }, [])
-
-  const scheduleHide = useCallback(() => {
-    cancelHide()
-    hideTimeoutRef.current = setTimeout(() => setShow(false), 150)
-  }, [cancelHide])
-
-  useEffect(() => cancelHide, [cancelHide])
-
   return (
-    <>
-      <div
-        className="absolute right-2.5 top-1/2 transform -translate-y-1/2"
-        ref={anchorRef}
-        onMouseEnter={() => {
-          cancelHide()
-          updatePosition()
-          setShow(true)
-        }}
-        onMouseLeave={scheduleHide}
+    <Tooltip
+      title="Search syntax"
+      description={
+        <>
+          <div className="space-y-1">
+            <div>
+              <code className="text-blue-400">;</code> - AND (all terms in a group)
+            </div>
+            <div>
+              <code className="text-red-400">!</code> - NOT (exclude term)
+            </div>
+            <div>
+              <code className="text-purple-400">||</code> - OR (between groups)
+            </div>
+          </div>
+          <div className="mt-2 text-fg-muted space-y-1">
+            <div className="whitespace-nowrap">
+              Eg (AND/NOT):{' '}
+              <code>
+                <span className="text-red-400">!</span>facebook
+                <span className="text-blue-400">;</span> <span className="text-red-400">!</span>
+                scontent
+                <span className="text-blue-400">;</span> api
+              </code>
+            </div>
+            <div className="whitespace-nowrap">
+              Eg (OR):{' '}
+              <code>
+                api<span className="text-blue-400">;</span> <span className="text-red-400">!</span>
+                facebook <span className="text-purple-400">||</span> users
+                <span className="text-blue-400">;</span> <span className="text-red-400">!</span>
+                tracking
+              </code>
+            </div>
+          </div>
+        </>
+      }
+      panelClassName="w-80 max-w-[calc(100vw-1rem)]"
+      className="absolute right-2.5 top-1/2 -translate-y-1/2"
+    >
+      <button
+        type="button"
+        aria-label="Search syntax"
+        className="inline-flex items-center text-fg-faint cursor-help hover:text-fg-body focus:outline-hidden focus-visible:text-fg-body"
       >
-        <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help hover:text-slate-300" />
-      </div>
-      {show &&
-        createPortal(
-          <div
-            className="fixed w-80 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-[11px] text-slate-300 shadow-2xl"
-            style={{ zIndex: 99999, top: position.top, left: position.left }}
-            onMouseEnter={cancelHide}
-            onMouseLeave={scheduleHide}
-          >
-            <div className="font-semibold mb-2">Search syntax:</div>
-            <div className="space-y-1">
-              <div>
-                <code className="text-blue-400">;</code> - AND (all terms in a group)
-              </div>
-              <div>
-                <code className="text-red-400">!</code> - NOT (exclude term)
-              </div>
-              <div>
-                <code className="text-purple-400">||</code> - OR (between groups)
-              </div>
-            </div>
-            <div className="mt-2 text-slate-400 space-y-1">
-              <div className="whitespace-nowrap">
-                Eg (AND/NOT):{' '}
-                <code>
-                  <span className="text-red-400">!</span>facebook
-                  <span className="text-blue-400">;</span> <span className="text-red-400">!</span>
-                  scontent
-                  <span className="text-blue-400">;</span> api
-                </code>
-              </div>
-              <div className="whitespace-nowrap">
-                Eg (OR):{' '}
-                <code>
-                  api<span className="text-blue-400">;</span>{' '}
-                  <span className="text-red-400">!</span>facebook{' '}
-                  <span className="text-purple-400">||</span> users
-                  <span className="text-blue-400">;</span> <span className="text-red-400">!</span>
-                  tracking
-                </code>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
-    </>
+        <HelpCircle className="w-3.5 h-3.5" />
+      </button>
+    </Tooltip>
   )
 }
 
 /**
- * A "rewritten only" switch with its hover tooltip. The Tailwind group
- * names must be literal, hence one branch per colour.
+ * A "rewritten only" switch with its tooltip.
  *
  * @param {Object} props
  * @param {'request' | 'response'} props.phase
@@ -112,60 +76,33 @@ function SearchSyntaxHelp() {
  * @param {() => void} props.onToggle
  */
 function RewrittenOnlySwitch({ phase, pressed, onToggle }) {
-  if (phase === 'request') {
-    return (
-      <div className="relative group/request-rewrites shrink-0">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-pressed={pressed}
-          aria-label="Filter: only requests with rewrites"
-          className={`inline-flex items-center justify-center w-8 h-8 rounded-md border text-xs transition-colors ${
-            pressed
-              ? 'bg-yellow-600/20 border-yellow-500/60 text-yellow-300'
-              : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-400 hover:border-yellow-500 hover:text-yellow-300'
-          }`}
-        >
-          <Info className="w-3.5 h-3.5" />
-        </button>
-        <div
-          className="invisible group-hover/request-rewrites:visible absolute right-0 top-full mt-1 w-60 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-2 text-[11px] text-slate-300 shadow-2xl"
-          style={{ zIndex: 99999 }}
-        >
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-yellow-400 mb-1">
-            Request rewrites
-          </div>
-          <div>Show only requests where rewrite rules were applied to the body or frames.</div>
-        </div>
-      </div>
-    )
-  }
-
+  const request = phase === 'request'
   return (
-    <div className="relative group/response-rewrites shrink-0">
+    <Tooltip
+      title={request ? 'Request rewrites' : 'Response rewrites'}
+      description={`Show only ${request ? 'requests' : 'responses'} where rewrite rules were applied to the body or frames.`}
+      className="shrink-0"
+    >
       <button
         type="button"
         onClick={onToggle}
         aria-pressed={pressed}
-        aria-label="Filter: only responses with rewrites"
+        aria-label={
+          request ? 'Filter: only requests with rewrites' : 'Filter: only responses with rewrites'
+        }
         className={`inline-flex items-center justify-center w-8 h-8 rounded-md border text-xs transition-colors ${
           pressed
-            ? 'bg-green-600/20 border-green-500/60 text-green-300'
-            : 'bg-[#0a0a0a] border-[#2a2a2a] text-slate-400 hover:border-green-500 hover:text-green-300'
+            ? request
+              ? 'bg-yellow-600/20 border-yellow-500/60 text-yellow-300'
+              : 'bg-green-600/20 border-green-500/60 text-green-300'
+            : request
+              ? 'bg-surface border-edge text-fg-muted hover:border-yellow-500 hover:text-yellow-300'
+              : 'bg-surface border-edge text-fg-muted hover:border-green-500 hover:text-green-300'
         }`}
       >
         <Info className="w-3.5 h-3.5" />
       </button>
-      <div
-        className="invisible group-hover/response-rewrites:visible absolute right-0 top-full mt-1 w-60 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-2 text-[11px] text-slate-300 shadow-2xl"
-        style={{ zIndex: 99999 }}
-      >
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-green-400 mb-1">
-          Response rewrites
-        </div>
-        <div>Show only responses where rewrite rules were applied to the body or frames.</div>
-      </div>
-    </div>
+    </Tooltip>
   )
 }
 
@@ -179,18 +116,19 @@ function RewrittenOnlySwitch({ phase, pressed, onToggle }) {
  * @param {string} [props.labelClassName]
  */
 function CheckboxOption({ label, checked, onChange, labelClassName = '' }) {
+  const id = useId()
   return (
-    <label className="group flex items-center gap-2 px-3 py-2 hover:bg-[#2a2a2a] cursor-pointer text-sm text-slate-300 transition-colors">
+    <label className="group flex items-center gap-2 px-3 py-2 hover:bg-surface-highlight cursor-pointer text-sm text-fg-body transition-colors">
       <span
         className={`w-4 h-4 rounded-md border flex items-center justify-center text-[10px] transition-colors ${
           checked
-            ? 'bg-slate-100/10 border-slate-300 text-slate-100'
-            : 'bg-[#050508] border-[#2a2a2a] text-slate-500 group-hover:text-slate-200 group-hover:border-slate-400'
+            ? 'bg-fg/10 border-fg-body text-fg-strong'
+            : 'bg-surface-sunken border-edge text-fg-faint group-hover:text-fg-base group-hover:border-fg-muted'
         }`}
       >
         {checked && <Check className="w-3 h-3" />}
       </span>
-      <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
+      <input id={id} type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
       <span className={labelClassName}>{label}</span>
     </label>
   )
@@ -214,7 +152,7 @@ function FilterDropdown({ label, count, open, onToggleOpen, menuClassName, child
         type="button"
         onClick={onToggleOpen}
         aria-expanded={open}
-        className="flex items-center gap-2 px-3 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded-md text-slate-400 hover:border-slate-400 hover:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-slate-400 w-full"
+        className="flex items-center gap-2 px-3 h-8 text-xs bg-surface border border-edge rounded-md text-fg-muted hover:border-fg-muted hover:text-fg-base focus:outline-hidden focus:ring-1 focus:ring-fg-muted w-full"
       >
         <Filter className="w-3.5 h-3.5" />
         <span>
@@ -225,7 +163,7 @@ function FilterDropdown({ label, count, open, onToggleOpen, menuClassName, child
 
       {open && (
         <div
-          className={`absolute top-full left-0 mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md shadow-xl z-10 ${menuClassName}`}
+          className={`absolute top-full left-0 mt-1 bg-surface-raised border border-edge rounded-md shadow-xl z-10 ${menuClassName}`}
         >
           {children}
         </div>
@@ -292,17 +230,21 @@ export default function LogFilters({
   const toggleDropdown = name => setOpenDropdown(current => (current === name ? null : name))
 
   return (
-    <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a] space-y-3">
+    <div className="bg-surface-raised rounded-lg p-4 border border-edge space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-fg-muted" />
+          <label htmlFor={URL_SEARCH_INPUT_ID} className="sr-only">
+            Search URL
+          </label>
           <input
             type="text"
+            id={URL_SEARCH_INPUT_ID}
+            name="search-url"
             placeholder="Search URL..."
-            aria-label="Search URL"
             value={searchTerm}
             onChange={event => onSearchTermChange(event.target.value)}
-            className="w-full pl-8 pr-8 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+            className="w-full pl-8 pr-8 h-8 text-xs bg-surface border border-edge rounded text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-blue-500"
           />
           <SearchSyntaxHelp />
         </div>
@@ -310,13 +252,17 @@ export default function LogFilters({
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-yellow-400" />
+            <label htmlFor="log-search-request" className="sr-only">
+              Search in request
+            </label>
             <input
               type="text"
+              id="log-search-request"
+              name="search-request"
               placeholder="Search in request..."
-              aria-label="Search in request"
               value={requestBodySearch}
               onChange={event => onRequestBodySearchChange(event.target.value)}
-              className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-yellow-500"
+              className="w-full pl-8 pr-2 h-8 text-xs bg-surface border border-edge rounded text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-yellow-500"
             />
           </div>
           <RewrittenOnlySwitch
@@ -329,13 +275,17 @@ export default function LogFilters({
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-green-400" />
+            <label htmlFor="log-search-response" className="sr-only">
+              Search in response
+            </label>
             <input
               type="text"
+              id="log-search-response"
+              name="search-response"
               placeholder="Search in response..."
-              aria-label="Search in response"
               value={responseSearchTerm}
               onChange={event => onResponseSearchTermChange(event.target.value)}
-              className="w-full pl-8 pr-2 h-8 text-xs bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-green-500"
+              className="w-full pl-8 pr-2 h-8 text-xs bg-surface border border-edge rounded text-fg placeholder-fg-faint focus:outline-hidden focus:ring-1 focus:ring-green-500"
             />
           </div>
           <RewrittenOnlySwitch
@@ -379,7 +329,7 @@ export default function LogFilters({
               onChange={() => onToggleMethod(method)}
             />
           ))}
-          <div className="border-t border-[#2a2a2a] my-1"></div>
+          <div className="border-t border-edge my-1"></div>
           <CheckboxOption
             label="WS Connection Status"
             labelClassName="text-xs"

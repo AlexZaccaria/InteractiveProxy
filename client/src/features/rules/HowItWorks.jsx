@@ -6,7 +6,7 @@ function HowItWorks() {
     <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-4">
       <div className="flex items-start gap-3">
         <AlertCircle className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
-        <div className="text-sm text-slate-300">
+        <div className="text-sm text-fg-body">
           <p className="font-medium text-cyan-400 mb-1">How it works</p>
           <p>
             Rules are applied across headers, bodies, Connect frames, and WebSocket messages for
@@ -20,7 +20,7 @@ function HowItWorks() {
             by Apply To (target), URL pattern, and JSON path (when applicable) to prevent mismatched
             usage.
           </p>
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-fg-muted">
             <strong>Note:</strong> If you provide only start markers and leave end markers empty,
             the replacement will continue to the end of the content. This allows you to replace
             everything from a marker onwards without needing to specify where to stop. When both

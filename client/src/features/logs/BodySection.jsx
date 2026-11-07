@@ -44,21 +44,21 @@ export function RawDataSection({ title, preview, base64, collapsePreview = false
 
   return (
     <div className="mt-3 space-y-2">
-      <div className="text-xs font-semibold text-slate-400">{title}</div>
+      <div className="text-xs font-semibold text-fg-muted">{title}</div>
       {preview && (
         <details
-          className="bg-[#0f0f0f] rounded border border-[#2a2a2a] overflow-hidden"
+          className="bg-surface-inset rounded border border-edge overflow-hidden"
           open={previewOpen}
           onToggle={event => {
             if (event.currentTarget !== event.target) return
             setPreviewOpen(event.currentTarget.open)
           }}
         >
-          <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400 hover:text-slate-200">
+          <summary className="cursor-pointer px-3 py-2 text-xs text-fg-muted hover:text-fg-base">
             {previewOpen ? 'Hide raw preview' : `Show raw preview (${preview.length} characters)`}
           </summary>
           {previewOpen && (
-            <pre className="px-3 pb-3 text-xs text-slate-200 overflow-x-auto max-h-60 whitespace-pre-wrap">
+            <pre className="px-3 pb-3 text-xs text-fg-base overflow-x-auto max-h-60 whitespace-pre-wrap">
               {preview}
             </pre>
           )}
@@ -66,18 +66,18 @@ export function RawDataSection({ title, preview, base64, collapsePreview = false
       )}
       {base64 && (
         <details
-          className="bg-[#0f0f0f] rounded border border-[#2a2a2a] overflow-hidden"
+          className="bg-surface-inset rounded border border-edge overflow-hidden"
           open={base64Open}
           onToggle={event => {
             if (event.currentTarget !== event.target) return
             setBase64Open(event.currentTarget.open)
           }}
         >
-          <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400 hover:text-slate-200">
+          <summary className="cursor-pointer px-3 py-2 text-xs text-fg-muted hover:text-fg-base">
             {base64Open ? 'Hide Base64' : `Show Base64 (${Math.round(base64.length / 4)} bytes)`}
           </summary>
           {base64Open && (
-            <pre className="px-3 pb-3 text-xs text-slate-300 break-all whitespace-pre-wrap">
+            <pre className="px-3 pb-3 text-xs text-fg-body break-all whitespace-pre-wrap">
               {base64}
             </pre>
           )}
@@ -91,7 +91,7 @@ export function RawDataSection({ title, preview, base64, collapsePreview = false
 function BodyLoading({ label }) {
   return (
     <div className="mt-2 flex items-center justify-center py-4">
-      <div className="inline-flex items-center gap-2 text-xs text-slate-400">
+      <div className="inline-flex items-center gap-2 text-xs text-fg-muted">
         <Spinner size="sm" color="blue" />
         <span>{label}</span>
       </div>
@@ -111,14 +111,14 @@ function BodyLoading({ label }) {
 function CollapsibleBody({ label, isOpen, onOpenChange, children }) {
   return (
     <details
-      className="mt-3 bg-[#050505] border border-[#2a2a2a] rounded"
+      className="mt-3 bg-surface-sunken border border-edge rounded"
       open={isOpen}
       onToggle={event => {
         if (event.currentTarget !== event.target) return
         onOpenChange(event.currentTarget.open)
       }}
     >
-      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-slate-300 hover:text-slate-100">
+      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-fg-body hover:text-fg-strong">
         {label}
       </summary>
       {isOpen && <div className="px-3 pb-3">{children}</div>}
@@ -133,7 +133,7 @@ function CollapsibleBody({ label, isOpen, onOpenChange, children }) {
  */
 function ResponseSize({ bytes }) {
   if (!bytes) return null
-  return <span className="ml-2 text-xs text-slate-500">({(bytes / 1024).toFixed(2)} KB)</span>
+  return <span className="ml-2 text-xs text-fg-faint">({(bytes / 1024).toFixed(2)} KB)</span>
 }
 
 /**
@@ -234,7 +234,7 @@ export function RequestBodySection({ log, onCreateJsonPathRule }) {
                 onCreateJsonPathRule={onCreateJsonPathRule}
               />
             ) : (
-              <div className="text-xs text-slate-200">
+              <div className="text-xs text-fg-base">
                 <JsonPanel
                   data={requestJson}
                   contextLabel="Request JSON body"
@@ -246,7 +246,7 @@ export function RequestBodySection({ log, onCreateJsonPathRule }) {
             )
         } else {
           standardContent = (
-            <pre className="bg-slate-950 p-3 rounded text-xs text-slate-300 overflow-x-auto max-h-60">
+            <pre className="bg-surface-inset p-3 rounded text-xs text-fg-body overflow-x-auto max-h-60">
               {String(detail.body ?? '')}
             </pre>
           )
@@ -256,7 +256,7 @@ export function RequestBodySection({ log, onCreateJsonPathRule }) {
       content = (
         <div className="mt-2">
           {detail.requestBodySummary && (
-            <div className="text-xs text-slate-400 mb-2">{detail.requestBodySummary}</div>
+            <div className="text-xs text-fg-muted mb-2">{detail.requestBodySummary}</div>
           )}
           {hasConnectRequest ? (
             <>
@@ -274,7 +274,7 @@ export function RequestBodySection({ log, onCreateJsonPathRule }) {
               {rawRequestSection}
             </>
           ) : (
-            rawRequestSection || <div className="text-xs text-slate-500">No body captured.</div>
+            rawRequestSection || <div className="text-xs text-fg-faint">No body captured.</div>
           )}
         </div>
       )
@@ -308,20 +308,20 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
   if (isImage) {
     const href = effectiveLog.fullUrl || effectiveLog.url
     return (
-      <div className="bg-slate-950 p-3 rounded">
+      <div className="bg-surface-inset p-3 rounded">
         {isBinary ? (
           <>
             <img
               src={href}
               alt="Response preview"
-              className="max-w-full max-h-96 rounded border border-slate-700"
+              className="max-w-full max-h-96 rounded border border-edge-strong"
               onError={event => {
                 event.currentTarget.style.display = 'none'
                 const fallback = event.currentTarget.nextSibling
                 if (fallback instanceof HTMLElement) fallback.style.display = 'block'
               }}
             />
-            <div style={{ display: 'none' }} className="text-slate-500 text-sm">
+            <div style={{ display: 'none' }} className="text-fg-faint text-sm">
               Unable to load image. Try opening it in a new tab:
               <a
                 href={href}
@@ -334,7 +334,7 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
             </div>
           </>
         ) : (
-          <div className="text-slate-500 text-sm">
+          <div className="text-fg-faint text-sm">
             Image detected but body is not available.
             <a
               href={href}
@@ -380,7 +380,7 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
     }
 
     return (
-      <div className="text-xs text-slate-200">
+      <div className="text-xs text-fg-base">
         <JsonPanel
           data={jsonData}
           contextLabel="Response JSON body"
@@ -400,7 +400,7 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
   if (isHTML && !isBinary) {
     return (
       <div className="space-y-2">
-        <div className="bg-slate-950 border border-slate-700 rounded p-3 max-h-96 overflow-auto">
+        <div className="bg-surface-inset border border-edge-strong rounded p-3 max-h-96 overflow-auto">
           <iframe
             srcDoc={bodyToShow}
             className="w-full h-96 bg-white rounded"
@@ -408,11 +408,11 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
             title="HTML Preview"
           />
         </div>
-        <details className="bg-slate-950 rounded">
-          <summary className="cursor-pointer p-3 text-xs text-slate-400 hover:text-slate-300">
+        <details className="bg-surface-inset rounded">
+          <summary className="cursor-pointer p-3 text-xs text-fg-muted hover:text-fg-body">
             Show HTML source
           </summary>
-          <pre className="p-3 text-xs text-slate-300 overflow-x-auto max-h-60 border-t border-slate-800">
+          <pre className="p-3 text-xs text-fg-body overflow-x-auto max-h-60 border-t border-edge">
             {bodyToShow}
           </pre>
         </details>
@@ -421,7 +421,7 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
   }
 
   return (
-    <pre className="bg-[#0f0f0f] border border-[#2a2a2a] p-3 rounded text-xs text-slate-300 overflow-x-auto max-h-96">
+    <pre className="bg-surface-inset border border-edge p-3 rounded text-xs text-fg-body overflow-x-auto max-h-96">
       {bodyToShow || 'No content available'}
     </pre>
   )
@@ -515,12 +515,12 @@ export function ResponseBodySection({ log, onCreateJsonPathRule }) {
     } else if (hasConnectResponse) {
       content = (
         <div className="mt-2">
-          <h4 className="text-sm font-semibold text-slate-300 mb-2">
+          <h4 className="text-sm font-semibold text-fg-body mb-2">
             Response Body
             <ResponseSize bytes={detail.responseSize} />
           </h4>
           {detail.responseBodySummary && (
-            <div className="text-xs text-slate-400 mb-2">{detail.responseBodySummary}</div>
+            <div className="text-xs text-fg-muted mb-2">{detail.responseBodySummary}</div>
           )}
           <ConnectTimelines
             connectData={detail.connectResponse}
@@ -550,7 +550,7 @@ export function ResponseBodySection({ log, onCreateJsonPathRule }) {
       if (!bodyToShow && rawResponseSection) {
         content = (
           <div className="mt-2">
-            <h4 className="text-sm font-semibold text-slate-300 mb-2">
+            <h4 className="text-sm font-semibold text-fg-body mb-2">
               {isWebSocket ? 'Message' : 'Response Body'}
             </h4>
             {rawResponseSection}
@@ -559,7 +559,7 @@ export function ResponseBodySection({ log, onCreateJsonPathRule }) {
       } else {
         content = (
           <div className="mt-2">
-            <h4 className="text-sm font-semibold text-slate-300 mb-2">
+            <h4 className="text-sm font-semibold text-fg-body mb-2">
               {isWebSocket ? 'Message Preview' : 'Response Body Preview'}
               <ResponseSize bytes={detail.responseSize} />
             </h4>

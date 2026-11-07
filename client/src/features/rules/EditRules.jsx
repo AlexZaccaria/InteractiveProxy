@@ -13,6 +13,7 @@ import RuleForm from './RuleForm'
 import RuleList from './RuleList'
 import { doesPresetMatchRuleCriteria } from './presets'
 import { buildPresetRule, buildRulePayload, useRuleForm, validateRuleForm } from './useRuleForm'
+import Tooltip from '../../components/Tooltip'
 
 /** @typedef {import('../../lib/types').EditRule} EditRule */
 
@@ -267,17 +268,25 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#2a2a2a]">
-        <div className="flex items-center justify-between gap-4">
+      <div className="bg-surface-raised rounded-lg p-4 border border-edge">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="relative group/live-edit">
+            <Tooltip
+              title="Live edit rules"
+              description={
+                editRulesEnabled
+                  ? 'Live edit rules are active and may modify matching traffic.'
+                  : 'Live edit rules are disabled. All rules are ignored without changing their individual switches.'
+              }
+              placement="bottom-start"
+            >
               <button
                 type="button"
                 onClick={() => setEditRulesMode.mutate(!editRulesEnabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   editRulesEnabled
                     ? 'bg-cyan-600/20 border-cyan-600/30 text-cyan-300'
-                    : 'bg-slate-700/40 border-slate-600/50 text-slate-400'
+                    : 'bg-accent-neutral/40 border-fg-dim/50 text-fg-muted'
                 }`}
                 aria-pressed={!!editRulesEnabled}
               >
@@ -286,23 +295,12 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
                   {editRulesEnabled ? 'ON' : 'OFF'}
                 </span>
               </button>
-              <div
-                className="invisible group-hover/live-edit:visible absolute left-full bottom-full ml-2 mb-2 w-64 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg p-3 text-xs text-slate-300 shadow-2xl"
-                style={{ zIndex: 99999 }}
-              >
-                <div className="font-semibold mb-1 text-slate-200">Live edit rules</div>
-                <p>
-                  {editRulesEnabled
-                    ? 'Live edit rules are active and may modify matching traffic.'
-                    : 'Live edit rules are disabled. All rules are ignored without changing their individual switches.'}
-                </p>
-              </div>
-            </div>
+            </Tooltip>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-semibold text-white">Live Editing Rules</h3>
+                <h3 className="text-base font-semibold text-fg">Live Editing Rules</h3>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-fg-muted">
                 {rules.length} {rules.length === 1 ? 'rule' : 'rules'} configured
               </p>
             </div>
@@ -310,7 +308,7 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
           <button
             onClick={form.startCreate}
             disabled={form.isOpen}
-            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 hover:text-white disabled:bg-slate-700 disabled:text-slate-500 disabled:border-slate-600/50 transition-colors text-xs font-medium"
+            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 hover:text-fg disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50 transition-colors text-xs font-medium"
           >
             <Plus className="w-4 h-4" />
             <span>Add Rule</span>

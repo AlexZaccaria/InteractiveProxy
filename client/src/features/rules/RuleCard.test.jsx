@@ -58,7 +58,7 @@ describe('RuleCard', () => {
     renderCard()
     expect(screen.getByText('Rename title')).toBeInTheDocument()
     expect(screen.getByText('Response')).toBeInTheDocument()
-    expect(screen.getByTitle('Logged entries this rule modified')).toHaveTextContent('1 hit')
+    expect(screen.getByText('1 hit')).toBeInTheDocument()
     expect(screen.queryByText('Disabled')).not.toBeInTheDocument()
     expect(screen.getByText('Start markers:')).toBeInTheDocument()
     expect(screen.getAllByText('<title>')).toHaveLength(1)
@@ -79,12 +79,12 @@ describe('RuleCard', () => {
     expect(screen.getByText('Unnamed Rule')).toBeInTheDocument()
     expect(screen.getByText('Disabled')).toBeInTheDocument()
     expect(screen.getByText('Request')).toBeInTheDocument()
-    expect(screen.getByTitle('Logged entries this rule modified')).toHaveTextContent('3 hits')
+    expect(screen.getByText('3 hits')).toBeInTheDocument()
   })
 
   it('hides the usage badge until the count is known', () => {
     renderCard({ usageCount: undefined })
-    expect(screen.queryByTitle('Logged entries this rule modified')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^\d+ hits?$/)).not.toBeInTheDocument()
   })
 
   it('shows the path and the file source of a JSONPath rule', () => {
@@ -119,9 +119,9 @@ describe('RuleCard', () => {
 
   it('calls the handlers of the actions and applies a preset', () => {
     const { handlers } = renderCard({ presetGroups: [['Response', [preset]]] })
-    fireEvent.click(screen.getByTitle('Disable'))
-    fireEvent.click(screen.getByTitle('Edit'))
-    fireEvent.click(screen.getByTitle('Remove'))
+    fireEvent.click(screen.getByRole('button', { name: 'Disable' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(handlers.onToggle).toHaveBeenCalledTimes(1)
     expect(handlers.onEdit).toHaveBeenCalledTimes(1)
     expect(handlers.onDelete).toHaveBeenCalledTimes(1)
@@ -139,20 +139,20 @@ describe('RuleCard', () => {
     })
     const trigger = screen.getByRole('button', { name: 'Preset one' })
     fireEvent.click(trigger)
-    fireEvent.click(screen.getByTitle('Delete preset'))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete preset' }))
     expect(handlers.onDeletePreset).toHaveBeenCalledWith('preset-1')
     expect(handlers.onApplyPreset).not.toHaveBeenCalled()
   })
 
   it('disables the actions while they are pending', () => {
     renderCard({ toggling: true, deleting: true, deleteDisabled: false })
-    expect(screen.getByTitle('Disable')).toBeDisabled()
-    expect(screen.getByTitle('Remove')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Disable' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled()
   })
 
   it('disables the delete button while a rule is being created', () => {
     renderCard({ deleteDisabled: true })
-    expect(screen.getByTitle('Remove')).toBeDisabled()
-    expect(screen.getByTitle('Disable')).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Disable' })).not.toBeDisabled()
   })
 })
