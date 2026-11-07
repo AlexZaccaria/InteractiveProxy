@@ -12,9 +12,10 @@ import {
   AlertCircle,
   Power
 } from 'lucide-react'
-import axios from 'axios'
 import Spinner from './Spinner'
-import { buildApiUrl } from '../config/apiConfig'
+import { ApiError } from '../lib/api'
+import { useResourceMutations, useResources, useSetFlag } from '../lib/queries'
+import { useProxyStore } from '../store/useProxyStore'
 
 /**
  * Panel for listing and managing local resource overrides.
@@ -23,14 +24,18 @@ import { buildApiUrl } from '../config/apiConfig'
  * for matching URLs. This component also contains a small form for creating new
  * overrides with either file uploads or inline text content.
  *
+ * The list comes from the `resources` query; the global toggle is the
+ * `localResourcesEnabled` flag of the store.
+ *
  * @param {Object} props
- * @param {Array} props.resources List of currently configured local resources.
- * @param {(url: string) => Promise<void>} [props.onDelete] Optional callback to delete a resource by URL.
- * @param {() => void} [props.onRefresh] Optional callback invoked after changes so the parent can refetch.
- * @param {boolean} [props.enabled] Whether local resources are globally enabled.
- * @param {(enabled: boolean) => void} [props.onModeChange] Called when the global local-resources toggle is changed.
+ * @param {(title: string, message: string) => Promise<boolean>} [props.showConfirm] Confirm helper used before deleting a resource.
  */
-function LocalResources({ resources, onDelete, onRefresh, enabled = true, onModeChange }) {
+function LocalResources({ showConfirm }) {
+  const enabled = useProxyStore(state => state.localResourcesEnabled)
+  const setLocalResourcesMode = useSetFlag('local-resources-mode')
+  const resourcesQuery = useResources()
+  const { create, toggle, remove } = useResourceMutations()
+  const resources = resourcesQuery.data || []
   const [showAddForm, setShowAddForm] = useState(false)
   const [mode, setMode] = useState('file') // 'file' or 'text'
   const [url, setUrl] = useState('')
@@ -54,10 +59,18 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
   }
 
   const handleDelete = async resourceUrl => {
-    if (!onDelete) return
     try {
       setDeletingUrl(resourceUrl)
-      await onDelete(resourceUrl)
+      const confirmed = showConfirm
+        ? await showConfirm(
+            'Delete local resource',
+            `Are you sure you want to delete the resource for ${resourceUrl}? This action cannot be undone.`
+          )
+        : true
+
+      if (!confirmed) return
+
+      await remove.mutateAsync(resourceUrl)
     } catch (err) {
       console.error('Error deleting local resource:', err)
     } finally {
@@ -70,11 +83,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
     try {
       setTogglingUrl(resource.url)
       const nextEnabled = resource.enabled === false ? true : false
-      await axios.post(buildApiUrl('/api/resources/toggle'), {
-        url: resource.url,
-        enabled: nextEnabled
-      })
-      if (onRefresh) onRefresh()
+      await toggle.mutateAsync({ url: resource.url, enabled: nextEnabled })
     } catch (err) {
       console.error('Error toggling local resource:', err)
     } finally {
@@ -115,11 +124,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
         formData.append('content', textContent)
       }
 
-      await axios.post(buildApiUrl('/api/resources'), formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
+      await create.mutateAsync(formData)
 
       setSuccess('Resource added successfully!')
 
@@ -130,10 +135,13 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
         setContentType('text/plain')
         setSuccess('')
         setShowAddForm(false)
-        if (onRefresh) onRefresh()
       }, 1500)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error uploading resource')
+      setError(
+        err instanceof ApiError && typeof err.body?.error === 'string'
+          ? err.body.error
+          : 'Error uploading resource'
+      )
     } finally {
       setLoading(false)
     }
@@ -180,7 +188,7 @@ function LocalResources({ resources, onDelete, onRefresh, enabled = true, onMode
             <div className="relative group/local-resources">
               <button
                 type="button"
-                onClick={() => onModeChange && onModeChange(!enabled)}
+                onClick={() => setLocalResourcesMode.mutate(!enabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   enabled
                     ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'

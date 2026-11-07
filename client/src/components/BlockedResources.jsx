@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import { Trash2, Power, ShieldAlert, AlertCircle } from 'lucide-react'
 import Spinner from './Spinner'
-import { buildApiUrl } from '../config/apiConfig'
+import { useBlockedRuleMutation, useBlockedRules, useSetFlag } from '../lib/queries'
+import { useProxyStore } from '../store/useProxyStore'
 
 /**
  * Panel for viewing and managing blocked URL rules.
@@ -10,40 +11,21 @@ import { buildApiUrl } from '../config/apiConfig'
  * human-friendly name, so the UI only needs to render rule.name and rule.url
  * without performing its own domain parsing.
  *
+ * The list comes from the `blocked` query; the global toggle is the
+ * `blockedRulesEnabled` flag of the store.
+ *
  * @param {Object} props
- * @param {boolean} [props.enabled]
- * @param {(enabled: boolean) => void} [props.onModeChange]
- * @param {(title: string, message: string, kind: string) => Promise<boolean>} [props.showConfirm]
+ * @param {(title: string, message: string) => Promise<boolean>} [props.showConfirm]
  */
-function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
-  const [blockedRules, setBlockedRules] = useState([])
-  const [loading, setLoading] = useState(false)
+function BlockedResources({ showConfirm }) {
+  const enabled = useProxyStore(state => state.blockedRulesEnabled)
+  const setBlockedRulesMode = useSetFlag('blocked-rules-mode')
+  const blockedQuery = useBlockedRules()
+  const { mutateAsync: mutateBlockedRule } = useBlockedRuleMutation()
+  const blockedRules = blockedQuery.data || []
+  const loading = blockedQuery.isLoading
   const [deletingId, setDeletingId] = useState(null)
   const [togglingId, setTogglingId] = useState(null)
-
-  const normalizeBlockedRules = payload => {
-    if (!payload) return []
-    if (Array.isArray(payload)) return payload
-    if (Array.isArray(payload.blockedRules)) return payload.blockedRules
-    return []
-  }
-
-  const fetchBlockedUrls = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await fetch(buildApiUrl('/api/blocked'))
-      const data = await response.json()
-      setBlockedRules(normalizeBlockedRules(data))
-    } catch (error) {
-      console.error('Error fetching blocked URLs:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchBlockedUrls()
-  }, [fetchBlockedUrls])
 
   const unblockRule = useCallback(
     async rule => {
@@ -67,22 +49,14 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
 
       try {
         setDeletingId(rule.id || rule.url)
-        const response = await fetch(buildApiUrl('/api/blocked'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: rule.id, url: rule.url, action: 'remove' })
-        })
-
-        if (response.ok) {
-          await fetchBlockedUrls()
-        }
+        await mutateBlockedRule({ id: rule.id, url: rule.url, action: 'remove' })
       } catch (error) {
         console.error('Error unblocking URL:', error)
       } finally {
         setDeletingId(null)
       }
     },
-    [fetchBlockedUrls, showConfirm]
+    [mutateBlockedRule, showConfirm]
   )
 
   const toggleRuleEnabled = useCallback(
@@ -90,22 +64,14 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
       if (!rule) return
       try {
         setTogglingId(rule.id || rule.url)
-        const response = await fetch(buildApiUrl('/api/blocked'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: rule.id, action: 'update', enabled: !rule.enabled })
-        })
-
-        if (response.ok) {
-          await fetchBlockedUrls()
-        }
+        await mutateBlockedRule({ id: rule.id, action: 'update', enabled: !rule.enabled })
       } catch (error) {
         console.error('Error updating blocked rule:', error)
       } finally {
         setTogglingId(null)
       }
     },
-    [fetchBlockedUrls]
+    [mutateBlockedRule]
   )
 
   return (
@@ -116,7 +82,7 @@ function BlockedResources({ enabled = true, onModeChange, showConfirm }) {
             <div className="relative group/blocked-mode">
               <button
                 type="button"
-                onClick={() => onModeChange && onModeChange(!enabled)}
+                onClick={() => setBlockedRulesMode.mutate(!enabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   enabled
                     ? 'bg-orange-600/20 border-orange-500/40 text-orange-200'

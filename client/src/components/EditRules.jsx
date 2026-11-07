@@ -14,9 +14,19 @@ import {
   ChevronDown,
   Check
 } from 'lucide-react'
-import axios from 'axios'
 import Spinner from './Spinner'
-import { buildApiUrl } from '../config/apiConfig'
+import { apiPost } from '../lib/api'
+import {
+  useEditRuleMutations,
+  useEditRulePresets,
+  useEditRules,
+  usePresetMutations,
+  useSetFlag
+} from '../lib/queries'
+import { useProxyStore } from '../store/useProxyStore'
+
+/** Shared empty list so that `rules` / `presets` keep one identity before the data arrives. */
+const EMPTY_LIST = []
 
 /**
  * Build a human-readable preview string for a rule's replacement/value.
@@ -552,38 +562,40 @@ const normalizeJsonPathFormValue = rawValue => {
  * live edit rules. Text rules operate on raw text content (headers, bodies, frames), while
  * JSONPath rules target structured fields inside JSON/Protobuf payloads.
  *
+ * The rules and the presets come from the `edit-rules` and `edit-rule-presets`
+ * queries; the global toggle is the `editRulesEnabled` flag of the store, and
+ * the JSONPath seed handed over by the log view is read from the store too.
+ *
  * @param {Object} props
- * @param {() => void} [props.onRulesChanged] Optional callback invoked after rules are created, updated or deleted.
- * @param {boolean} [props.editRulesEnabled] Global switch indicating whether live edit rules are applied.
- * @param {(enabled: boolean) => void} [props.onEditRulesModeChange] Called when the global live edit toggle is changed.
  * @param {(title: string, message: string, kind: string) => Promise<boolean>} [props.showConfirm] Optional async confirm dialog helper.
  * @param {(title: string, message: string, defaultValue?: string, placeholder?: string, examples?: string[]) => Promise<string|boolean>} [props.showPrompt]
  *        Optional prompt helper used to name edit-rule presets.
  * @param {(title: string, message: string, kind: string) => void} [props.showAlert] Optional alert helper for warning/error messages.
- * @param {{ name?: string, path?: string, value?: any, valueType?: string, url?: string, target?: 'request'|'response'|'both' }} [props.initialJsonPathSeed]
- *        Optional seed used to prefill a new JSONPath rule when invoked from the JSON tree view.
- * @param {() => void} [props.onConsumeJsonPathSeed] Callback invoked once the initialJsonPathSeed has been consumed.
  */
-function EditRules({
-  onRulesChanged,
-  editRulesEnabled,
-  onEditRulesModeChange,
-  showConfirm,
-  showPrompt,
-  showAlert,
-  initialJsonPathSeed,
-  onConsumeJsonPathSeed
-}) {
-  const [rules, setRules] = useState([])
-  const [loading, setLoading] = useState(true)
+function EditRules({ showConfirm, showPrompt, showAlert }) {
+  const editRulesEnabled = useProxyStore(state => state.editRulesEnabled)
+  const initialJsonPathSeed = useProxyStore(state => state.jsonPathRuleSeed)
+  const setJsonPathRuleSeed = useProxyStore(state => state.setJsonPathRuleSeed)
+  const setEditRulesMode = useSetFlag('edit-rules-mode')
+  const rulesQuery = useEditRules()
+  const presetsQuery = useEditRulePresets()
+  const ruleMutations = useEditRuleMutations()
+  const presetMutations = usePresetMutations()
+  const { mutateAsync: createRule } = ruleMutations.create
+  const { mutateAsync: updateRule } = ruleMutations.update
+  const { mutateAsync: deleteRule } = ruleMutations.remove
+  const { mutateAsync: createPreset } = presetMutations.create
+  const { mutateAsync: deletePreset } = presetMutations.remove
+  const rules = rulesQuery.data || EMPTY_LIST
+  const loading = rulesQuery.isLoading
+  const presets = presetsQuery.data || EMPTY_LIST
+  const presetsLoading = presetsQuery.isLoading
   const [editingRule, setEditingRule] = useState(null)
   const [isCreating, setIsCreating] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
   const [expandedRuleIds, setExpandedRuleIds] = useState([])
-  const [presets, setPresets] = useState([])
-  const [presetsLoading, setPresetsLoading] = useState(false)
   const [selectedPresetId, setSelectedPresetId] = useState('')
   const [rulePresetSelections, setRulePresetSelections] = useState({})
   const [updatingPresetRuleId, setUpdatingPresetRuleId] = useState(null)
@@ -608,38 +620,6 @@ function EditRules({
   })
 
   const formRef = useRef(null)
-
-  const fetchRules = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = await axios.get(buildApiUrl('/api/edit-rules'))
-      setRules(response.data.rules || [])
-    } catch (error) {
-      console.error('Error fetching edit rules:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const fetchPresets = useCallback(async () => {
-    try {
-      setPresetsLoading(true)
-      const response = await axios.get(buildApiUrl('/api/edit-rule-presets'))
-      setPresets(response.data.presets || [])
-    } catch (error) {
-      console.error('Error fetching edit rule presets:', error)
-    } finally {
-      setPresetsLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchRules()
-  }, [fetchRules])
-
-  useEffect(() => {
-    fetchPresets()
-  }, [fetchPresets])
 
   /**
    * Build a preset-ready edit-rule payload from the current form data.
@@ -809,13 +789,11 @@ function EditRules({
 
     try {
       setUpdatingPresetRuleId(rule.id)
-      await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), patch)
-      await fetchRules()
-      if (onRulesChanged) onRulesChanged()
+      await updateRule({ id: rule.id, patch })
       setRulePresetSelections(prev => ({ ...prev, [rule.id]: String(presetId) }))
     } catch (error) {
       console.error('Error applying preset to rule:', error)
-      const message = error.response?.data?.error || error.message || 'Unknown error'
+      const message = error?.message || 'Unknown error'
       if (showAlert) {
         showAlert('Failed to apply preset', String(message), 'error')
       } else {
@@ -858,21 +836,14 @@ function EditRules({
       caseSensitive: false
     }))
 
-    if (onConsumeJsonPathSeed) {
-      onConsumeJsonPathSeed()
-    }
-  }, [initialJsonPathSeed, onConsumeJsonPathSeed])
+    setJsonPathRuleSeed(null)
+  }, [initialJsonPathSeed, setJsonPathRuleSeed])
 
   const handleToggleEnabled = async rule => {
     if (!rule) return
     try {
       setTogglingId(rule.id)
-      await axios.put(buildApiUrl(`/api/edit-rules/${rule.id}`), {
-        ...rule,
-        enabled: !rule.enabled
-      })
-      await fetchRules()
-      if (onRulesChanged) onRulesChanged()
+      await updateRule({ id: rule.id, patch: { ...rule, enabled: !rule.enabled } })
     } catch (error) {
       console.error('Error toggling rule:', error)
       if (showAlert) {
@@ -916,13 +887,13 @@ function EditRules({
    * @returns {Promise<string | null>}
    */
   const openJsonValueFilePicker = useCallback(async () => {
-    const response = await axios.post(buildApiUrl('/api/system/file-picker'), {
+    const result = await apiPost('/api/system/file-picker', {
       title: 'Select JSONPath value file',
       filter: 'Text files (*.txt)|*.txt|All files (*.*)|*.*'
     })
 
-    if (response?.data?.canceled) return null
-    return response?.data?.path || null
+    if (result?.canceled) return null
+    return result?.path || null
   }, [])
 
   /**
@@ -1006,9 +977,7 @@ function EditRules({
 
     try {
       setDeletingId(ruleId)
-      await axios.delete(buildApiUrl(`/api/edit-rules/${ruleId}`))
-      await fetchRules()
-      if (onRulesChanged) onRulesChanged()
+      await deleteRule(ruleId)
     } catch (error) {
       console.error('Error deleting rule:', error)
     } finally {
@@ -1266,17 +1235,15 @@ function EditRules({
     try {
       setSaving(true)
       if (isCreating) {
-        await axios.post(buildApiUrl('/api/edit-rules'), payload)
+        await createRule(payload)
       } else if (editingRule) {
-        await axios.put(buildApiUrl(`/api/edit-rules/${editingRule}`), payload)
+        await updateRule({ id: editingRule, patch: payload })
       }
 
-      await fetchRules()
-      if (onRulesChanged) onRulesChanged()
       handleCancel()
     } catch (error) {
       console.error('Error saving rule:', error)
-      const message = error.response?.data?.error || error.message || 'Unknown error'
+      const message = error?.message || 'Unknown error'
       if (showAlert) {
         showAlert('Failed to save rule', String(message), 'error')
       } else {
@@ -1285,7 +1252,7 @@ function EditRules({
     } finally {
       setSaving(false)
     }
-  }, [editingRule, fetchRules, formData, handleCancel, isCreating, onRulesChanged, showAlert])
+  }, [createRule, editingRule, formData, handleCancel, isCreating, showAlert, updateRule])
 
   /**
    * Save the current form as a reusable preset.
@@ -1315,16 +1282,15 @@ function EditRules({
     }
 
     try {
-      const response = await axios.post(buildApiUrl('/api/edit-rule-presets'), payload)
-      const created = response.data?.preset
-      await fetchPresets()
+      const response = await createPreset(payload)
+      const created = response?.preset
       if (created?.id) {
         setSelectedPresetId(String(created.id))
       }
       await handleSave()
     } catch (error) {
       console.error('Error saving edit rule preset:', error)
-      const message = error.response?.data?.error || error.message || 'Unknown error'
+      const message = error?.message || 'Unknown error'
       if (showAlert) {
         showAlert('Failed to save preset', String(message), 'error')
       } else {
@@ -1333,7 +1299,7 @@ function EditRules({
     }
   }, [
     buildPresetRuleFromForm,
-    fetchPresets,
+    createPreset,
     formData.kind,
     formData.name,
     handleSave,
@@ -1380,8 +1346,7 @@ function EditRules({
       if (!confirmed) return
 
       try {
-        await axios.delete(buildApiUrl(`/api/edit-rule-presets/${targetId}`))
-        await fetchPresets()
+        await deletePreset(targetId)
         setSelectedPresetId(prev => (String(prev) === targetId ? '' : prev))
         setRulePresetSelections(prev => {
           const next = { ...prev }
@@ -1394,7 +1359,7 @@ function EditRules({
         })
       } catch (error) {
         console.error('Error deleting preset:', error)
-        const message = error.response?.data?.error || error.message || 'Unknown error'
+        const message = error?.message || 'Unknown error'
         if (showAlert) {
           showAlert('Failed to delete preset', String(message), 'error')
         } else {
@@ -1402,7 +1367,7 @@ function EditRules({
         }
       }
     },
-    [fetchPresets, showAlert, showConfirm]
+    [deletePreset, showAlert, showConfirm]
   )
 
   useEffect(() => {
@@ -1430,7 +1395,7 @@ function EditRules({
             <div className="relative group/live-edit">
               <button
                 type="button"
-                onClick={() => onEditRulesModeChange && onEditRulesModeChange(!editRulesEnabled)}
+                onClick={() => setEditRulesMode.mutate(!editRulesEnabled)}
                 className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border transition-colors ${
                   editRulesEnabled
                     ? 'bg-cyan-600/20 border-cyan-600/30 text-cyan-300'

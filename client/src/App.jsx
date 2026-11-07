@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   FileText,
@@ -17,133 +18,162 @@ import FilterRules from './components/FilterRules'
 import EditRules from './components/EditRules'
 import Modal from './components/Modal'
 import Spinner from './components/Spinner'
+import AuditPanel from './components/AuditPanel'
 import { useModal } from './hooks/useModal'
 import { useProxyEvents } from './hooks/useProxyEvents'
-import axios from 'axios'
-import AuditPanel from './components/AuditPanel'
-import { buildApiUrl } from './config/apiConfig'
+import {
+  queryKeys,
+  useClearLogs,
+  useConfig,
+  useDashboard,
+  useEditRules,
+  useSetFlag
+} from './lib/queries'
+import { useProxyStore } from './store/useProxyStore'
+
+/** Dashboard polling period while the event stream is not open. */
+const DASHBOARD_POLL_MS = 2000
+/** Quiet time after a burst of `log` events before the derived queries are refetched. */
+const LOG_EVENT_DEBOUNCE_MS = 500
 
 function App() {
   const { modalState, closeModal, showConfirm, showPrompt, showAlert } = useModal()
-  const [activeTab, setActiveTab] = useState('logs')
-  const [resources, setResources] = useState([])
-  const [blockedCount, setBlockedCount] = useState(0)
-  const [filterRuleCount, setFilterRuleCount] = useState(0)
-  const [filteredRequests, setFilteredRequests] = useState(0)
-  const [editRuleCount, setEditRuleCount] = useState(0)
-  const [editedRequests, setEditedRequests] = useState(0)
+  const queryClient = useQueryClient()
+
+  const activeTab = useProxyStore(state => state.activeTab)
+  const setActiveTab = useProxyStore(state => state.setActiveTab)
+  const interactiveMode = useProxyStore(state => state.interactiveModeEnabled)
+  const filterMode = useProxyStore(state => state.filterMode)
+  const showAuditPanel = useProxyStore(state => state.showAuditPanel)
+  const setShowAuditPanel = useProxyStore(state => state.setShowAuditPanel)
+  const toggleAuditPanel = useProxyStore(state => state.toggleAuditPanel)
+  const setJsonPathRuleSeed = useProxyStore(state => state.setJsonPathRuleSeed)
+  const applyConfig = useProxyStore(state => state.applyConfig)
+  const setEventsConnected = useProxyStore(state => state.setEventsConnected)
+
   const [filteredLogsCount, setFilteredLogsCount] = useState(0)
   const [exportLogsFunc, setExportLogsFunc] = useState(null)
-  const [interactiveMode, setInteractiveMode] = useState(true)
-  const [editRulesEnabled, setEditRulesEnabled] = useState(true)
-  const [localResourcesEnabled, setLocalResourcesEnabled] = useState(true)
-  const [filterRulesEnabled, setFilterRulesEnabled] = useState(true)
-  const [blockedRulesEnabled, setBlockedRulesEnabled] = useState(true)
-  const [filterMode, setFilterMode] = useState('ignore')
+  // Bumped when the logs are cleared; RequestLogs reloads from the first page.
   const [logsRefreshToken, setLogsRefreshToken] = useState(0)
-  const [jsonPathRuleSeed, setJsonPathRuleSeed] = useState(null)
-  const [stats, setStats] = useState({
-    total: 0,
-    served: 0,
-    proxied: 0,
-    blocked: 0,
-    redirected: 0,
-    errors: 0
-  })
-  const [dashboardPerformance, setDashboardPerformance] = useState(null)
-  const [dashboardPayloads, setDashboardPayloads] = useState(null)
-  const [dashboardRoutes, setDashboardRoutes] = useState(null)
-  const [showAuditPanel, setShowAuditPanel] = useState(false)
-  const [clearingLogs, setClearingLogs] = useState(false)
-  // Counters bumped by the event stream; children refetch when they change.
+  // Bumped on every `log` event; RequestLogs refetches its window (debounced).
   const [logsVersion, setLogsVersion] = useState(0)
-  const [statsVersion, setStatsVersion] = useState(0)
-  const [rulesVersion, setRulesVersion] = useState(0)
+  const logEventTimerRef = useRef(null)
 
   // Stable registration callback for the logs export function so that
-  // RequestLogs can be memoized and remain isolated from dashboard polling
-  // re-renders. We store the export function as-is in state, avoiding the
+  // RequestLogs can be memoized. The function is stored as-is, avoiding the
   // React "functional updater" semantics for state setters.
   const registerExportLogs = useCallback(fn => {
     setExportLogsFunc(() => fn)
   }, [])
 
-  /**
-   * Apply a dashboard payload: the full one from GET /api/dashboard or the
-   * `stats` event of the event stream, which carries the same fields except
-   * `resources` and `blocked` (those are refreshed on `rules` events).
-   */
-  const applyDashboardData = useCallback(data => {
-    const {
-      stats: serverStats = {},
-      resources: resourceEntries,
-      blocked: blockedList,
-      filterMetrics = {},
-      editedRequests: editedValue = 0,
-      performance: performanceData = null,
-      payloads: payloadData = null,
-      routes: routesData = null
-    } = data || {}
-
-    const totalLogged = serverStats.total ?? 0
-    const totalBypassed = filterMetrics.totalFiltered ?? 0
-
-    if (Array.isArray(resourceEntries)) setResources(resourceEntries)
-    if (Array.isArray(blockedList)) setBlockedCount(blockedList.length)
-
-    // Processed: requests that go through the proxy internals and are
-    // neither blocked nor redirected. Computed on the backend.
-    const processedValue =
-      serverStats.processed ?? Math.max(0, totalLogged - (serverStats.blocked ?? 0))
-    setFilteredRequests(processedValue)
-
-    setFilterRuleCount(filterMetrics.activeRules ?? 0)
-    setEditedRequests(editedValue)
-    setStats({
-      // Overall logged traffic (HTTP/HTTPS/WebSocket). Bypassed/redirected
-      // flows are logged as 'direct'/'tunnel' and already included in
-      // totalLogged, so we do not add totalBypassed again to avoid
-      // double-counting.
-      total: totalLogged,
-      served: serverStats.served ?? 0,
-      proxied: serverStats.proxied ?? 0,
-      blocked: serverStats.blocked ?? 0,
-      redirected: totalBypassed,
-      errors: serverStats.errors ?? 0
-    })
-    setDashboardPerformance(performanceData || null)
-    setDashboardPayloads(payloadData || null)
-    setDashboardRoutes(routesData || null)
-  }, [])
-
-  const fetchDashboard = useCallback(async () => {
-    if (!interactiveMode) return
-    try {
-      const response = await axios.get(buildApiUrl('/api/dashboard'))
-      applyDashboardData(response.data)
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error)
-    }
-  }, [interactiveMode, applyDashboardData])
-
-  const deleteResource = useCallback(
-    async url => {
-      try {
-        const confirmed = await showConfirm(
-          'Delete local resource',
-          `Are you sure you want to delete the resource for ${url}? This action cannot be undone.`
-        )
-
-        if (!confirmed) return
-
-        await axios.delete(buildApiUrl(`/api/resources/${encodeURIComponent(url)}`))
-        await fetchDashboard()
-      } catch (error) {
-        console.error('Error deleting resource:', error)
+  // Live updates from GET /api/events, applied to the query cache. The
+  // stream has no replay, so the dashboard is refetched whenever the
+  // connection (re)opens; while it is open the polling intervals are off.
+  const eventsConnected = useProxyEvents({
+    log: () => {
+      setLogsVersion(version => version + 1)
+      if (logEventTimerRef.current) clearTimeout(logEventTimerRef.current)
+      logEventTimerRef.current = setTimeout(() => {
+        logEventTimerRef.current = null
+        queryClient.invalidateQueries({ queryKey: queryKeys.filterSuggestions })
+        queryClient.invalidateQueries({ queryKey: queryKeys.audit })
+        queryClient.invalidateQueries({ queryKey: queryKeys.editRuleUsage })
+      }, LOG_EVENT_DEBOUNCE_MS)
+    },
+    stats: data => {
+      // Same fields as GET /api/dashboard except `resources` and `blocked`,
+      // which are kept from the cached payload (refreshed on `rules` events).
+      if (!data || typeof data !== 'object') return
+      queryClient.setQueryData(queryKeys.dashboard, previous => ({
+        ...data,
+        resources: previous && Array.isArray(previous.resources) ? previous.resources : undefined,
+        blocked: previous && Array.isArray(previous.blocked) ? previous.blocked : undefined
+      }))
+    },
+    config: data => {
+      if (!data || typeof data !== 'object') return
+      queryClient.setQueryData(queryKeys.config, previous => ({ ...(previous || {}), ...data }))
+      applyConfig(data)
+    },
+    rules: () => {
+      for (const queryKey of [
+        queryKeys.editRules,
+        queryKeys.editRulePresets,
+        queryKeys.editRuleUsage,
+        queryKeys.blocked,
+        queryKeys.filtersRoot,
+        queryKeys.filterMetrics,
+        queryKeys.resources,
+        queryKeys.dashboard
+      ]) {
+        queryClient.invalidateQueries({ queryKey })
       }
     },
-    [fetchDashboard, showConfirm]
+    'logs-cleared': () => {
+      setLogsRefreshToken(token => token + 1)
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+      queryClient.invalidateQueries({ queryKey: queryKeys.audit })
+      queryClient.invalidateQueries({ queryKey: queryKeys.editRuleUsage })
+    }
+  })
+
+  useEffect(
+    () => () => {
+      if (logEventTimerRef.current) clearTimeout(logEventTimerRef.current)
+    },
+    []
   )
+
+  useEffect(() => {
+    setEventsConnected(eventsConnected)
+    if (eventsConnected) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+    }
+  }, [eventsConnected, setEventsConnected, queryClient])
+
+  // The flags are mirrored into the store from the config payload, whether
+  // it comes from the query or from a `config` event.
+  const configQuery = useConfig()
+  useEffect(() => {
+    if (configQuery.data) applyConfig(configQuery.data)
+  }, [configQuery.data, applyConfig])
+
+  const dashboardQuery = useDashboard({
+    enabled: interactiveMode,
+    refetchInterval: eventsConnected ? false : DASHBOARD_POLL_MS
+  })
+  const editRulesQuery = useEditRules()
+  const { mutateAsync: clearLogsOnServer, isPending: clearingLogs } = useClearLogs()
+  const setInteractiveMode = useSetFlag('interactive-mode')
+
+  const dashboard = dashboardQuery.data
+  const header = useMemo(() => {
+    const serverStats = (dashboard && dashboard.stats) || {}
+    const filterMetrics = (dashboard && dashboard.filterMetrics) || {}
+    const totalLogged = serverStats.total ?? 0
+    // Processed: requests that go through the proxy internals and are
+    // neither blocked nor redirected. Computed on the backend; before the
+    // first dashboard payload the counter of the config is shown.
+    const processed = dashboard
+      ? (serverStats.processed ?? Math.max(0, totalLogged - (serverStats.blocked ?? 0)))
+      : (configQuery.data?.filteredRequestCount ?? 0)
+    return {
+      // Overall logged traffic (HTTP/HTTPS/WebSocket). Bypassed/redirected
+      // flows are logged as 'direct'/'tunnel' and already included in the
+      // total, so totalFiltered is not added again.
+      total: totalLogged,
+      blocked: serverStats.blocked ?? 0,
+      redirected: filterMetrics.totalFiltered ?? 0,
+      processed,
+      edited: dashboard?.editedRequests ?? 0,
+      served: serverStats.served ?? 0,
+      filterRuleCount: filterMetrics.activeRules ?? 0,
+      blockedCount: Array.isArray(dashboard?.blocked) ? dashboard.blocked.length : 0,
+      resourceCount: Array.isArray(dashboard?.resources) ? dashboard.resources.length : 0,
+      routes: dashboard?.routes || null
+    }
+  }, [dashboard, configQuery.data])
+  const editRuleCount = editRulesQuery.data ? editRulesQuery.data.length : 0
 
   const handleClearLogs = useCallback(async () => {
     try {
@@ -153,177 +183,33 @@ function App() {
       )
       if (!confirmed) return
 
-      setClearingLogs(true)
-      await axios.delete(buildApiUrl('/api/logs'))
+      await clearLogsOnServer()
       setLogsRefreshToken(token => token + 1)
     } catch (error) {
       console.error('Error clearing logs:', error)
-    } finally {
-      setClearingLogs(false)
     }
-  }, [showConfirm])
+  }, [showConfirm, clearLogsOnServer])
 
-  const fetchEditRuleCount = useCallback(async () => {
-    try {
-      const response = await axios.get(buildApiUrl('/api/edit-rules'))
-      setEditRuleCount(response.data.rules?.length || 0)
-    } catch (error) {
-      console.error('Error fetching edit rules:', error)
-    }
-  }, [])
+  const handleCreateJsonPathRuleFromLogs = useCallback(
+    seed => {
+      if (!seed) return
+      setJsonPathRuleSeed(seed)
+      setActiveTab('edit')
+    },
+    [setJsonPathRuleSeed, setActiveTab]
+  )
 
-  // Fetch config on mount
-  useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const response = await axios.get(buildApiUrl('/api/config'))
-        setInteractiveMode(response.data.interactiveModeEnabled)
-        if (typeof response.data.editRulesEnabled === 'boolean') {
-          setEditRulesEnabled(response.data.editRulesEnabled)
-        }
-        if (typeof response.data.localResourcesEnabled === 'boolean') {
-          setLocalResourcesEnabled(response.data.localResourcesEnabled)
-        }
-        if (typeof response.data.filterRulesEnabled === 'boolean') {
-          setFilterRulesEnabled(response.data.filterRulesEnabled)
-        }
-        if (typeof response.data.blockedRulesEnabled === 'boolean') {
-          setBlockedRulesEnabled(response.data.blockedRulesEnabled)
-        }
-        if (response.data.filterMode) {
-          setFilterMode(response.data.filterMode === 'focus' ? 'focus' : 'ignore')
-        }
-        if (typeof response.data.filteredRequestCount === 'number') {
-          setFilteredRequests(response.data.filteredRequestCount)
-        }
-      } catch (error) {
-        console.error('Error fetching config:', error)
+  const handleProxyIconClick = useCallback(
+    event => {
+      // Secret gesture: triple-click on the proxy icon/title block. The
+      // synthetic event.detail increments with the click count (1, 2, 3, ...);
+      // when it reaches 3, toggle the audit panel.
+      if (event?.detail >= 3) {
+        toggleAuditPanel()
       }
-    }
-    fetchConfig()
-  }, [])
-
-  // Live updates from GET /api/events. The stream has no replay, so the
-  // dashboard is fetched once whenever the connection (re)opens; while it is
-  // open the 2 s polling below is suspended.
-  const eventsConnected = useProxyEvents({
-    log: () => setLogsVersion(v => v + 1),
-    stats: data => {
-      if (data) applyDashboardData(data)
-      setStatsVersion(v => v + 1)
     },
-    config: data => {
-      if (!data) return
-      if (typeof data.interactiveModeEnabled === 'boolean')
-        setInteractiveMode(data.interactiveModeEnabled)
-      if (typeof data.editRulesEnabled === 'boolean') setEditRulesEnabled(data.editRulesEnabled)
-      if (typeof data.localResourcesEnabled === 'boolean')
-        setLocalResourcesEnabled(data.localResourcesEnabled)
-      if (typeof data.filterRulesEnabled === 'boolean')
-        setFilterRulesEnabled(data.filterRulesEnabled)
-      if (typeof data.blockedRulesEnabled === 'boolean')
-        setBlockedRulesEnabled(data.blockedRulesEnabled)
-      if (data.filterMode) setFilterMode(data.filterMode === 'focus' ? 'focus' : 'ignore')
-    },
-    rules: () => {
-      fetchDashboard()
-      fetchEditRuleCount()
-      setRulesVersion(v => v + 1)
-    },
-    'logs-cleared': () => setLogsRefreshToken(token => token + 1)
-  })
-
-  useEffect(() => {
-    if (interactiveMode) {
-      fetchDashboard()
-    }
-    fetchEditRuleCount()
-
-    if (eventsConnected) return undefined
-
-    const interval = setInterval(() => {
-      if (interactiveMode) {
-        fetchDashboard()
-      }
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [interactiveMode, eventsConnected, fetchDashboard, fetchEditRuleCount])
-
-  // Update interactive mode on server
-  const handleInteractiveModeChange = useCallback(async enabled => {
-    try {
-      await axios.post(buildApiUrl('/api/interactive-mode'), { enabled })
-      setInteractiveMode(enabled)
-    } catch (error) {
-      console.error('Failed to set interactive mode:', error)
-    }
-  }, [])
-
-  // Update live edit rules mode on server
-  const handleEditRulesModeChange = useCallback(async enabled => {
-    try {
-      await axios.post(buildApiUrl('/api/edit-rules-mode'), { enabled })
-      setEditRulesEnabled(enabled)
-    } catch (error) {
-      console.error('Failed to set edit rules mode:', error)
-    }
-  }, [])
-
-  // Update local resources mode on server
-  const handleLocalResourcesModeChange = useCallback(async enabled => {
-    try {
-      await axios.post(buildApiUrl('/api/local-resources-mode'), { enabled })
-      setLocalResourcesEnabled(enabled)
-    } catch (error) {
-      console.error('Failed to set local resources mode:', error)
-    }
-  }, [])
-
-  // Update global filter rules mode (bypass engine) on server
-  const handleFilterRulesModeChange = useCallback(async enabled => {
-    try {
-      await axios.post(buildApiUrl('/api/filter-rules-mode'), { enabled })
-      setFilterRulesEnabled(enabled)
-    } catch (error) {
-      console.error('Failed to set filter rules mode:', error)
-    }
-  }, [])
-
-  // Update blocked rules mode on server
-  const handleBlockedRulesModeChange = useCallback(async enabled => {
-    try {
-      await axios.post(buildApiUrl('/api/blocked-rules-mode'), { enabled })
-      setBlockedRulesEnabled(enabled)
-    } catch (error) {
-      console.error('Failed to set blocked rules mode:', error)
-    }
-  }, [])
-
-  const handleFilterModeChange = useCallback(async mode => {
-    try {
-      const normalized = mode === 'focus' ? 'focus' : 'ignore'
-      const response = await axios.post(buildApiUrl('/api/filter-mode'), { mode: normalized })
-      const nextMode = response.data?.filterMode === 'focus' ? 'focus' : 'ignore'
-      setFilterMode(nextMode)
-    } catch (error) {
-      console.error('Failed to set filter mode:', error)
-    }
-  }, [])
-
-  const handleCreateJsonPathRuleFromLogs = useCallback(seed => {
-    if (!seed) return
-    setJsonPathRuleSeed(seed)
-    setActiveTab('edit')
-  }, [])
-
-  const handleProxyIconClick = useCallback(event => {
-    // Secret gesture: triple-click on the proxy icon/title block.
-    // React's synthetic event.detail increments with the click count
-    // (1, 2, 3, ...). When it reaches 3, toggle the audit panel.
-    if (event?.detail >= 3) {
-      setShowAuditPanel(prevVisible => !prevVisible)
-    }
-  }, [])
+    [toggleAuditPanel]
+  )
 
   return (
     <>
@@ -340,14 +226,7 @@ function App() {
         examples={modalState.examples}
       />
       {showAuditPanel && (
-        <AuditPanel
-          onClose={() => setShowAuditPanel(false)}
-          performance={dashboardPerformance}
-          payloads={dashboardPayloads}
-          routes={dashboardRoutes}
-          eventsConnected={eventsConnected}
-          statsVersion={statsVersion}
-        />
+        <AuditPanel onClose={() => setShowAuditPanel(false)} routes={header.routes} />
       )}
 
       <div className="min-h-screen bg-[#0a0a0a]" style={{ minWidth: '1024px' }}>
@@ -379,21 +258,21 @@ function App() {
                     <FileText className="w-5 h-5 text-slate-300" />
                     <div>
                       <p className="text-xs text-slate-400">Total</p>
-                      <p className="text-lg font-bold text-white">{stats.total}</p>
+                      <p className="text-lg font-bold text-white">{header.total}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <ShieldAlert className="w-5 h-5 text-orange-400" />
                     <div>
                       <p className="text-xs text-slate-400">Blocked</p>
-                      <p className="text-lg font-bold text-orange-400">{stats.blocked}</p>
+                      <p className="text-lg font-bold text-orange-400">{header.blocked}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <CornerDownRight className="w-5 h-5 text-blue-400" />
                     <div>
                       <p className="text-xs text-slate-400">Redirected</p>
-                      <p className="text-lg font-bold text-blue-400">{stats.redirected}</p>
+                      <p className="text-lg font-bold text-blue-400">{header.redirected}</p>
                     </div>
                   </div>
                 </div>
@@ -404,21 +283,21 @@ function App() {
                     <CircuitBoard className="w-5 h-5 text-purple-400" />
                     <div>
                       <p className="text-xs text-slate-400">Processed</p>
-                      <p className="text-lg font-bold text-purple-400">{filteredRequests}</p>
+                      <p className="text-lg font-bold text-purple-400">{header.processed}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Edit3 className="w-5 h-5 text-cyan-400" />
                     <div>
                       <p className="text-xs text-slate-400">Edited</p>
-                      <p className="text-lg font-bold text-cyan-400">{editedRequests}</p>
+                      <p className="text-lg font-bold text-cyan-400">{header.edited}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <HardDrive className="w-5 h-5 text-green-400" />
                     <div>
                       <p className="text-xs text-slate-400">Served</p>
-                      <p className="text-lg font-bold text-green-400">{stats.served}</p>
+                      <p className="text-lg font-bold text-green-400">{header.served}</p>
                     </div>
                   </div>
                 </div>
@@ -431,7 +310,7 @@ function App() {
                   <div className="inline-flex items-center rounded-full bg-[#050508] border border-[#252525] p-0.5">
                     <button
                       type="button"
-                      onClick={() => !interactiveMode && handleInteractiveModeChange(true)}
+                      onClick={() => !interactiveMode && setInteractiveMode.mutate(true)}
                       className={`px-3 h-8 text-[11px] font-medium tracking-wide rounded-full transform transition-all duration-150 ${
                         interactiveMode
                           ? 'bg-[#18181b] border border-slate-500/70 text-slate-100 shadow-[0_0_0_1px_rgba(148,163,184,0.4)] scale-100'
@@ -443,7 +322,7 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => interactiveMode && handleInteractiveModeChange(false)}
+                      onClick={() => interactiveMode && setInteractiveMode.mutate(false)}
                       className={`px-3 h-8 text-[11px] font-medium tracking-wide rounded-full transform transition-all duration-150 ml-0.5 ${
                         !interactiveMode
                           ? 'bg-[#18181b] text-slate-100 scale-100'
@@ -538,7 +417,7 @@ function App() {
               }`}
             >
               <ShieldAlert className="w-4 h-4" />
-              <span>Blocked ({blockedCount})</span>
+              <span>Blocked ({header.blockedCount})</span>
             </button>
 
             <button
@@ -557,7 +436,7 @@ function App() {
                 <CornerDownRight className="w-4 h-4" />
               )}
               <span>
-                {filterMode === 'focus' ? 'Processed' : 'Redirected'} ({filterRuleCount})
+                {filterMode === 'focus' ? 'Processed' : 'Redirected'} ({header.filterRuleCount})
               </span>
             </button>
 
@@ -582,7 +461,7 @@ function App() {
               }`}
             >
               <HardDrive className="w-4 h-4" />
-              <span>Local ({resources.length})</span>
+              <span>Local ({header.resourceCount})</span>
             </button>
           </div>
 
@@ -598,49 +477,14 @@ function App() {
                 logsVersion={logsVersion}
               />
             )}
-            {activeTab === 'resources' && (
-              <LocalResources
-                resources={resources}
-                onDelete={deleteResource}
-                onRefresh={fetchDashboard}
-                enabled={localResourcesEnabled}
-                onModeChange={handleLocalResourcesModeChange}
-              />
-            )}
+            {activeTab === 'resources' && <LocalResources showConfirm={showConfirm} />}
 
-            {activeTab === 'blocked' && (
-              <BlockedResources
-                enabled={blockedRulesEnabled}
-                onModeChange={handleBlockedRulesModeChange}
-                showConfirm={showConfirm}
-              />
-            )}
+            {activeTab === 'blocked' && <BlockedResources showConfirm={showConfirm} />}
 
-            {activeTab === 'filters' && (
-              <FilterRules
-                onRulesChanged={fetchDashboard}
-                filterMode={filterMode}
-                onFilterModeChange={handleFilterModeChange}
-                filterRulesEnabled={filterRulesEnabled}
-                onFilterRulesModeChange={handleFilterRulesModeChange}
-                showConfirm={showConfirm}
-                eventsConnected={eventsConnected}
-                rulesVersion={rulesVersion}
-                logsVersion={logsVersion}
-              />
-            )}
+            {activeTab === 'filters' && <FilterRules showConfirm={showConfirm} />}
 
             {activeTab === 'edit' && (
-              <EditRules
-                onRulesChanged={fetchEditRuleCount}
-                editRulesEnabled={editRulesEnabled}
-                onEditRulesModeChange={handleEditRulesModeChange}
-                showConfirm={showConfirm}
-                showPrompt={showPrompt}
-                showAlert={showAlert}
-                initialJsonPathSeed={jsonPathRuleSeed}
-                onConsumeJsonPathSeed={() => setJsonPathRuleSeed(null)}
-              />
+              <EditRules showConfirm={showConfirm} showPrompt={showPrompt} showAlert={showAlert} />
             )}
           </div>
         </div>

@@ -1,148 +1,65 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useMemo } from 'react'
 import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react'
-import { buildApiUrl } from '../config/apiConfig'
+import { useAudit, useEditRules, useEditRuleUsage } from '../lib/queries'
+import { useProxyStore } from '../store/useProxyStore'
+
+/** Audit polling period while the event stream is not open. */
+const AUDIT_POLL_MS = 5000
 
 /**
  * Secret audit panel for detailed proxy performance analysis.
  *
  * This component is intentionally not linked from the main navigation;
  * it is opened via a hidden triple-click gesture on the header icon.
+ *
+ * The metrics are fetched when the panel opens, then whenever App.jsx
+ * invalidates them after a burst of `log` events or, without the stream, on
+ * a fixed interval.
+ *
+ * @param {Object} props
+ * @param {() => void} props.onClose
+ * @param {{ byHandling?: Record<string, any[]> } | null} [props.routes] The `routes` of the dashboard payload.
  */
-function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0 }) {
-  const [errorBuckets, setErrorBuckets] = useState({})
-  const [totalErrors, setTotalErrors] = useState(0)
-  const [hostStats, setHostStats] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [editRuleUsage, setEditRuleUsage] = useState([])
-  const hasLoadedRef = useRef(false)
+function AuditPanel({ onClose, routes }) {
+  const eventsConnected = useProxyStore(state => state.eventsConnected)
+  const auditQuery = useAudit({ refetchInterval: eventsConnected ? false : AUDIT_POLL_MS })
+  const rulesQuery = useEditRules()
+  const usageQuery = useEditRuleUsage()
 
-  // Fetched once when the panel opens, then on every `stats` event of the
-  // event stream (already coalesced by the server) or, without the stream,
-  // on a fixed interval.
-  useEffect(() => {
-    let cancelled = false
-    let inFlight = false
-    const POLL_INTERVAL_MS = 5000
+  const loading = auditQuery.isLoading
+  const error = auditQuery.error ? auditQuery.error.message || String(auditQuery.error) : null
+  const audit = auditQuery.data
+  const errorBuckets = audit && audit.errorBuckets ? audit.errorBuckets : {}
+  const totalErrors = audit && typeof audit.totalErrors === 'number' ? audit.totalErrors : 0
+  const hostStats = audit && Array.isArray(audit.hostStats) ? audit.hostStats : []
 
-    /**
-     * Fetch latest audit metrics (latency, errors, host stats) and
-     * edit rule usage snapshot. Called on mount and then on a fixed
-     * interval while the panel is open.
-     *
-     * @param {boolean} [isInitial=false] When true, shows the loading state.
-     * @returns {Promise<void>}
-     */
-    const fetchAudit = async (isInitial = false) => {
-      if (inFlight || cancelled) return
+  // Best-effort edit rule usage snapshot, with rarely-used rules first to
+  // highlight obsolete ones.
+  const editRuleUsage = useMemo(() => {
+    if (!rulesQuery.data || !usageQuery.data) return []
+    const usageMap = usageQuery.data.usage || {}
 
-      inFlight = true
-      if (isInitial) {
-        setLoading(true)
-      }
-      setError(null)
-
-      try {
-        const auditPromise = fetch(buildApiUrl('/api/audit'))
-        const rulesPromise = fetch(buildApiUrl('/api/edit-rules')).catch(() => null)
-        const usagePromise = fetch(buildApiUrl('/api/edit-rules/usage')).catch(() => null)
-
-        const [auditResponse, rulesResponse, usageResponse] = await Promise.all([
-          auditPromise,
-          rulesPromise,
-          usagePromise
-        ])
-
-        if (!auditResponse || !auditResponse.ok) {
-          throw new Error(`HTTP ${auditResponse ? auditResponse.status : 'AUDIT_FAILED'}`)
+    return rulesQuery.data
+      .filter(rule => rule && rule.id)
+      .map(rule => {
+        const countRaw = usageMap[rule.id]
+        const count =
+          typeof countRaw === 'number' && Number.isFinite(countRaw) && countRaw > 0 ? countRaw : 0
+        return {
+          id: rule.id,
+          name: rule.name || '(unnamed rule)',
+          enabled: rule.enabled !== false,
+          kind: rule.kind || 'text',
+          url: rule.url || '',
+          target: rule.target || 'both',
+          count
         }
-
-        const auditData = await auditResponse.json()
-
-        if (!cancelled) {
-          const {
-            errorBuckets: buckets = {},
-            totalErrors: total = 0,
-            hostStats: hosts = []
-          } = auditData || {}
-          setErrorBuckets(buckets || {})
-          setTotalErrors(typeof total === 'number' ? total : 0)
-          setHostStats(Array.isArray(hosts) ? hosts : [])
-        }
-
-        // Best-effort edit rule usage snapshot; failures here should not
-        // affect the core audit metrics UI.
-        if (!cancelled && rulesResponse && rulesResponse.ok && usageResponse && usageResponse.ok) {
-          try {
-            const rulesJson = await rulesResponse.json()
-            const usageJson = await usageResponse.json()
-
-            const rules = Array.isArray(rulesJson?.rules) ? rulesJson.rules : []
-            const usageMap = usageJson && typeof usageJson === 'object' ? usageJson.usage || {} : {}
-
-            const snapshot = rules
-              .filter(rule => rule && rule.id)
-              .map(rule => {
-                const countRaw = usageMap[rule.id]
-                const count =
-                  typeof countRaw === 'number' && Number.isFinite(countRaw) && countRaw > 0
-                    ? countRaw
-                    : 0
-                return {
-                  id: rule.id,
-                  name: rule.name || '(unnamed rule)',
-                  enabled: rule.enabled !== false,
-                  kind: rule.kind || 'text',
-                  url: rule.url || '',
-                  target: rule.target || 'both',
-                  count
-                }
-              })
-              // Sort with rarely-used rules first to highlight obsolete ones.
-              .sort((a, b) => {
-                if (a.count !== b.count) return a.count - b.count
-                return a.name.localeCompare(b.name)
-              })
-
-            setEditRuleUsage(snapshot)
-          } catch {
-            setEditRuleUsage([])
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err?.message || String(err))
-        }
-      } finally {
-        if (!cancelled && isInitial) {
-          setLoading(false)
-        }
-        inFlight = false
-      }
-    }
-
-    const isInitial = !hasLoadedRef.current
-    hasLoadedRef.current = true
-
-    let timer = null
-    let intervalId = null
-    if (isInitial) {
-      fetchAudit(true)
-    } else if (eventsConnected) {
-      timer = setTimeout(() => fetchAudit(false), 300)
-    }
-    if (!eventsConnected) {
-      intervalId = setInterval(() => {
-        fetchAudit(false)
-      }, POLL_INTERVAL_MS)
-    }
-
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-      if (intervalId) clearInterval(intervalId)
-    }
-  }, [eventsConnected, statsVersion])
+      })
+      .sort((a, b) => {
+        if (a.count !== b.count) return a.count - b.count
+        return a.name.localeCompare(b.name)
+      })
+  }, [rulesQuery.data, usageQuery.data])
 
   const dashboardRoutesByHandling = useMemo(() => {
     if (!routes || !routes.byHandling || typeof routes.byHandling !== 'object') {

@@ -1,8 +1,7 @@
 import React, { useState } from 'react'
 import { Upload, FileText, Link as LinkIcon, CheckCircle, AlertCircle, Code } from 'lucide-react'
-import axios from 'axios'
 import Spinner from './Spinner'
-import { buildApiUrl } from '../config/apiConfig'
+import { ApiError, apiUpload } from '../lib/api'
 
 /**
  * Form for creating a new local resource override.
@@ -67,11 +66,7 @@ function AddResource({ onSuccess }) {
         formData.append('content', textContent)
       }
 
-      await axios.post(buildApiUrl('/api/resources'), formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
+      await apiUpload('/api/resources', formData)
 
       setSuccess('Resource added successfully!')
 
@@ -85,7 +80,11 @@ function AddResource({ onSuccess }) {
         onSuccess()
       }, 1500)
     } catch (err) {
-      setError(err.response?.data?.error || 'Error uploading resource')
+      setError(
+        err instanceof ApiError && typeof err.body?.error === 'string'
+          ? err.body.error
+          : 'Error uploading resource'
+      )
     } finally {
       setLoading(false)
     }

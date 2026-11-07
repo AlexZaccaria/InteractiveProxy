@@ -26,7 +26,7 @@ import {
   Check
 } from 'lucide-react'
 import { JSONTree } from 'react-json-tree'
-import { buildApiUrl } from '../config/apiConfig'
+import { ApiError, apiGet, apiPost, apiUpload } from '../lib/api'
 
 const PAGE_SIZE = 15
 
@@ -800,15 +800,9 @@ function RequestLogsInner({
         if (selectedFileTypes.length) params.set('fileTypes', selectedFileTypes.join(','))
         params.set('showWsConnections', String(showWsConnections))
 
-        const response = await fetch(buildApiUrl(`/api/logs?${params.toString()}`), {
+        const data = await apiGet(`/api/logs?${params.toString()}`, {
           signal: controller.signal
         })
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
-
-        const data = await response.json()
 
         // Ignore stale responses if a newer request has been issued
         if (requestId !== activeRequestIdRef.current) {
@@ -972,8 +966,7 @@ function RequestLogsInner({
 
   // Load blocked URLs on mount
   useEffect(() => {
-    fetch(buildApiUrl('/api/blocked'))
-      .then(res => res.json())
+    apiGet('/api/blocked')
       .then(data => setBlockedUrls(extractBlockedPatterns(data)))
       .catch(err => console.error('Error loading blocked URLs:', err))
   }, [])
@@ -1126,16 +1119,8 @@ function RequestLogsInner({
       // URL is already blocked (or contains a blocked pattern) - unblock it
       const action = 'remove'
       try {
-        const response = await fetch(buildApiUrl('/api/blocked'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: matchingBlockedUrl, action })
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          setBlockedUrls(extractBlockedPatterns(data))
-        }
+        const data = await apiPost('/api/blocked', { url: matchingBlockedUrl, action })
+        setBlockedUrls(extractBlockedPatterns(data))
       } catch (error) {
         console.error('Error unblocking URL:', error)
       }
@@ -1156,21 +1141,13 @@ function RequestLogsInner({
       if (editedUrl && editedUrl.trim()) {
         const action = 'add'
         try {
-          const response = await fetch(buildApiUrl('/api/blocked'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: editedUrl.trim(),
-              action,
-              name: '', // Nome vuoto, può essere modificato dopo
-              enabled: true
-            })
+          const data = await apiPost('/api/blocked', {
+            url: editedUrl.trim(),
+            action,
+            name: '', // Nome vuoto, può essere modificato dopo
+            enabled: true
           })
-
-          if (response.ok) {
-            const data = await response.json()
-            setBlockedUrls(extractBlockedPatterns(data))
-          }
+          setBlockedUrls(extractBlockedPatterns(data))
         } catch (error) {
           console.error('Error blocking URL:', error)
         }
@@ -1249,12 +1226,7 @@ function RequestLogsInner({
         params.set('showWsConnections', String(showWsConnections))
       }
 
-      const response = await fetch(buildApiUrl(`/api/logs/export?${params.toString()}`))
-      if (!response.ok) {
-        throw new Error(`Export failed with status ${response.status}`)
-      }
-
-      const data = await response.json()
+      const data = await apiGet(`/api/logs/export?${params.toString()}`)
       const items = data.items || []
 
       const dataStr = JSON.stringify(items, null, 2)
@@ -1435,15 +1407,9 @@ function RequestLogsInner({
           setIsLoading(true)
           setError(null)
 
-          const response = await fetch(buildApiUrl(`/api/logs/${encodeURIComponent(logId)}`), {
+          const data = await apiGet(`/api/logs/${encodeURIComponent(logId)}`, {
             signal: controller.signal
           })
-
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`)
-          }
-
-          const data = await response.json()
           if (cancelled) return
           setDetail(data || null)
         } catch (err) {
@@ -2966,33 +2932,19 @@ function RequestLogsInner({
                                     formData.append('url', log.fullUrl || log.url)
 
                                     try {
-                                      const response = await fetch(buildApiUrl('/api/resources'), {
-                                        method: 'POST',
-                                        body: formData
-                                      })
-
-                                      if (response.ok) {
-                                        const message = `Ora ${log.fullUrl || log.url} will serve the local file.`
-                                        if (showAlert) {
-                                          showAlert(
-                                            'Resource replaced successfully',
-                                            message,
-                                            'info'
-                                          )
-                                        } else {
-                                          alert(`Resource replaced successfully!\n${message}`)
-                                        }
+                                      await apiUpload('/api/resources', formData)
+                                      const message = `Ora ${log.fullUrl || log.url} will serve the local file.`
+                                      if (showAlert) {
+                                        showAlert('Resource replaced successfully', message, 'info')
                                       } else {
-                                        const message = 'Error uploading resource'
-                                        if (showAlert) {
-                                          showAlert('Upload failed', message, 'error')
-                                        } else {
-                                          alert(message)
-                                        }
+                                        alert(`Resource replaced successfully!\n${message}`)
                                       }
                                     } catch (error) {
                                       console.error('Error uploading resource:', error)
-                                      const message = 'Error during upload'
+                                      const message =
+                                        error instanceof ApiError
+                                          ? 'Error uploading resource'
+                                          : 'Error during upload'
                                       if (showAlert) {
                                         showAlert('Upload failed', message, 'error')
                                       } else {

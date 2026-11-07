@@ -16,6 +16,7 @@
     "src/hooks/**/*.js",
     "src/lib/**/*.js",
     "src/features/**/*.js",
+    "src/store/**/*.js",
     "src/config/**/*.js"
   ]
 }
