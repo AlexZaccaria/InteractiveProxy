@@ -40,7 +40,7 @@
 
 ### Added
 
-- `GET /api/events`: a Server-Sent Events stream of new log entries, counter changes, configuration and rule changes.
+- `GET /api/events`: a Server-Sent Events stream of new log entries, counter changes, configuration and rule changes; the UI follows it and polls only while the stream is unavailable.
 - `PROXY_UPSTREAM_H2`: HTTP/2 towards TLS upstreams that offer it (off by default).
 - Non-WebSocket `Upgrade` requests inside a MITM tunnel are forwarded as plain requests.
 - The proxy serves the built UI from its own port (`npm run build && npm start`).

@@ -17,8 +17,11 @@ import { buildApiUrl } from '../config/apiConfig';
  * @param {boolean} [props.filterRulesEnabled] Whether filter rules are globally enabled.
  * @param {(enabled: boolean) => void} [props.onFilterRulesModeChange] Called when the global toggle is changed.
  * @param {(title: string, message: string, kind: string) => Promise<boolean>} [props.showConfirm] Optional confirm helper.
+ * @param {boolean} [props.eventsConnected] True while the event stream is open; the suggestions poll is then suspended.
+ * @param {number} [props.rulesVersion] Bumped on every `rules` event; the rule list is refetched.
+ * @param {number} [props.logsVersion] Bumped on every `log` event; the suggestions are refetched (debounced).
  */
-function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange, filterRulesEnabled = true, onFilterRulesModeChange, showConfirm }) {
+function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange, filterRulesEnabled = true, onFilterRulesModeChange, showConfirm, eventsConnected = false, rulesVersion = 0, logsVersion = 0 }) {
   const bypassMode = filterMode;
   const [patterns, setPatterns] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -77,14 +80,27 @@ function FilterRules({ onRulesChanged, filterMode = 'ignore', onFilterModeChange
   }, [fetchBypassPatterns, fetchSuggestions, bypassMode]);
 
   useEffect(() => {
-    if (bypassMode === 'focus') return;
+    if (bypassMode === 'focus' || eventsConnected) return;
 
     const interval = setInterval(() => {
       fetchSuggestions();
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [fetchSuggestions, bypassMode]);
+  }, [fetchSuggestions, bypassMode, eventsConnected]);
+
+  // Event stream: rule changes made elsewhere (API, other tabs) reload the
+  // list; new traffic refreshes the suggestions, debounced.
+  useEffect(() => {
+    if (rulesVersion === 0) return;
+    fetchBypassPatterns();
+  }, [rulesVersion, fetchBypassPatterns]);
+
+  useEffect(() => {
+    if (!eventsConnected || logsVersion === 0 || bypassMode === 'focus') return undefined;
+    const timer = setTimeout(() => fetchSuggestions(), 500);
+    return () => clearTimeout(timer);
+  }, [logsVersion, eventsConnected, bypassMode, fetchSuggestions]);
 
   const submitPattern = useCallback(async (pattern) => {
     const trimmed = pattern.trim();

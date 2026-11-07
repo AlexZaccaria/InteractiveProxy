@@ -576,8 +576,10 @@ let ResponseBodySection;
  * @param {(exportFn: () => Promise<void>) => void} [props.onExportLogs] Receives a function the parent can call to export logs.
  * @param {number|string} [props.refreshToken] Changing this value forces an immediate refetch of logs.
  * @param {(seed: Object) => void} [props.onCreateJsonPathRule] Invoked when the user creates a JSONPath edit rule from a JSON tree.
+ * @param {boolean} [props.eventsConnected] True while the event stream is open; polling is then suspended.
+ * @param {number} [props.logsVersion] Bumped by the parent on every `log` event; triggers a debounced refetch of the current window.
  */
-function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, onCreateJsonPathRule }) {
+function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, onCreateJsonPathRule, eventsConnected = false, logsVersion = 0 }) {
   const { modalState, closeModal, showPrompt, showAlert } = useModal();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -754,7 +756,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
    *   nested detail sections – do not disappear every time new data arrives
    *   while lightweight polling is active.
    */
-  const fetchLogs = useCallback(async (offset = 0, append = false) => {
+  const fetchLogs = useCallback(async (offset = 0, append = false, limit = PAGE_SIZE) => {
     // Cancel any in-flight request before starting a new one
     if (activeFetchControllerRef.current) {
       activeFetchControllerRef.current.abort();
@@ -769,7 +771,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     try {
       const params = new URLSearchParams();
       params.set('offset', String(offset));
-      params.set('limit', String(PAGE_SIZE));
+      params.set('limit', String(limit));
       params.set('view', 'summary');
 
       if (searchTerm) params.set('search', searchTerm);
@@ -1041,6 +1043,21 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     fetchLogs(0, false);
   }, [refreshToken, fetchLogs]);
 
+  // Event stream: every `log` event bumps logsVersion; refetch the window the
+  // client currently holds (first page at least), debounced so a burst of
+  // traffic costs one request. Server-side filters keep applying.
+  const logsLengthRef = useRef(0);
+  logsLengthRef.current = logs.length;
+  const handledLogsVersionRef = useRef(0);
+  useEffect(() => {
+    if (!eventsConnected || logsVersion === 0 || logsVersion === handledLogsVersionRef.current) return undefined;
+    const timer = setTimeout(() => {
+      handledLogsVersionRef.current = logsVersion;
+      fetchLogs(0, false, Math.max(PAGE_SIZE, logsLengthRef.current));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [logsVersion, eventsConnected, fetchLogs]);
+
   // Infinite scroll observer
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -1149,6 +1166,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
   // existing cards (including any expanded details) are never replaced
   // or reordered by this background refresh.
   useEffect(() => {
+    if (eventsConnected) return;
     if (isDebouncingFilters) return;
     if (loading) return;
     if (logs.length >= PAGE_SIZE) return;
@@ -1164,7 +1182,7 @@ function RequestLogsInner({ onFilteredCountChange, onExportLogs, refreshToken, o
     }, 2000);
 
     return () => clearInterval(intervalId);
-  }, [logs.length, loading, isDebouncingFilters, fetchLogs]);
+  }, [logs.length, loading, isDebouncingFilters, fetchLogs, eventsConnected]);
 
   /**
    * Export the current filtered log view as a JSON file.

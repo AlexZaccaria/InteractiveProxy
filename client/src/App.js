@@ -18,6 +18,7 @@ import EditRules from './components/EditRules';
 import Modal from './components/Modal';
 import Spinner from './components/Spinner';
 import { useModal } from './hooks/useModal';
+import { useProxyEvents } from './hooks/useProxyEvents';
 import axios from 'axios';
 import AuditPanel from './components/AuditPanel';
 import { buildApiUrl } from './config/apiConfig';
@@ -54,6 +55,10 @@ function App() {
   const [dashboardRoutes, setDashboardRoutes] = useState(null);
   const [showAuditPanel, setShowAuditPanel] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
+  // Counters bumped by the event stream; children refetch when they change.
+  const [logsVersion, setLogsVersion] = useState(0);
+  const [statsVersion, setStatsVersion] = useState(0);
+  const [rulesVersion, setRulesVersion] = useState(0);
 
   // Stable registration callback for the logs export function so that
   // RequestLogs can be memoized and remain isolated from dashboard polling
@@ -63,53 +68,62 @@ function App() {
     setExportLogsFunc(() => fn);
   }, []);
 
+  /**
+   * Apply a dashboard payload: the full one from GET /api/dashboard or the
+   * `stats` event of the event stream, which carries the same fields except
+   * `resources` and `blocked` (those are refreshed on `rules` events).
+   */
+  const applyDashboardData = useCallback((data) => {
+    const {
+      stats: serverStats = {},
+      resources: resourceEntries,
+      blocked: blockedList,
+      filterMetrics = {},
+      editedRequests: editedValue = 0,
+      performance: performanceData = null,
+      payloads: payloadData = null,
+      routes: routesData = null
+    } = data || {};
+
+    const totalLogged = serverStats.total ?? 0;
+    const totalBypassed = filterMetrics.totalFiltered ?? 0;
+
+    if (Array.isArray(resourceEntries)) setResources(resourceEntries);
+    if (Array.isArray(blockedList)) setBlockedCount(blockedList.length);
+
+    // Processed: requests that go through the proxy internals and are
+    // neither blocked nor redirected. Computed on the backend.
+    const processedValue = serverStats.processed ?? Math.max(0, totalLogged - (serverStats.blocked ?? 0));
+    setFilteredRequests(processedValue);
+
+    setFilterRuleCount(filterMetrics.activeRules ?? 0);
+    setEditedRequests(editedValue);
+    setStats({
+      // Overall logged traffic (HTTP/HTTPS/WebSocket). Bypassed/redirected
+      // flows are logged as 'direct'/'tunnel' and already included in
+      // totalLogged, so we do not add totalBypassed again to avoid
+      // double-counting.
+      total: totalLogged,
+      served: serverStats.served ?? 0,
+      proxied: serverStats.proxied ?? 0,
+      blocked: serverStats.blocked ?? 0,
+      redirected: totalBypassed,
+      errors: serverStats.errors ?? 0
+    });
+    setDashboardPerformance(performanceData || null);
+    setDashboardPayloads(payloadData || null);
+    setDashboardRoutes(routesData || null);
+  }, []);
+
   const fetchDashboard = useCallback(async () => {
     if (!interactiveMode) return;
     try {
       const response = await axios.get(buildApiUrl('/api/dashboard'));
-      const {
-        stats: serverStats = {},
-        resources: resourceEntries = [],
-        blocked: blockedList = [],
-        filterMetrics = {},
-        editedRequests: editedValue = 0,
-        performance: performanceData = null,
-        payloads: payloadData = null,
-        routes: routesData = null
-      } = response.data || {};
-
-      const totalLogged = serverStats.total ?? 0;
-      const totalBypassed = filterMetrics.totalFiltered ?? 0;
-
-      setResources(resourceEntries);
-      setBlockedCount(blockedList.length);
-
-      // Processed: requests that go through the proxy internals and are
-      // neither blocked nor redirected. Computed on the backend.
-      const processedValue = serverStats.processed ?? Math.max(0, totalLogged - (serverStats.blocked ?? 0));
-      setFilteredRequests(processedValue);
-
-      setFilterRuleCount(filterMetrics.activeRules ?? 0);
-      setEditedRequests(editedValue);
-      setStats({
-        // Overall logged traffic (HTTP/HTTPS/WebSocket). Bypassed/redirected
-        // flows are logged as 'direct'/'tunnel' and already included in
-        // totalLogged, so we do not add totalBypassed again to avoid
-        // double-counting.
-        total: totalLogged,
-        served: serverStats.served ?? 0,
-        proxied: serverStats.proxied ?? 0,
-        blocked: serverStats.blocked ?? 0,
-        redirected: totalBypassed,
-        errors: serverStats.errors ?? 0
-      });
-      setDashboardPerformance(performanceData || null);
-      setDashboardPayloads(payloadData || null);
-      setDashboardRoutes(routesData || null);
+      applyDashboardData(response.data);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     }
-  }, [interactiveMode]);
+  }, [interactiveMode, applyDashboardData]);
 
   const deleteResource = useCallback(async (url) => {
     try {
@@ -185,11 +199,39 @@ function App() {
     fetchConfig();
   }, []);
 
+  // Live updates from GET /api/events. The stream has no replay, so the
+  // dashboard is fetched once whenever the connection (re)opens; while it is
+  // open the 2 s polling below is suspended.
+  const eventsConnected = useProxyEvents({
+    log: () => setLogsVersion((v) => v + 1),
+    stats: (data) => {
+      if (data) applyDashboardData(data);
+      setStatsVersion((v) => v + 1);
+    },
+    config: (data) => {
+      if (!data) return;
+      if (typeof data.interactiveModeEnabled === 'boolean') setInteractiveMode(data.interactiveModeEnabled);
+      if (typeof data.editRulesEnabled === 'boolean') setEditRulesEnabled(data.editRulesEnabled);
+      if (typeof data.localResourcesEnabled === 'boolean') setLocalResourcesEnabled(data.localResourcesEnabled);
+      if (typeof data.filterRulesEnabled === 'boolean') setFilterRulesEnabled(data.filterRulesEnabled);
+      if (typeof data.blockedRulesEnabled === 'boolean') setBlockedRulesEnabled(data.blockedRulesEnabled);
+      if (data.filterMode) setFilterMode(data.filterMode === 'focus' ? 'focus' : 'ignore');
+    },
+    rules: () => {
+      fetchDashboard();
+      fetchEditRuleCount();
+      setRulesVersion((v) => v + 1);
+    },
+    'logs-cleared': () => setLogsRefreshToken((token) => token + 1)
+  });
+
   useEffect(() => {
     if (interactiveMode) {
       fetchDashboard();
     }
     fetchEditRuleCount();
+
+    if (eventsConnected) return undefined;
 
     const interval = setInterval(() => {
       if (interactiveMode) {
@@ -197,7 +239,7 @@ function App() {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [interactiveMode, fetchDashboard, fetchEditRuleCount]);
+  }, [interactiveMode, eventsConnected, fetchDashboard, fetchEditRuleCount]);
 
   // Update interactive mode on server
   const handleInteractiveModeChange = useCallback(async (enabled) => {
@@ -295,6 +337,8 @@ function App() {
           performance={dashboardPerformance}
           payloads={dashboardPayloads}
           routes={dashboardRoutes}
+          eventsConnected={eventsConnected}
+          statsVersion={statsVersion}
         />
       )}
       
@@ -536,6 +580,8 @@ function App() {
               onExportLogs={registerExportLogs}
               refreshToken={logsRefreshToken}
               onCreateJsonPathRule={handleCreateJsonPathRuleFromLogs}
+              eventsConnected={eventsConnected}
+              logsVersion={logsVersion}
             />
           )}
           {activeTab === 'resources' && (
@@ -564,6 +610,9 @@ function App() {
               filterRulesEnabled={filterRulesEnabled}
               onFilterRulesModeChange={handleFilterRulesModeChange}
               showConfirm={showConfirm}
+              eventsConnected={eventsConnected}
+              rulesVersion={rulesVersion}
+              logsVersion={logsVersion}
             />
           )}
 

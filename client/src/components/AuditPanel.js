@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, BarChart3, AlertTriangle, X } from 'lucide-react';
 import { buildApiUrl } from '../config/apiConfig';
 
@@ -8,14 +8,18 @@ import { buildApiUrl } from '../config/apiConfig';
  * This component is intentionally not linked from the main navigation;
  * it is opened via a hidden triple-click gesture on the header icon.
  */
-function AuditPanel({ onClose, routes }) {
+function AuditPanel({ onClose, routes, eventsConnected = false, statsVersion = 0 }) {
   const [errorBuckets, setErrorBuckets] = useState({});
   const [totalErrors, setTotalErrors] = useState(0);
   const [hostStats, setHostStats] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [editRuleUsage, setEditRuleUsage] = useState([]);
+  const hasLoadedRef = useRef(false);
 
+  // Fetched once when the panel opens, then on every `stats` event of the
+  // event stream (already coalesced by the server) or, without the stream,
+  // on a fixed interval.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
@@ -117,16 +121,28 @@ function AuditPanel({ onClose, routes }) {
       }
     };
 
-    fetchAudit(true);
-    const intervalId = setInterval(() => {
-      fetchAudit(false);
-    }, POLL_INTERVAL_MS);
+    const isInitial = !hasLoadedRef.current;
+    hasLoadedRef.current = true;
+
+    let timer = null;
+    let intervalId = null;
+    if (isInitial) {
+      fetchAudit(true);
+    } else if (eventsConnected) {
+      timer = setTimeout(() => fetchAudit(false), 300);
+    }
+    if (!eventsConnected) {
+      intervalId = setInterval(() => {
+        fetchAudit(false);
+      }, POLL_INTERVAL_MS);
+    }
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      if (timer) clearTimeout(timer);
+      if (intervalId) clearInterval(intervalId);
     };
-  }, []);
+  }, [eventsConnected, statsVersion]);
 
   const dashboardRoutesByHandling = useMemo(() => {
     if (!routes || !routes.byHandling || typeof routes.byHandling !== 'object') {
