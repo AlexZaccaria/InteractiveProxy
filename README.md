@@ -53,6 +53,7 @@ The UI is at `http://127.0.0.1:8050/`.
 | `npm run build` | Production build of the UI into `client/dist` (Vite) |
 | `npm start` | Same as `npm run server`; serves `client/dist` when it exists |
 | `npm test` | Server test suite (`node --test`) |
+| `npm run test:client` | Client test suite (Vitest, jsdom) |
 | `npm run lint` | ESLint on server, scripts and client |
 | `npm run typecheck` | `tsc` over the server's JSDoc types |
 | `npm run format` / `npm run format:check` | Prettier on server, tests and tooling (the client is excluded until its migration) |

@@ -11,7 +11,7 @@ import {
   CornerDownRight,
   CircuitBoard
 } from 'lucide-react'
-import RequestLogs from './components/RequestLogs'
+import RequestLogs from './features/logs/RequestLogs'
 import LocalResources from './components/LocalResources'
 import BlockedResources from './components/BlockedResources'
 import FilterRules from './components/FilterRules'

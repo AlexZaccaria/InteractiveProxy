@@ -31,6 +31,8 @@ jobs:
 
       - run: npm test
 
+      - run: npm run test:client
+
       - run: npm run build
         env:
           CI: 'true'

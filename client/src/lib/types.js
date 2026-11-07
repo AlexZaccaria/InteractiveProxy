@@ -140,6 +140,98 @@
  */
 
 /**
+ * A rule that applied to a logged entry.
+ *
+ * @typedef {Object} LogRewrite
+ * @property {string} id
+ * @property {string} [name]
+ * @property {string} [kind]
+ * @property {string} [url]
+ * @property {string} [target]
+ * @property {string} [appliedScope]
+ */
+
+/**
+ * One entry of `GET /api/logs?view=summary` (and of the `log` event).
+ *
+ * @typedef {Object} LogSummary
+ * @property {string} id
+ * @property {string} timestamp
+ * @property {string} method
+ * @property {string} source `proxied`, `mitm`, `websocket`, `local`, `blocked`, `error`, ...
+ * @property {string} url
+ * @property {string} [fullUrl]
+ * @property {number} [statusCode]
+ * @property {number} [responseSize]
+ * @property {string} [fileType]
+ * @property {string} [localResource]
+ * @property {string} [error]
+ * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
+ * @property {number} [requestBytes]
+ * @property {number} [responseBytes]
+ * @property {Record<string, string | string[]>} [headers]
+ * @property {Record<string, string | string[]>} [responseHeaders]
+ * @property {string} [requestBodySummary]
+ * @property {string} [responseBodySummary]
+ * @property {LogRewrite[]} [rewrites]
+ * @property {string} [connectSummary]
+ * @property {Record<string, any>} [wsSummary]
+ * @property {any} [responseBody] Present in the summary of some entries; the full view always has it.
+ * @property {any} [body]
+ */
+
+/**
+ * A decoded Connect/gRPC frame.
+ *
+ * @typedef {Object} ConnectFrame
+ * @property {number} index
+ * @property {number} length
+ * @property {boolean} [endStream]
+ * @property {boolean} [compressed]
+ * @property {Record<string, any>} [json]
+ * @property {string} [preview]
+ * @property {string} [note]
+ */
+
+/**
+ * @typedef {Object} ConnectTimeline
+ * @property {ConnectFrame[]} [frames] After the rewrite rules.
+ * @property {ConnectFrame[]} [originalFrames] Before the rewrite rules, when any applied.
+ */
+
+/**
+ * The full view of one entry (`GET /api/logs/:id`): the summary plus the
+ * bodies, the JSON views before and after rewriting, the raw previews and
+ * the Connect frames.
+ *
+ * @typedef {LogSummary & {
+ *   requestBodyJson?: any,
+ *   requestBodyJsonBefore?: any,
+ *   responseBodyJson?: any,
+ *   responseBodyJsonBefore?: any,
+ *   wsBodyJsonAfter?: any,
+ *   wsBodyJsonBefore?: any,
+ *   rawRequestBodyPreview?: string,
+ *   rawRequestBodyBase64?: string,
+ *   rawResponseBodyPreview?: string,
+ *   rawResponseBodyBase64?: string,
+ *   connectRequest?: ConnectTimeline,
+ *   connectResponse?: ConnectTimeline
+ * }} LogDetail
+ */
+
+/**
+ * One page of `GET /api/logs`.
+ *
+ * @typedef {Object} LogsPage
+ * @property {LogSummary[]} items
+ * @property {number} total
+ * @property {boolean} hasMore
+ * @property {number} offset
+ * @property {number} limit
+ */
+
+/**
  * @typedef {Object} AuditSnapshot
  * @property {Record<string, number>} errorBuckets
  * @property {number} totalErrors

@@ -35,7 +35,19 @@ export const queryKeys = {
   filterSuggestions: ['filter-suggestions'],
   filterMetrics: ['filter-metrics'],
   resources: ['resources'],
-  audit: ['audit']
+  audit: ['audit'],
+  /** Root of the log list and detail keys, for the reset when the logs are cleared. */
+  logsRoot: ['logs'],
+  /**
+   * The paged list for a filter set (`features/logs/useLogList.js`).
+   * @param {import('../features/logs/filters').LogFilters} filters
+   */
+  logs: filters => ['logs', 'list', filters],
+  /**
+   * The full view of one entry (`features/logs/useLogDetail.js`).
+   * @param {string | number} id
+   */
+  logDetail: id => ['logs', 'detail', String(id)]
 }
 
 /**

@@ -36,6 +36,7 @@
 - Toggle endpoints require an explicit `enabled` boolean; an empty payload answers 400.
 - `image/svg+xml` responses are treated as text; file types are also derived from the URL extension when the response has no content type.
 - Logging goes through `pino` with a level (`PROXY_LOG_LEVEL`) and a format (`PROXY_LOG_FORMAT`); `npm run dev` renders it through `pino-pretty`.
+- The JSON trees in the request details open to depth 2, with an "Expand all" switch on each tree; before, every node of every tree was expanded, whatever the size of the payload.
 - Node.js 22.15 and npm 10 are required.
 
 ### Added
@@ -54,6 +55,8 @@
 - npm workspaces for the server and the client with a single lockfile.
 - The client is built by Vite 7 with `@vitejs/plugin-react` and Tailwind 4 (`@tailwindcss/vite`) instead of Create React App; JSX files use the `.jsx` extension, the ports come from `ports.config.json` through `vite.config.js`, the build goes to `client/dist`, and new client modules are type-checked from JSDoc (`client/jsconfig.json`).
 - The client's server data goes through TanStack Query (`client/src/lib/api.js`, `queries.js`, `queryClient.js`): one query per endpoint, mutations that invalidate what they change, the event stream applied to the cache from `App.jsx`, polling as `refetchInterval` only while the stream is not open; the flags, the filter mode and the UI state shared across tabs live in a zustand store (`client/src/store/useProxyStore.js`). `axios` is gone.
+- The Requests tab is a feature folder (`client/src/features/logs/`): a hook for the filters, a hook that reads the pages of `GET /api/logs` as a TanStack infinite query (one request refreshes the whole window the client holds when a `log` event arrives), a list virtualised with `@tanstack/react-virtual`, one memoised component per card, and the details of an entry in a chunk loaded on first use; the body sections share one `GET /api/logs/:id` per entry. It replaces one 3,149-line component whose sub-components were created inside the render.
+- Client tests with Vitest, jsdom and Testing Library (`npm run test:client`, also in CI): the JSONPath helpers, the filter query strings and the storage migration, the filter and list hooks, the filter bar and the card.
 - 305 tests with `node:test`: unit tests of the codecs, rules, routing and logs, and integration tests against local HTTP, HTTPS, HTTP/2 and WebSocket upstreams.
 - The log window is a ring buffer with an index by id.
 

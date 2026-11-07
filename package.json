@@ -18,6 +18,7 @@
     "lint:client": "eslint client/src",
     "typecheck": "tsc -p server/jsconfig.json && tsc -p client/jsconfig.json",
     "test": "npm test --workspace server",
+    "test:client": "npm test --workspace client",
     "install-all": "npm install",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

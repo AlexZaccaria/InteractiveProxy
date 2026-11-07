@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
@@ -27,5 +28,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true
+  },
+  // Vitest (`npm test` in this workspace): component and hook tests under
+  // src/ run in jsdom with Testing Library (src/test/setup.js).
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+    include: ['src/**/*.test.{js,jsx}'],
+    css: false
   }
 })
