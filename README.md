@@ -1,297 +1,105 @@
 # Interactive Proxy
 
-A modern interactive development proxy with a sleek web interface for intercepting, analyzing, and managing HTTP/HTTPS/WebSocket traffic – with live editing, smart filtering and deep Connect/gRPC and Protobuf inspection and rewrite capabilities.
+Interactive Proxy is a development proxy that runs on the developer's machine. It forwards HTTP requests, terminates HTTPS with a certificate authority it generates itself, relays WebSocket connections, serves uploaded files in place of upstream responses, blocks or bypasses URLs by rule, and rewrites request and response bodies in flight with text and JSONPath rules, including Connect/gRPC envelopes and Protobuf messages decoded without a schema. A web UI shows the captured traffic and edits the rules; a management API and a Server-Sent Events stream expose the same data to scripts.
 
-## ✨ Main Features
+## Requirements
 
-### 🎯 Smart Interception
-- **Local Resources**: Automatically serves manually uploaded resources
-- **Transparent Proxy**: Forwards unmatched requests to original source (HTTP/HTTPS)
-- **Flexible Matching**: Full or partial URLs for maximum flexibility
-- **HTTPS MITM**: Optional man-in-the-middle mode with a local CA certificate for decrypting HTTPS traffic (see INSTALL-CERTIFICATE.md)
-- **WebSocket Support**: Interception and logging of WebSocket messages
+- Node.js 22.15 or later (Zstandard support comes from the built-in `zlib`)
+- npm 10 or later
 
-### 📊 Advanced Traffic Analysis
-- **Real-time Monitoring**: View all requests in real-time
-- **Multiple Filters**: By HTTP method, source, file type, origin (local/proxied/MITM/WebSocket/blocked)
-- **Rich Search**: Text search with advanced operators and field-aware search (URL, headers, bodies, Connect frames)
-- **Complete Details**: Headers, body, timestamp, status code, Connect/gRPC frames
-- **Live Statistics**: Dashboard with aggregated metrics (total, blocked, redirected, processed, edited, served)
+## Install and run
 
-### 🎨 Modern and Intuitive UI
-- **Modern Design**: React interface with TailwindCSS
-- **Desktop Layout**: Designed for desktop browsers (minimum width 1024px)
-- **Dark Theme**: Dark theme to reduce eye strain
-- **Optimized UX**: Intuitive and fast navigation
-
-### 🔧 Resource Management
-- **File Upload**: Upload any file type (JSON, HTML, images, etc.)
-- **Text Content**: Insert JSON, HTML, CSS content directly
-- **Persistence**: Resources are saved to disk
-- **Simple Management**: Add and delete resources with one click
-
-### 🎮 Interactive Mode
-- **Toggle ON/OFF**: Enable/disable logging without stopping the proxy
-- **Resource Saving**: When OFF, no logging to save memory and CPU
-- **Persistent State**: Mode is saved to disk and restored on restart
-
-### 🧠 Smart Filter Rules (Bypass Engine)
-- **Two Modes**: `Ignore` (redirect noisy traffic away from the UI) or `Focus` (only process matching requests)
-- **Rule Management**: Create URL-based rules with names, enable/disable them and switch mode from the UI
-- **Suggestions**: Automatically suggested rules based on recent traffic patterns
-- **Metrics**: See how many requests are redirected vs processed on the dashboard
-
-### ✏️ Live Edit Rules
-- **Global Rewriting**: Apply text or JSONPath-based rewrites to HTTP requests/responses, Connect/gRPC frames and WebSocket messages
-- **Structured Rules**: Use URL-scoped JSONPath rules to target specific JSON fields (including decoded Protobuf messages)
-- **Regex Support**: Use regex or plain text, with optional case sensitivity
-- **Selective Enablement**: Toggle the entire edit-engine ON/OFF, or enable/disable individual rules
-- **Safe Experiments**: Quickly prototype backend changes without touching the real service
-
-## 🚀 Quick Start
-
-### Requirements
-- **Node.js >= 22.15** (zstd support comes from the built-in `zlib`)
-- **npm >= 10**
-
-### Installation
 ```bash
-# Install all dependencies (npm workspace: root tooling, server and client)
 npm install
-
-# Start proxy server and web interface (development, with hot reload)
 npm run dev
 ```
 
-### Access
-- **Web UI**: http://localhost:3050
-- **Proxy Server**: http://localhost:8050
+`npm run dev` starts the proxy on `http://127.0.0.1:8050` and the UI development server on `http://localhost:3050`. The two ports are defined in `ports.config.json` (see [USAGE.md](USAGE.md#ports)).
 
-### Single process
+To run everything in one process, build the UI once and start the proxy alone; it then serves the built UI on its own port:
+
 ```bash
-# Build the UI once, then run the proxy alone: it serves the built UI itself
 npm run build
 npm start
 ```
-- **Web UI and proxy**: http://127.0.0.1:8050/
 
-## 📖 Documentation
+The UI is at `http://127.0.0.1:8050/`.
 
-- **[QUICKSTART.md](QUICKSTART.md)** - Quick guide to get started
-- **[USAGE.md](USAGE.md)** - Complete documentation with examples
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Internal architecture and request flow
-- **[INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md)** - HTTPS MITM certificate installation
+## First use
 
-## 💡 Quick Example
+1. Send a request through the proxy. Either use it as an HTTP proxy, or address the proxy directly and name the target in a header:
 
-### 1. Upload a local resource
+   ```bash
+   curl -x http://127.0.0.1:8050 http://example.com/
+   curl -H "X-Target-URL: http://example.com/" http://127.0.0.1:8050/
+   ```
 
-In the web interface (http://localhost:3050):
-1. Go to the **Local** tab, open the **Local Resources** panel and click **"Add Resource"**
-2. URL: `/api/users`
-3. Content Type: `application/json`
-4. Content:
-```json
-{
-  "users": [
-    {"id": 1, "name": "John Doe"},
-    {"id": 2, "name": "Jane Smith"}
-  ]
-}
-```
+2. Open the UI. The Requests tab lists the two requests; expanding one shows headers and bodies.
+3. For HTTPS, the first request through the proxy creates the certificate authority under `server/certs/`. Install `ca-cert.pem` in the client's trust store (see [INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md)) or pass it to curl:
 
-### 2. Test the proxy
+   ```bash
+   curl --ssl-no-revoke --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
+   ```
 
-```bash
-# Request to local resource
-curl http://localhost:8050/api/users
+[USAGE.md](USAGE.md) describes the UI, the rules and every configuration variable.
 
-# Proxy to external API
-curl http://localhost:8050/posts/1 \
-  -H "X-Target-URL: https://jsonplaceholder.typicode.com/posts/1"
-```
+## Commands
 
-### 3. Analyze logs
+| Command | What it does |
+|---|---|
+| `npm run dev` | Proxy with readable log output plus the UI development server, side by side |
+| `npm run server` | Proxy alone; log lines are readable on a terminal and JSON when piped (`PROXY_LOG_FORMAT`) |
+| `npm run client` | UI development server alone |
+| `npm run build` | Production build of the UI into `client/build` |
+| `npm start` | Same as `npm run server`; serves `client/build` when it exists |
+| `npm test` | Server test suite (`node --test`) |
+| `npm run lint` | ESLint on server, scripts and client |
+| `npm run typecheck` | `tsc` over the server's JSDoc types |
+| `npm run format` / `npm run format:check` | Prettier on server, tests and tooling (the client is excluded until its migration) |
 
-Go to **"Request Logs"** in the web interface to see all requests!
-
-## 🎯 Use Cases
-
-- **Frontend Development**: Test with mock data without backend
-- **Testing**: Simulate specific scenarios with controlled data
-- **Debugging**: Analyze HTTP traffic in detail
-- **Prototyping**: Quickly create mock APIs
-- **Offline Development**: Work without connection to real server
-
-## 🛠️ Technologies
-
-### Backend
-- **Node.js** (>= 22.15) - JavaScript runtime; built-in `zlib` handles gzip, deflate, br and zstd
-- **Express** - Web framework
-- **undici** - HTTP client for proxying upstream requests
-- **ws** - WebSocket server
-- **node-forge** - HTTPS MITM and certificate generation
-- **Multer** - File upload handling
-
-### Frontend
--- **React** - UI library
--- **TailwindCSS** - Utility-first CSS
--- **Lucide React** - Icon library
--- **Axios** - HTTP client
--- **react-json-tree** - JSON viewer
-
-## 📁 Project Structure
+## Project layout
 
 ```
-proxy/
-├── server/                 # Node.js backend (npm workspace)
-│   ├── index.js           # Main proxy server (HTTP/HTTPS, WebSocket, filters, edit rules, CA, Connect/Protobuf rewriting)
-│   ├── config.js          # Server configuration (reads ports.config.json + env overrides)
-│   ├── package.json       # Runtime dependencies and `npm test`
-│   ├── test/              # node:test suites (unit characterization + integration)
-│   └── storage/           # Persistent configuration and rules
-│       ├── config.json        # Global modes (interactive, filters, edit, blocked, local)
-│       ├── blocked-urls.json  # Blocked URL rules
-│       ├── filter-urls.json   # Filter rules (ignore/focus)
-│       └── edit-rules.json    # Live edit rules
-├── client/                # React frontend (npm workspace)
-│   ├── src/
-│   │   ├── App.js            # Main layout, dashboard and modes
-│   │   ├── components/       # UI components
-│   │   │   ├── RequestLogs.js     # Advanced logs viewer
-│   │   │   ├── LocalResources.js  # Local resources management
-│   │   │   ├── BlockedResources.js# Blocked URLs management
-│   │   │   ├── FilterRules.js     # Filter rules (ignore/focus)
-│   │   │   ├── EditRules.js       # Live edit rules
-│   │   │   └── AuditPanel.js      # Secret audit panel for performance analysis
-│   │   └── index.css         # Global styles
-│   └── public/
-├── .github/workflows/ci.yml # Lint, test and build on push / pull request
-├── eslint.config.mjs        # ESLint 9 flat config (server + client)
-├── package.json             # Workspace root: scripts and dev tooling
-├── IMPROVEMENT-PLAN.md      # Analysis and phased improvement plan
-├── README.md               # This file
-├── QUICKSTART.md           # Quick guide
-├── USAGE.md                # Complete usage documentation
-├── ARCHITECTURE.md         # Internal architecture
-└── INSTALL-CERTIFICATE.md  # HTTPS MITM certificate installation
+InteractiveProxy
+  ├─ server/
+  │    ├─ index.js            creates every component in dependency order and starts the server
+  │    ├─ config.js           environment variables and ports.config.json
+  │    ├─ src/
+  │    │    ├─ api/           management API routers, cross-site guard, event stream
+  │    │    ├─ codecs/        compression, Protobuf and Connect codecs
+  │    │    ├─ logs/          log store (ring buffer), search, views, statistics
+  │    │    ├─ proxy/         routing decisions, HTTP flow, MITM, WebSocket relay, streaming
+  │    │    ├─ resources/     local resources served instead of the upstream
+  │    │    ├─ rewrite/       rule application on HTTP, Connect and WebSocket bodies
+  │    │    ├─ rules/         edit-rule schema, store, text and JSONPath engines
+  │    │    ├─ state/         persisted flags (config.json)
+  │    │    ├─ system/        native file picker (Windows)
+  │    │    ├─ tls/           certificate authority and host certificates
+  │    │    └─ util/          strings, logger, LRU cache
+  │    ├─ test/               unit and integration tests
+  │    ├─ storage/            persisted rules, resources and flags (created at runtime)
+  │    └─ certs/              CA, leaf key and host certificates (created at runtime)
+  ├─ client/                  React UI (Create React App)
+  ├─ scripts/                 port tooling and the development launcher
+  ├─ docs/API.md              management API reference
+  ├─ ports.config.json        UI and proxy ports
+  └─ .github/workflows/ci.yml lint, format check, typecheck, tests and build on push
 ```
 
-## 🔧 Available Commands
+## Documentation
 
-```bash
-# Installation
-npm install              # Install everything (workspace)
+- [USAGE.md](USAGE.md): clients, UI, rules, configuration, troubleshooting
+- [docs/API.md](docs/API.md): management API and event stream
+- [ARCHITECTURE.md](ARCHITECTURE.md): modules, request flows, persistence, tests
+- [INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md): trusting the proxy's CA
+- [CHANGELOG.md](CHANGELOG.md)
 
-# Development
-npm run dev              # Start server + UI dev server (server logs rendered by pino-pretty)
-npm run server           # Proxy server only
-npm run client           # Web interface only
+## Scope and security
 
-# Quality
-npm run lint             # ESLint on server and client
-npm test                 # node:test suites of the server
+The proxy is a development tool for one machine. It binds to `127.0.0.1` unless `PROXY_HOST` says otherwise, has no authentication, and its management API accepts browser requests only from the UI's origins. Everything it captures stays in memory and on the local disk under `server/storage` and `server/certs`.
 
-# Single process
-npm run build            # Build frontend for production
-npm start                # Proxy serving the built UI at http://127.0.0.1:8050/
-```
+Terminating HTTPS means that whoever holds `server/certs/ca-key.pem` can impersonate any site to a client that trusts `ca-cert.pem`. Install the CA only on machines you control, and remove it when the proxy is no longer needed. Upstream certificates are not verified unless `PROXY_STRICT_TLS` is set.
 
-## 🌟 Features in Detail
+## License
 
-### Dashboard
-- Real-time statistics
-- Counters by request type:
-  - **Total**: all logged traffic while Interactive Mode is ON (including proxied/local/blocked/error and logged bypass flows)
-  - **Blocked**: requests blocked by blocked URL rules
-  - **Redirected**: requests skipped by filter rules in `Ignore` mode
-  - **Processed**: requests fully processed by the proxy internals
-  - **Edited**: requests/responses touched by edit rules
-  - **Served**: requests served from local resources
-- Automatically refreshed every 2 seconds by polling `/api/dashboard` when interactive mode is ON
-
-### Request Logs
-- Chronological view of processed traffic that passes the filter rules
-- Filters by source (local/proxied/MITM/WebSocket/blocked/error)
-- Filters by HTTP method (GET/POST/PUT/DELETE/PATCH, etc.)
-- Filters by file type (JSON, HTML, CSS, JS, images, media, fonts, other)
-- Text search in URL, headers and bodies, with advanced operators
-- Logs fetched on demand from `/api/logs` with pagination and infinite
-  scroll
-- Detailed view with headers, body, Connect/gRPC frames, WebSocket
-  messages and rewrite metadata
-
-### Local Resource Management
-- View all local resources
-- Detailed information (type, size, date, URL)
-- Enable/disable local overriding globally or per resource
-- Simple deletion with confirmation
-- Support for any file type
-
-### Filter Rules
-- Define URL-based rules used by the bypass engine
-- Switch between `Ignore` and `Focus` modes from the UI
-- See how many requests are redirected vs processed
-- Use automatic suggestions based on recent traffic
-
-### Blocked URLs
-- Manage a list of blocked URL rules
-- Enable/disable blocking globally or per rule
-- Quickly block from the logs view
-
-### Edit Rules
-- Create live rewrite rules applied to traffic bodies
-- Choose between plain text or regex, case sensitive or not
-- Scope text rules optionally by URL and by phase (`request`, `response`,
-  or `both`)
-- Support multiple start/end marker variants (via `startVariants` / `endVariants`) for a single text rule so that one rule can cover many similar patterns (OR semantics)
-- Use JSONPath rules to target structured JSON/Protobuf fields based on
-  URL and JSON path
-- URL patterns for edit rules support:
-  - Full URLs (`https://api.example.com/v1/users`) matched by host and path
-    (exact or prefix)
-  - Pure paths (`/v1/users`) matched by path equality/prefix
-  - Generic substrings (`login`, `example.com`) matched case-insensitively
-- Apply to HTTP bodies, Connect/gRPC envelopes and WebSocket messages
-- Enable/disable the entire edit engine or single rules
-
-## ⚠️ Important Notes
-
-- **Development only**: Do not use in production
-- **Security**: Do not expose on internet. The server binds to `127.0.0.1` by default; set `PROXY_HOST` only if you really need LAN access
-- **Ports**: Requires ports 8050 and 3050 to be free
-- **Sensitive data**: Do not handle sensitive information
-
-## 🐛 Troubleshooting
-
-### Ports already in use
-```bash
-# Windows - Find processes on ports
-netstat -ano | findstr :8050
-netstat -ano | findstr :3050
-
-# Kill process (replace PID)
-taskkill /PID <PID> /F
-```
-
-### Dependencies not installed
-```bash
-# Reinstall everything
-rm -rf node_modules
-npm install
-```
-
-### TailwindCSS errors
-The `@tailwind` warnings are normal and resolve after `npm install` in client.
-
-## 📝 License
-
-MIT License - Feel free to use and modify this project!
-
-## 🤝 Contributions
-
-Contributions, issues and feature requests are welcome!
-
----
-
-**Developed with ❤️ using Node.js and React**
+MIT. See [LICENSE](LICENSE).

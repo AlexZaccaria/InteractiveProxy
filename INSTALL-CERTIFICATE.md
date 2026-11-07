@@ -1,215 +1,79 @@
-# 🔐 Installing CA Certificate for Interactive Proxy
+# Trusting the proxy's certificate authority
 
-To intercept and analyze HTTPS traffic, the proxy uses MITM (Man-In-The-Middle) technique which requires installing a custom CA certificate on your system.
+To read HTTPS traffic, the proxy terminates TLS with certificates it issues itself, signed by a certificate authority it generates on the developer's machine. A client that does not trust that authority rejects every HTTPS connection through the proxy. This document explains where the authority lives, how to trust it, how to verify it, and how to remove it.
 
-## ⚠️ Important
+Trusting the authority means that whoever holds `ca-key.pem` can impersonate any HTTPS site to that client. Install it only on machines you control and remove it when the proxy is no longer needed.
 
-- **Development only**: Do not use in production
-- **Security**: The CA certificate allows decrypting all HTTPS traffic
-- **Privacy**: Use only on personal development machines
-- **Removal**: Remember to remove the certificate when no longer needed
+## Files
 
-## 📍 Certificate Location
+The authority is created on the first HTTPS request through the proxy, not at startup, under the certificates directory (`server/certs` by default, `PROXY_CERTS_DIR` to change it):
 
-The CA certificate is automatically generated when the proxy starts and saved under the proxy's certificates directory.
+| File | Content |
+|---|---|
+| `ca-cert.pem` | The certificate to install, `CN=Cascade Proxy CA`, valid ten years |
+| `ca-key.pem` | The authority's private key; never leaves the machine |
+| `leaf-key.pem` | The key pair shared by every host certificate |
+| `hosts/<host>.pem` | One certificate per host, issued on first use and reused across restarts |
 
-By default this is:
+Deleting the directory makes the proxy generate a new authority; the old `ca-cert.pem` then has to be removed from the clients that trusted it.
 
-```
-<project-root>/server/certs/ca-cert.pem
-```
+## Windows
 
-For example on Windows, if your project lives in `C:\Projects\proxy` the path will be:
+### Certificate dialog
 
-```
-C:\Projects\proxy\server\certs\ca-cert.pem
-```
+1. Open `server/certs/ca-cert.pem` (double click).
+2. Install Certificate, choose Local Machine (administrator rights required), Next.
+3. Choose "Place all certificates in the following store", Browse, select "Trusted Root Certification Authorities", OK, Next, Finish.
+4. Confirm the security warning.
 
-If you set the `PROXY_CERTS_DIR` environment variable, the certificate will instead be created inside that directory.
-
-## 🪟 Installation on Windows 11
-
-### Method 1: Graphical Interface (Recommended)
-
-1. **Open the certificate**
-   - Navigate to `c:\Projects\proxy\server\certs\`
-   - Double-click on `ca-cert.pem`
-
-2. **Install the certificate**
-   - Click "Install Certificate..."
-   - Select "Local Machine" (requires administrator privileges)
-   - Click "Next"
-
-3. **Choose the store**
-   - Select "Place all certificates in the following store"
-   - Click "Browse..."
-   - Select **"Trusted Root Certification Authorities"**
-   - Click "OK"
-
-4. **Complete installation**
-   - Click "Next"
-   - Click "Finish"
-   - Confirm the security warning with "Yes"
-
-### Method 2: PowerShell (Administrator)
+### PowerShell (administrator)
 
 ```powershell
-# Run as Administrator
-$certPath = "path/to/interactive-proxy/server/certs/ca-cert.pem"
-Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath "<repository>\server\certs\ca-cert.pem" -CertStoreLocation Cert:\LocalMachine\Root
 ```
 
-## ✅ Verify Installation
+### Verification
 
-1. **Open Certificate Manager**
-   - Press `Win + R`
-   - Type `certmgr.msc`
-   - Press Enter
+Open `certmgr.msc`, expand Trusted Root Certification Authorities, Certificates, and look for "Cascade Proxy CA". Chrome and Edge use this store; restart them after installing. Firefox keeps its own store: Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import, select `ca-cert.pem` and tick "Trust this CA to identify websites".
 
-2. **Find the certificate**
-   - Expand "Trusted Root Certification Authorities"
-   - Click on "Certificates"
-   - Look for "Cascade Proxy CA"
+### System proxy
 
-3. **Verify details**
-   - Double-click on the certificate
-   - "General" tab → should say "This certificate is intended for the following purposes: All"
-   - "Certification Path" tab → should show "Cascade Proxy CA"
+Settings, Network & Internet, Proxy: enable "Use a proxy server" with address `127.0.0.1` and port `8050`. Open an HTTPS site; the Requests tab of the UI lists it with source `mitm`.
 
-## 🧪 Test Functionality
+## curl
 
-1. **Start the proxy**
-   ```bash
-   npm run dev
-   ```
+No installation is needed: pass the certificate to curl.
 
-2. **Configure Windows to use the proxy**
-   - Settings → Network & Internet → Proxy
-   - Enable "Use a proxy server"
-   - Address: `127.0.0.1`
-   - Port: `8050`
+```bash
+curl --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
+```
 
-3. **Test with an HTTPS site**
-   - Open your browser
-   - Visit `https://www.google.com`
-   - Open the proxy interface at `http://localhost:3050`
-   - Go to "Request Logs"
-   - You should see HTTPS requests with **MITM** badge (cyan)
-   - You can expand requests to see full URLs, headers, and body
+The curl shipped with Git for Windows uses the Schannel TLS backend, which refuses certificates without revocation information; the proxy's certificates carry none, and the request fails with `curl: (60) schannel: the revocation status is unknown`. Add `--ssl-no-revoke`:
 
-4. **Test with curl** (no system-wide installation needed)
-   ```bash
-   curl --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
-   ```
-   On Windows the bundled curl uses the Schannel TLS backend, which refuses
-   certificates without revocation information (`curl: (60) schannel: the
-   revocation status is unknown`); the proxy's certificates carry none, so add
-   `--ssl-no-revoke`:
-   ```bash
-   curl --ssl-no-revoke --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
-   ```
-   The CA files (`ca-cert.pem`, `ca-key.pem`, the shared `leaf-key.pem` and the
-   per-host certificates under `hosts/`) are created on the first HTTPS
-   request through the proxy, not at startup.
+```bash
+curl --ssl-no-revoke --cacert server/certs/ca-cert.pem -x http://127.0.0.1:8050 https://example.com/
+```
 
-## 🔍 What You Can See with MITM
+Node clients accept the chain with `tls.connect({ ca: [fs.readFileSync('server/certs/ca-cert.pem')] })` or `NODE_EXTRA_CA_CERTS=server/certs/ca-cert.pem`.
 
-With the certificate installed, the proxy can intercept and show:
+## Removal
 
-- ✅ **Complete URLs** of HTTPS requests (e.g., `https://www.google.com/search?q=test`)
-- ✅ **Complete HTTP headers** (cookies, user-agent, etc.)
-- ✅ **Request bodies** for POST/PUT (form data, JSON, etc.)
-- ✅ **Response status codes**
-- ✅ **Response headers**
-- ✅ **Response bodies** with preview for JSON/HTML/images
-- ✅ **Ability to serve local resources** even for HTTPS
-- ✅ **WebSocket message interception** over secure connections
+Windows certificate dialog: `certmgr.msc`, Trusted Root Certification Authorities, Certificates, right click on "Cascade Proxy CA", Delete.
 
-## 🗑️ Remove Certificate
-
-When you're done using the MITM proxy:
-
-### Method 1: Graphical Interface
-
-1. Press `Win + R` → `certmgr.msc`
-2. Expand "Trusted Root Certification Authorities" → "Certificates"
-3. Find "Cascade Proxy CA"
-4. Right-click → "Delete"
-5. Confirm with "Yes"
-
-### Method 2: PowerShell (Administrator)
+PowerShell (administrator):
 
 ```powershell
-# List Cascade Proxy certificates
-Get-ChildItem Cert:\LocalMachine\Root | Where-Object {$_.Subject -like "*Cascade Proxy*"}
-
-# Remove the certificate (replace THUMBPRINT with the one shown above)
-Get-ChildItem Cert:\LocalMachine\Root\THUMBPRINT | Remove-Item
+Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Cascade Proxy*" } | Remove-Item
 ```
 
-## 🔧 Troubleshooting
+Firefox: Settings, Privacy & Security, View Certificates, Authorities, select "Cascade Proxy CA", Delete or Distrust.
 
-### Browser still shows SSL errors
+## Troubleshooting
 
-1. **Restart the browser** after installing the certificate
-2. **Verify the certificate is in "Root"** and not in other stores
-3. **Check that the proxy is running** on port 8050
-4. **Verify Windows proxy settings**
-
-### Chrome/Edge doesn't accept the certificate
-
-- Chrome/Edge use the Windows certificate store
-- Make sure you installed in "Trusted Root Certification Authorities"
-- Completely restart the browser (close all windows)
-
-### Firefox doesn't accept the certificate
-
-Firefox uses its own certificate store:
-
-1. Open Firefox
-2. Settings → Privacy & Security → Certificates
-3. Click "View Certificates..."
-4. "Authorities" tab
-5. Click "Import..."
-6. Select `ca-cert.pem`
-7. Check "Trust this CA to identify websites"
-8. Click "OK"
-
-### Errors "ERR_CERT_AUTHORITY_INVALID"
-
-- The certificate is not installed correctly
-- Reinstall following the steps above
-- Verify it's in "Trusted Root Certification Authorities"
-
-### Proxy doesn't decrypt HTTPS
-
-1. Verify the certificate is installed
-2. Check server logs for errors
-3. Restart the proxy after installing the certificate
-4. Verify Windows is using the proxy (127.0.0.1:8050)
-
-## 🛡️ Security
-
-### Why is it safe for local development?
-
-- The certificate is generated locally and not shared
-- The private key stays on your computer
-- Only works with the proxy running
-- You can remove it anytime
-
-### Why NOT use it in production?
-
-- Anyone with access to the certificate can intercept traffic
-- No validation of the real server's identity
-- Violates HTTPS security best practices
-- Can expose sensitive data if the proxy is compromised
-
-## 📚 Additional Resources
-
-- [node-forge Documentation](https://github.com/digitalbazaar/forge)
-- [How MITM Works](https://en.wikipedia.org/wiki/Man-in-the-middle_attack)
-- [Windows Certificate Management](https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/certutil)
-
----
-
-**Remember**: This certificate is ONLY for local development. Remove it when you no longer need it!
+| Symptom | Cause and fix |
+|---|---|
+| `ERR_CERT_AUTHORITY_INVALID` or a certificate warning in Chrome or Edge | The certificate is not in the Local Machine Trusted Root store, or the browser was not restarted after the import |
+| The same in Firefox | Firefox does not read the Windows store; import the certificate in its own Authorities list |
+| HTTPS sites work but the UI shows nothing | The client is not using the proxy (check the system proxy setting), or Interactive mode is off, or a filter rule in `ignore` mode matches the traffic |
+| A site refuses to load through the proxy although the CA is trusted | The client pins the site's certificate (some applications and mobile apps do); add the host to the filter rules in `ignore` mode so that its tunnel is passed through untouched |
+| Certificate errors after deleting `server/certs` | A new authority was generated; remove the old one from the clients and install the new `ca-cert.pem` |

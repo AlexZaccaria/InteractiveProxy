@@ -1,540 +1,118 @@
-# 🏗️ Interactive Proxy - Architecture
+# Architecture
 
-## 📊 Flow Diagram
+The server is a Node.js program split into modules under `server/src/`, each a plain CommonJS file with JSDoc types checked by `tsc`. Nothing under `src/` keeps module-level mutable state: components are created by factories that receive their dependencies, and `server/index.js` creates them in dependency order. The client is a React application under `client/` that talks to the management API.
+
+## Wiring
+
+`server/index.js` reads the configuration, derives the file paths under the storage directory and creates, in this order:
+
+1. `upstream` (`proxy/upstream`): the undici agents for `http://` and `https://` targets.
+2. `ruleStore` (`rules/store`), then `textRules` and `jsonPathRules` (`rules/text-rules`, `rules/jsonpath`), the two engines bound to it.
+3. `configStore` (`state/config-store`): the persisted flags; the edit-rules flag is read through the rule store.
+4. `router` (`proxy/router`): blocked and filter rules plus every routing decision; it notifies the log store when blocked patterns change.
+5. `resourceStore` (`resources/store`).
+6. The rewrite orchestrators (`rewrite/http-json`, `rewrite/connect`, `rewrite/body`, `rewrite/websocket`), bound to the rule store, the engines and the interactive-mode getter.
+7. `stats` (`logs/stats`), `suggestions` (`logs/suggestions`) and `logStore` (`logs/store`), whose add/remove hooks feed the first two.
+8. `entries` (`logs/entries`): the log-entry factory bound to the log store.
+9. `httpFlow` (`proxy/http-flow`), the API router (`api`), the Express app (`app`), `webSocketProxy` (`proxy/websocket`) and `mitm` (`proxy/mitm`).
+10. `createProxyServer` (`server`): the listening `http.Server` with its `request`, `upgrade` and `connect` handlers.
+
+`index.js` starts the server when run directly (`require.main === module`) and exports `app`, `server`, `start()`, `stop()`, the configuration and an `internals` object with the module functions, which the tests use.
+
+## Request flows
+
+### Plain HTTP
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLIENT REQUEST                          │
-│                    (Browser, App, cURL, etc.)                   │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      PROXY SERVER :8050                         │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  1. Receive Request                                      │  │
-│  │     - URL, Method, Headers, Body                         │  │
-│  │     - Timestamp and unique ID                            │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                   │
-│                             ▼                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  2. Check if URL is Blocked                              │  │
-│  │     - Check blocked-urls.json                            │  │
-│  │     - If blocked → return 204 (no content, no edits)     │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                   │
-│                             ▼                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  3. Search Local Resource                                │  │
-│  │     - Check Map<URL, Resource>                           │  │
-│  │     - Exact or partial match                             │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                   │
-│              ┌──────────────┴──────────────┐                    │
-│              │                             │                    │
-│         MATCH FOUND                   NO MATCH                  │
-│              │                             │                    │
-│              ▼                             ▼                    │
-│  ┌─────────────────────┐      ┌─────────────────────────────┐  │
-│  │ 4a. Serve Local     │      │ 4b. Check X-Target-URL      │  │
-│  │  - Read file        │      │   - Header present?         │  │
-│  │  - Set headers      │      └──────────┬──────────────────┘  │
-│  │  - Log: source=local│                 │                     │
-│  └─────────────────────┘          ┌──────┴──────┐              │
-│              │                    │             │              │
-│              │                  FOUND        NOT FOUND         │
-│              │                    │             │              │
-│              │                    ▼             ▼              │
-│              │         ┌────────────────┐  ┌─────────────┐    │
-│              │         │ Proxy Request  │  │ Return 404  │    │
-│              │         │ - Forward to   │  │ - Hint msg  │    │
-│              │         │   target URL   │  │ - Log error │    │
-│              │         │ - Log: proxied │  └─────────────┘    │
-│              │         └────────────────┘                      │
-│              │                    │                            │
-│              └────────────────────┴────────────────────────┐   │
-│                                                             │   │
-│  ┌──────────────────────────────────────────────────────┐  │   │
-│  │  5. Log Request (if Interactive Mode is ON)          │  │   │
-│  │     - Add to requestLogs array                       │  │   │
-│  │     - Limit to MAX_LOG_ENTRIES entries               │  │   │
-│  │       (default 5000, configurable via env)           │  │   │
-│  │     - Include: method, URL, headers, body, response  │  │   │
-│  └──────────────────────────────────────────────────────┘  │   │
-│                             │                               │   │
-│                             ▼                               │   │
-│  ┌──────────────────────────────────────────────────────┐  │   │
-│  │  6. Return Response                                  │  │   │
-│  │     - Status code                                    │  │   │
-│  │     - Headers                                        │  │   │
-│  │     - Body                                           │  │   │
-│  └──────────────────────────────────────────────────────┘  │   │
-└─────────────────────────────────────────────────────────────┘   │
-                             │                                    │
-                             ▼                                    │
-┌─────────────────────────────────────────────────────────────────┘
-│                      WEB UI :3050                               │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Polls /api/dashboard every 2s (if Interactive Mode is   │  │
-│  │  ON) to refresh counters, performance and audit data.    │  │
-│  │  - The Request Logs view fetches /api/logs on demand     │  │
-│  │    when filters change or the user scrolls, and only     │  │
-│  │    performs a lightweight 2s poll while the first page   │  │
-│  │    is not yet full.                                      │  │
-│  │  - Filters by source, method, file type and rewrite      │  │
-│  │    metadata                                              │  │
-│  │  - Search with advanced syntax                           │  │
-│  │  - Expandable details with JSON/HTML/Image/Connect views │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+client ──► http.Server request
+             ├─ tryHandleHttpBypass (proxy/http-flow)
+             │    ├─ blocked rule matches ──► 204, logged as blocked
+             │    └─ filter rules say direct ──► forwardDirectHttp: streamed, no inspection
+             └─ Express app (app.js)
+                  ├─ proxy-targeted request (absolute URL, X-Target-URL, foreign Host)
+                  │    └─ handleProxiedHttpRequest
+                  │         ├─ local resource matches ──► served from disk
+                  │         └─ forward: header rewrites ──► upstream ──► stream or buffer+rewrite ──► log
+                  ├─ /api ──► management API (cross-site guard first)
+                  ├─ client/build ──► static UI, when built
+                  └─ anything else ──► handleProxiedHttpRequest ──► 404 without a target
 ```
 
-## 🧩 Components
+The proxy-targeted guard runs before the API router, so a proxied request whose path starts with `/api` is forwarded, not answered by the API. Request bodies are captured raw by the body parsers (`app.js`) for every content type; multipart bodies addressed to the API are left to `multer`.
 
-### Backend (server/)
+### HTTPS (CONNECT)
 
-#### Main Server (index.js)
-- **Express HTTP Server** on port 8050 (configurable)
-- **HTTP Proxy** for standard requests
-- **MITM HTTPS Proxy** with self-signed CA certificate
-- **WebSocket Proxy** with message interception
-- **Resource Management** API endpoints
-- **Logging System** with in-memory log window and console output
-- **Configuration**: Loaded via `config.js` from environment variables
+`proxy/mitm` handles the `connect` event. A tunnel that the filter rules mark as direct is piped byte for byte (`proxy/tunnel`). Every other tunnel is terminated: the handler keeps one `https.Server`, created on the first CONNECT, whose SNI callback issues the certificate of the name the client asks for (secure contexts cached, 500 entries); clients without SNI get the certificate of the CONNECT host, set as the server's default context right before the socket is handed over. The target host and port travel with the socket, so the decrypted requests know where to go even on a non-443 port. Decrypted requests then follow the same local-resource / rewrite / forward / log pipeline as plain HTTP; a decrypted WebSocket upgrade goes to the WebSocket relay; any other `Upgrade:` request is forwarded as a plain request.
 
-#### Key Features:
-- **Local Resource Matching**: Checks if URL matches any uploaded resource
-- **Blocked URL Filtering**: Prevents loading of blocked URLs
-- **Request Logging**: Stores request/response data in memory (when Interactive Mode is ON)
-- **File Persistence**: Saves resources and config to disk
-- **Decompression**: Handles gzip, deflate, br and zstd encoded responses through Node's built-in `zlib` (zstd requires Node >= 22.15)
-- **WebSocket Handling**: Intercepts and logs WebSocket messages (Socket.IO compatible)
+The certificate authority (`tls/ca`) is created on first use: `ca-key.pem` and `ca-cert.pem` (`CN=Cascade Proxy CA`, ten years), one shared leaf key pair `leaf-key.pem`, and one certificate per host under `hosts/<host>.pem` (subject and `*.host` alternative name, one year, random serial), written atomically and reloaded on a cache miss when still valid and bound to the leaf key. Keys come from Node's `crypto`; node-forge builds and signs the X.509 structures. Issuing a certificate for a new host costs the signature alone (about 19 ms measured); a reload from disk about 4 ms; the in-memory cache (500 entries) nothing.
 
-#### Data Structures:
-```javascript
-// In-memory storage
-// Sliding log window used for the UI; capped by MAX_LOG_ENTRIES
-// (default 5000, configurable via PROXY_MAX_LOG_ENTRIES).
-let requestLogs = []
-let dashboardStats = {            // Incrementally updated dashboard metrics
-  total: 0,
-  served: 0,
-  proxied: 0,
-  blocked: 0,
-  processed: 0,
-  errors: 0,
-  editedRequests: 0
-}
-let localResources = new Map()    // URL → Resource mapping
-let bypassMode = 'ignore'         // 'ignore' or 'focus'
-let blockedRules = []             // Blocked URL rules
-let bypassRules = []              // Filter rules for current mode
-let editRules = []                // Live edit rules
+### WebSocket
 
-// Persistent storage (files under server/storage/)
-- config.json         // Global modes (interactive, filters, edit, blocked, local) and filterMode
-- resources.json      // Local resources metadata
-- blocked-urls.json   // Blocked URL rules
-- filter-urls.json    // Filter rules definitions
-- edit-rules.json     // Live edit rules
-```
+`proxy/websocket` handles the `upgrade` event of the HTTP server and the decrypted upgrades of the MITM server. After the blocked / direct / proxy decision, the relay opens the target with the `ws` client (the client's subprotocol offers are passed through) and, once the target is open, accepts the client with a `ws` server in `noServer` mode announcing the subprotocol the target selected. Messages are relayed through the rewrite engine and the log; pings, pongs and close frames (code and reason) are mirrored; an abnormal closure on one side terminates the other. Compression is never negotiated so that every frame can be read.
 
-### Frontend (client/)
+### Streaming
 
-#### React Application
-- **Modern UI** with TailwindCSS
-- **Component-based** architecture
-- **Real-time dashboard updates** via polling `/api/dashboard` every 2s when
-  Interactive Mode is ON (the server also offers `GET /api/events`, a
-  Server-Sent Events stream of log, stats, config and rule changes, not yet
-  used by the UI)
-- **Request Logs** fetched on demand from `/api/logs` (filters, scroll, and a
-  lightweight 2s poll only while the first page is not yet full)
-- **Advanced filtering** and search
+`proxy/streaming` decides, per response, whether anything needs the whole body: a response is piped to the client when no text or JSONPath rule can apply to its URL and phase and either Interactive mode is off, the content type is binary, the response is an event stream, or its `content-length` exceeds `PROXY_STREAM_THRESHOLD_BYTES` (1 MiB by default). Streamed entries are logged first and get their size when the transfer ends; a client that disconnects aborts the upstream request. Everything else is buffered, decoded, rewritten and previewed by `rewrite/body`. `HEAD` responses are never streamed.
 
-#### Components:
-- **App.js**: Main component with tabs and state management
-- **RequestLogs.js**: Log viewer with filters and search
-- **LocalResources.js**: View and manage uploaded resources
-- **BlockedResources.js**: View and manage blocked URLs
-- **FilterRules.js**: Manage filter rules and Ignore/Focus modes
-- **EditRules.js**: Manage live edit rules
-- **AuditPanel.js**: Detailed performance and error metrics (hidden)
+## Rule engine
 
-#### Key Features:
-- **Interactive Mode Toggle**: Control logging without stopping proxy
-- **Advanced Search**: Supports `;` (AND) and `!` (NOT) operators
-- **File Type Detection**: Automatic detection of JSON, images, fonts, etc.
-- **Content Preview**: JSON viewer, image display, HTML rendering
-- **WebSocket Message Display**: Shows direction and parsed content
-- **Filter Persistence**: Saves filters to localStorage
-- **Desktop Layout**: Designed for desktop browsers (minimum width 1024px)
+`rules/schema` defines the rule shapes and the pure helpers: normalisation of API payloads and on-disk records, serialisation, JSONPath parsing (`root.a.b[0]`, `root.items[?(@.id=='x')]`), the compilation of a text rule into a matcher (`between`, `prefix`, `suffix`, literal or regular expression) and the literal replacement primitive.
 
-## 🔄 Request Flow Details
+`rules/store` owns the rules and presets, their files, the global enabled flag and the usage counters. `rebuildCache()` compiles the enabled rules: every combination of a text rule's start and end variants becomes one compiled matcher sharing the rule's id; JSONPath rules are parsed into segments and require a URL pattern. A variant whose regular expression does not compile is skipped with a warning.
 
-### 1. Standard HTTP Request
+`rules/url-match` gives every rule kind, the filter rules and the router the same URL semantics: a pattern that is a full URL matches candidates with the same host and an equal or prefixed path; a pattern starting with `/` matches by path prefix; anything else is a case-insensitive substring of the URL. The request URL and the full target URL are both candidates, but a pattern with a host is satisfied only by a candidate that carries that host.
 
-```javascript
-Client → Proxy Server
-         ↓
-    Check if blocked → Yes → Return 204 (blocked - no content, no edits)
-         ↓ No
-    Check local resource → Found → Serve local file
-         ↓ Not found
-    Check X-Target-URL header → Present → Forward request
-         ↓ Not present
-    Return 404
-```
+`rules/text-rules` applies compiled text rules to strings, header maps and UTF-8 buffers, filtered by phase and URL when a context is given. `rules/jsonpath` applies JSONPath rules to objects and to single Protobuf messages (decoded to the `f1`, `f2`, ... view by `codecs/protobuf`, rewritten, re-encoded). `rules/metadata` records on a log entry which rules applied and increments their usage.
 
-### 1.1 Filter Rules (Bypass Engine)
+The orchestrators under `rewrite/` connect the engines to the flows: `http-json` (JSON bodies with transparent content-encoding, header rewrites), `connect` (Connect/gRPC envelopes frame by frame, unary Protobuf bodies, the before/after views), `body` (request and buffered response bodies, the logging view) and `websocket` (text frames and the JSON part of frames, Socket.IO prefixes preserved). A JSONPath rule works on the body as parsed: a string field that contains JSON is not re-serialised as an object.
 
-After the basic routing (local resource / proxy / 404), the proxy applies the
-filter rules engine when the **Filter Rules** feature is enabled:
+## Codecs
 
-- In **Ignore** mode, matching URLs are considered "noise" and are counted as
-  **Redirected** without going through the full decoding/metadata/editing
-  pipeline.
-- In **Focus** mode, only matching URLs go through the full pipeline; all other
-  requests are bypassed.
+- `codecs/compression`: gzip, deflate, Brotli and Zstandard through the built-in `zlib`, content-type classification (textual, binary, Protobuf), case-insensitive header lookup with a per-object cache that is invalidated when keys change.
+- `codecs/protobuf`: schema-less wire-format parsing and encoding, 64-bit varints (exact up to 2^53), printable-text rewriting inside nested messages, the JSON view.
+- `codecs/connect`: the 5-byte frame prefix (flags, big-endian length), per-frame decompression when a Connect encoding header names the codec (a compressed frame without one is left encoded and annotated), previews and JSON views, envelope rebuilding.
 
-This engine controls which requests populate `requestLogs` and appear in the
-UI, and it feeds the metrics shown in the dashboard.
+## Logs
 
-### 2. HTTPS Request (MITM)
+`logs/store` keeps the newest `PROXY_MAX_LOG_ENTRIES` entries in a ring buffer with a `Map` by id: adding, evicting the oldest and looking an entry up are constant-time, and both iteration orders need no copy. On insertion an entry is enriched (blocked-rule visibility, lower-cased search text, file type, search snapshots, metrics); the `onAdd` / `onRemove` hooks keep the statistics and the suggestion tracker aligned with the window, and an evicted entry releases the usage counters of the rules it recorded.
 
-```javascript
-Client → Proxy Server (CONNECT method)
-         ↓
-    Establish TLS tunnel with client
-         ↓
-    Generate fake certificate for target domain
-         ↓
-    Decrypt client request
-         ↓
-    Process as standard HTTP (see above)
-         ↓
-    Encrypt response
-         ↓
-    Send to client
-```
+`logs/search` holds the filter behind `/api/logs` (oldest first, the query parameters described in [docs/API.md](docs/API.md#get-apilogs)); `logs/views` builds the summary and full views and paginates; `logs/stats` derives the dashboard counters, the latency and payload aggregates and the per-route statistics incrementally, plus the audit snapshot; `logs/suggestions` ranks hosts for the filter-rule suggestions; `logs/entries` builds the entries for HTTP flows, WebSocket connections, messages and summaries; `logs/preview` produces the size-bounded UTF-8 previews (accented and other non-ASCII letters kept; control characters and invalid UTF-8 count as non-printable) and the tolerant JSON parsing used by previews and WebSocket frames.
 
-### 3. WebSocket Connection
+## Management API and UI
 
-```javascript
-Client → Proxy Server (Upgrade: websocket)
-         ↓
-    Establish WebSocket with client
-         ↓
-    Establish WebSocket with target server
-         ↓
-    Log connection (if Interactive Mode ON)
-         ↓
-    Bidirectional message relay:
-      - Client → Server: Log with direction "client→domain.com"
-      - Server → Client: Log with direction "domain.com→client"
-      - Parse Socket.IO format (strip numeric/channel prefixes)
-      - Detect and display JSON content
-```
+`app.js` builds the Express application: CORS restricted to the UI origins, `trust proxy`, the body parsers (Protobuf raw, JSON, URL-encoded, then a raw catch-all for every other type), the proxy-targeted guard, the `/api` router, the static UI from `client/build` when it exists, and the catch-all proxy handler. `api/index` mounts the route groups behind the cross-site guard; `api/events` keeps the Server-Sent Events clients and publishes the changes the stores report through their `onChange` / `onEntryAdded` listeners. The endpoints and the event contract are in [docs/API.md](docs/API.md).
 
-### 4. Edit Rules Pipeline
+The client (`client/src`) is a Create React App project: `App.js` holds the header, the tabs and the global flags; `components/` holds one component per tab plus the modal and the audit panel. It polls `/api/dashboard` every two seconds while Interactive mode is on and fetches `/api/logs` on demand; the event stream is available for it but not used yet.
 
-When edit rules are enabled, the proxy rewrites traffic bodies at different
-layers:
+## Persistence
 
-- HTTP request and response bodies
-- Connect/gRPC envelopes (frames and Protobuf messages)
-- WebSocket messages
+All files live under the storage directory (`server/storage` by default) and are read at startup.
 
-There are two kinds of edit rules:
+| File | Format |
+|---|---|
+| `config.json` | `{"interactiveModeEnabled", "editRulesEnabled", "localResourcesEnabled", "filterRulesEnabled", "blockedRulesEnabled", "filterMode"}` |
+| `blocked-urls.json` | Array of `{"id", "enabled", "name", "url"}` |
+| `filter-urls.json` | Array of `{"id", "enabled", "name", "url", "mode"}`; `bypass-urls.json` is the pre-2.0 name and is still read |
+| `edit-rules.json` | Array of rules in the shapes shown in [docs/API.md](docs/API.md#edit-rules); long `replacement` and `value` strings may be stored as arrays of segments and are joined on load; records with a single `start` / `end` pair (the pre-2.0 format) are folded into `startVariants` / `endVariants` |
+| `edit-rule-presets.json` | Array of `{"id", "name", "kind", "rule", "createdAt"}` |
+| `resources.json` | Object keyed by resource URL: `{"type", "filename", "originalName", "contentType", "size", "createdAt", "enabled"}`; the payloads are files next to it |
 
-- **Text rules**: plain text or regex replacements applied to string payloads
-  (including Protobuf fields that look like UTF-8 text).
-- **JSONPath rules**: URL-scoped rules that operate on a JSON view of the
-  payload (including decoded Protobuf messages) and then update the underlying
-  buffer for safe string fields (for Connect/gRPC).
+Writes happen after the in-memory state is updated, so a change is active before its file is written; blocked rules and edit rules await the write before answering the API.
 
-Both rule types support **optional URL patterns** and **phase targeting**
-(`request`, `response` or `both`):
+## Logging
 
-- When the URL pattern is a full HTTP URL (e.g. `https://api.example.com/v1/users`)
-  or a pure path (e.g. `/v1/users`), matching is host+path-based:
-  - the host must match (for absolute URLs), and
-  - the path must either be exactly equal or a prefix of the observed path
-    (e.g. `/v1/users/123`).
-- When the pattern is a generic string (e.g. `login`, `example.com`), a
-  case-insensitive substring check is used for backwards compatibility.
+`util/logger` wraps `pino`. Every line has a `scope` and a message; errors go in `err`. `PROXY_LOG_FORMAT=json` writes one object per line; `pretty` writes `[proxy][scope] message` through the console (the default on a terminal and in the tests, where warnings are captured by replacing `console.warn`). `npm run dev` runs the server with the JSON format and renders it through `pino-pretty` (`scripts/devServer.js`).
 
-This ensures that rules written with concrete URLs or paths only affect the
-intended endpoints, while still allowing flexible substring patterns when
-needed.
+## Type checking
 
-For Connect/gRPC messages, the proxy keeps both `originalFrames` (decoded from
-the original payload) and `frames` (after applying any text/JSONPath rewrites)
-so the UI can display both views without losing the original data.
+`server/jsconfig.json` runs `tsc` in `checkJs` and `strict` mode over `index.js` and `src/**`; types are expressed as JSDoc (`@param`, `@returns`, `@typedef`, casts). The `paths` entries map `events`, `punycode` and `string_decoder` to `@types/node`, because the browser polyfill packages installed with the client would otherwise be picked up and checked. `npm run typecheck` is part of CI.
 
-Edited requests are tracked and exposed in the dashboard.
+## Tests
 
-## 📊 Data Flow
+`npm test` runs `node --test` in `server/`: 305 tests in 18 files, each file in its own process.
 
-### Resource Upload
-```
-UI Form → POST /api/resources
-         ↓
-    Multer file upload
-         ↓
-    Save file to server/storage/
-         ↓
-    Update localResources Map
-         ↓
-    Save resources.json metadata file
-         ↓
-    Return success
-```
+- `server/test/helpers/load-server.js` requires `server/index.js` after pointing the storage, certificate and log directories to a temporary directory and choosing a free port, without listening; integration tests call `start()` in `before` and `stop()` in `after`.
+- `server/test/*.test.js` are unit tests of the module functions through `internals`: Protobuf and Connect codecs, text and JSONPath rules, URL matching, compression and content types, routing, log search, streaming decisions, the certificate authority, WebSocket helpers.
+- `server/test/integration/*.test.js` run the proxy against local upstreams: HTTP forwarding and bypass, the management API and the cross-site guard, HTTPS through CONNECT (self-signed upstream, SNI, no-SNI clients, large bodies, event streams), WebSocket relays (plain and through a tunnel), the event stream, hop-by-hop headers and HTTP/2 upstreams.
 
-### Request Logging (when Interactive Mode is ON)
-```
-Incoming Request → addLog(logEntry)
-                   ↓
-    Check interactiveModeEnabled → No → Skip logging
-                   ↓ Yes
-    requestLogs.unshift(logEntry)
-                   ↓
-    Limit to MAX_LOG_ENTRIES entries (default 5000)
-                   ↓
-    Available via GET /api/logs
-```
-
-### Event Stream (`GET /api/events`)
-```
-Store change → listeners (logStore.onEntryAdded / onCleared,
-               configStore.onChange, ruleStore.onChange,
-               router.onChange, resourceStore.onChange)
-                   ↓
-    src/api/events.js: event bus (monotonic ids)
-                   ↓
-    Every open `GET /api/events` response (Server-Sent Events):
-      log, stats (coalesced, 250 ms), logs-cleared, config, rules
-```
-The UI still polls `/api/dashboard` and `/api/logs` (the switch to the
-stream is part of the frontend rework); the stream is the server-side
-contract for it. Clients that stop reading are dropped at ~1 MiB of queued
-output; keep-alive comments every 15 s; no replay on reconnect.
-
-### Interactive Mode Toggle
-```
-UI Toggle → POST /api/interactive-mode
-            ↓
-    Update interactiveModeEnabled flag
-            ↓
-    Save to storage/config.json
-            ↓
-    If OFF: Stop console logging
-            ↓
-    Return new state
-```
-
-## 🔐 Security Considerations
-
-### Development Only
-- Self-signed CA certificate (not trusted by default); the CA private key is
-  stored unencrypted under the certificates directory
-- No authentication or authorization
-- Stores all traffic in memory
-- Logs may contain sensitive data
-
-### Network Exposure
-- The server binds to `127.0.0.1` by default (`PROXY_HOST` to change it)
-- Browser access to `/api/*` is limited to the UI origins (`PROXY_UI_ORIGINS`
-  to add more); mutations reject cross-site browser requests, while
-  non-browser clients such as curl are unaffected
-- Upstream TLS certificates are not verified unless `PROXY_STRICT_TLS` is set
-
-### Best Practices
-- Use only on local development machine
-- Do not expose proxy to network
-- Remove CA certificate when not in use
-- Clear logs regularly
-- Use Interactive Mode OFF when not monitoring
-
-## 🚀 Performance
-
-### Optimizations
-- **In-memory storage** for fast resource lookup
-- **Streaming responses** (`src/proxy/streaming.js`): on both the plain HTTP
-  and the HTTPS MITM paths the upstream body is piped to the client as it
-  arrives when no text/JSONPath rule can apply to that URL and phase and the
-  body is not needed for logging — interactive mode off, clearly binary
-  content, `text/event-stream`, or a declared `content-length` above
-  `PROXY_STREAM_THRESHOLD_BYTES` (1 MiB). Streamed responses are logged with
-  `[streamed response]` as body and their byte count as size; everything else
-  (JSON previews, text rewrites, Connect frames) keeps the buffered path. A
-  client that disconnects aborts the upstream request; an upstream failure
-  mid-stream destroys the client response instead of answering 502.
-  `PROXY_STREAM_UNINSPECTED_RESPONSES=false` buffers everything.
-- **Compression support** (gzip, deflate, br, zstd via Node's built-in `zlib`)
-- **Connection pooling** for proxy requests (undici agents, one for `http://`
-  and one for `https://` targets, 128 connections each, 60 s keep-alive)
-- **HTTP/2 upstreams** (opt-in, `PROXY_UPSTREAM_H2=true`): the `https://`
-  agent negotiates h2 through ALPN and falls back to HTTP/1.1 for upstreams
-  that do not offer it; the request headers are mapped to h2 by undici
-  (`Host` becomes `:authority`, `Connection` is dropped). Off by default
-  because of those header-semantic differences; the MITM side towards the
-  client stays HTTP/1.1 in every case.
-- **Interactive Mode** to disable logging overhead
-
-### Limits
-- **Log window size**: requestLogs is capped by MAX_LOG_ENTRIES
-  (default 5000, configurable via the `PROXY_MAX_LOG_ENTRIES` env var). Oldest
-  entries are removed when the cap is exceeded.
-- **Dashboard polling**: the UI polls `/api/dashboard` every 2 seconds when
-  Interactive Mode is ON. The Request Logs view fetches `/api/logs` on demand
-  (filter changes, infinite scroll) and only performs a lightweight 2s poll
-  while the first page is still incomplete.
-- **Body size limits**: request body parsing is limited by `PROXY_BODY_LIMIT`
-  (default `10mb`).
-
-## 🧪 Testing
-
-`npm test` runs the suites under `server/test/` with Node's built-in
-`node:test` runner (no test framework dependency; the server is CommonJS and
-is required directly).
-
-- `server/test/helpers/load-server.js` requires `server/index.js` with
-  storage, certificates and logs redirected to a temporary directory and a
-  free port, without listening. `server/index.js` exports `app`, `server`,
-  `start()`, `stop()` and an `internals` object with the pure functions
-  (Protobuf/Connect codecs, edit rules, URL matching, WebSocket codec,
-  compression, routing, log search) for characterization tests.
-- `server/test/*.test.js`: unit characterization tests of those functions.
-- `server/test/integration/*.test.js`: the proxy started on a free port
-  against local upstreams (HTTP echo, HTTPS with a self-signed certificate,
-  WebSocket echo): HTTP forwarding, management API, MITM, WebSocket.
-
-CI (`.github/workflows/ci.yml`) runs `npm run lint`, `npm test` and
-`npm run build` on Node 22, 24 and 26.
-
-## 📈 Future Improvements
-
-Potential enhancements:
-- Custom response delays
-- Request replay functionality
-- Automated tests
-- Request throttling
-- Custom middleware support
-
-## 🛠️ Technology Stack
-
-### Backend
-- **Node.js** (>= 22.15) - JavaScript runtime; built-in `zlib` handles gzip, deflate, br and zstd
-- **Express** - Web framework
-- **undici** - HTTP client for upstream proxying
-- **node-forge** - Certificate generation for MITM
-- **ws** - WebSocket support
-- **multer** - File upload handling
-
-### Frontend
--- **React** - UI library
--- **TailwindCSS** - Utility-first CSS
--- **Lucide React** - Icon library
--- **react-json-tree** - JSON viewer
--- **axios** - HTTP client
-
-## 📝 Configuration Files
-
-### server/storage/config.json
-```json
-{
-  "interactiveModeEnabled": true,
-  "editRulesEnabled": true,
-  "localResourcesEnabled": true,
-  "filterRulesEnabled": true,
-  "blockedRulesEnabled": true,
-  "filterMode": "focus"
-}
-```
-
-### server/storage/resources.json
-```json
-{
-  "/api/users": {
-    "contentType": "application/json",
-    "filePath": "server/storage/1234567890.json",
-    "uploadDate": "2025-01-11T19:00:00.000Z"
-  }
-}
-```
-
-### server/storage/blocked-urls.json
-```json
-[
-  {
-    "id": "block-1",
-    "enabled": true,
-    "name": "Ads",
-    "url": "https://ads.example.com"
-  },
-  {
-    "id": "block-2",
-    "enabled": true,
-    "name": "Tracking",
-    "url": "https://tracking.example.com"
-  }
-]
-```
-
-### server/storage/filter-urls.json
-```json
-[
-  {
-    "id": "filter-1",
-    "enabled": true,
-    "name": "Focus example API",
-    "url": "https://api.example.com/",
-    "mode": "focus"
-  }
-]
-```
-
-### server/storage/edit-rules.json
-```json
-[
-  {
-    "id": "edit-1",
-    "enabled": true,
-    "kind": "text",
-    "name": "Mask API keys",
-    "startVariants": ["api_key=", "apiKey="],
-    "endVariants": [],
-    "replacement": "api_key=***",
-    "useRegex": false,
-    "caseSensitive": false,
-    "url": "",
-    "target": "both"
-  },
-  {
-    "id": "edit-2",
-    "enabled": true,
-    "kind": "jsonPath",
-    "name": "GetChatMessage: root.f2",
-    "url": "YourApiService/YourMethod",
-    "path": "root.f2",
-    "value": "Custom prompt text",
-    "valueType": "string"
-  }
-]
-```
-
-Text rules list their markers in `startVariants` / `endVariants` (each entry
-is an alternative, OR semantics). Files written by older versions with a single
-`start` / `end` pair are still accepted: the pair is folded into the variant
-lists when the rule is loaded. Long string values may be stored as arrays of
-segments and are joined back on load. Rules are applied in file order and each
-rule sees the output of the previous one; a rule whose regular expression does
-not compile is skipped with a warning instead of blocking the whole set.
-
----
-
-**For more information, see [USAGE.md](USAGE.md) and [README.md](README.md)**
+CI (`.github/workflows/ci.yml`) runs lint, the format check, the type check, the tests and the client build on Node 22, 24 and 26.
