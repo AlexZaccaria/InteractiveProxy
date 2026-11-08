@@ -25,7 +25,7 @@ export default function LogDetail({ log, onCreateJsonPathRule }) {
     <div className="border-t border-edge p-4 bg-surface">
       <div className="space-y-4">
         <div className="border-b border-edge-strong pb-4">
-          <h3 className="text-base font-bold text-blue-400 mb-3">📤 Request</h3>
+          <h3 className="text-base font-bold text-blue-400 mb-3">Request</h3>
 
           <div className="space-y-3">
             <div>
@@ -40,7 +40,7 @@ export default function LogDetail({ log, onCreateJsonPathRule }) {
         {hasResponseSection && (
           <div>
             <h3 className="text-base font-bold text-green-400 mb-3">
-              {log.source === 'websocket' ? '💬 Message' : '📥 Response'}
+              {log.source === 'websocket' ? 'Message' : 'Response'}
             </h3>
 
             <div className="space-y-3">
@@ -58,7 +58,7 @@ export default function LogDetail({ log, onCreateJsonPathRule }) {
 
         {log.error && (
           <div>
-            <h3 className="text-base font-bold text-red-400 mb-3">❌ Error</h3>
+            <h3 className="text-base font-bold text-red-400 mb-3">Error</h3>
             <pre className="bg-red-950/30 p-3 rounded text-xs text-red-300 overflow-x-auto">
               {log.error}
             </pre>
