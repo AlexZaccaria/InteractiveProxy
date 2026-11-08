@@ -1,0 +1,25 @@
+{
+  "name": "interactive-proxy-server",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Interactive Proxy backend: HTTP/HTTPS MITM/WebSocket proxy with rewrite rules and management API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.15.0",
+    "npm": ">=10.0.0"
+  },
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "multer": "^2.0.2",
+    "node-forge": "^1.3.1",
+    "pino": "^10.4.0",
+    "undici": "^7.16.0",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,10 @@
+# Generated or third-party
+client/dist/
+node_modules/
+package-lock.json
+server/storage/
+server/certs/
+server/logs/
+
+# Prose keeps its hand-made tables
+*.md

@@ -3,7 +3,7 @@ node_modules/
 client/node_modules/
 
 # Build output
-client/build/
+client/dist/
 dist/
 
 # Storage and logs

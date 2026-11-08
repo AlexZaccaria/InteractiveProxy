@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f4f5" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a" />
+    <meta
+      name="description"
+      content="Interactive Proxy - HTTP/HTTPS/WebSocket interception and rewriting UI"
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Interactive Proxy</title>
+    <script>
+      // Apply the stored theme before the first paint (same rule as src/lib/theme.js).
+      try {
+        var theme = localStorage.getItem('proxy.theme')
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        }
+        document.documentElement.classList.toggle('dark', theme === 'dark')
+      } catch (error) {
+        document.documentElement.classList.add('dark')
+      }
+    </script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
