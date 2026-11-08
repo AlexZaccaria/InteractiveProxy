@@ -12,6 +12,7 @@ Features considered during the 2.0 rework and not built. Each item stands on its
 - Side-by-side diff of the original and the rewritten body in the log card.
 - Per-host passthrough in the MITM: hosts with certificate pinning tunnelled as raw bytes.
 - Download of the CA certificate from the UI, with the installation steps per platform.
+- An optional `Dockerfile`.
 
 ## Transparent mode through WireGuard
 
@@ -40,8 +41,3 @@ Stages, each usable on its own:
 4. **T4, capture on the proxy's own machine**: the only OS-dependent step, needed so that the proxy's egress does not re-enter the tunnel. Windows: binding to the physical IP is enough (strong host model); Linux: `ip rule add from <physical-ip> lookup main`; macOS: an interface-scoped route. The proxy prints the command for the current system and applies it only on confirmation.
 
 Declared limits: the TCP payload is modified only on terminated flows (the pipeline, or a future byte-level "raw stream" channel), not at packet level, because changing the length would break the sequence and acknowledgement numbers; QUIC is blocked, not decrypted; the throughput suits a development tool, since every packet goes through Node's event loop.
-
-## Release
-
-- An optional `Dockerfile`.
-- Version 2.0.0 in the `package.json` files and the release date in `CHANGELOG.md` when `update-2.0` is merged.

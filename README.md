@@ -2,6 +2,24 @@
 
 Interactive Proxy is a development proxy that runs on the developer's machine. It forwards HTTP requests, terminates HTTPS with a certificate authority it generates itself, relays WebSocket connections, serves uploaded files in place of upstream responses, blocks or bypasses URLs by rule, and rewrites request and response bodies in flight with text and JSONPath rules, including Connect/gRPC envelopes and Protobuf messages decoded without a schema. A web UI shows the captured traffic and edits the rules; a management API and a Server-Sent Events stream expose the same data to scripts.
 
+## Screenshots
+
+The Requests tab with captured traffic, dark theme:
+
+![The Requests tab: counters in the header, filters and the list of captured requests](docs/screenshots/requests.png)
+
+A request expanded: headers, the decoded JSON body and, for a rewritten response, the body before and after the rule:
+
+![A request expanded with its headers and JSON body](docs/screenshots/request-detail.png)
+
+The Edited tab, where the text and JSONPath rules are created:
+
+![The Edited tab with a JSONPath rule](docs/screenshots/edit-rules.png)
+
+The same list in the light theme:
+
+![The Requests tab in the light theme](docs/screenshots/light-theme.png)
+
 ## Requirements
 
 - Node.js 22.15 or later (Zstandard support comes from the built-in `zlib`)
@@ -55,8 +73,8 @@ The UI is at `http://127.0.0.1:8050/`.
 | `npm test` | Server test suite (`node --test`) |
 | `npm run test:client` | Client test suite (Vitest, jsdom) |
 | `npm run lint` | ESLint on server, scripts and client |
-| `npm run typecheck` | `tsc` over the server's JSDoc types |
-| `npm run format` / `npm run format:check` | Prettier on server, tests and tooling (the client is excluded until its migration) |
+| `npm run typecheck` | `tsc` over the JSDoc types of the server and the client |
+| `npm run format` / `npm run format:check` | Prettier on server, client, tests and tooling (Markdown is excluded) |
 
 ## Project layout
 
@@ -81,8 +99,8 @@ InteractiveProxy
   │    ├─ storage/            persisted rules, resources and flags (created at runtime)
   │    └─ certs/              CA, leaf key and host certificates (created at runtime)
   ├─ client/                  React UI built by Vite (index.html, vite.config.js, src/)
-  ├─ scripts/                 port tooling and the development launcher
-  ├─ docs/API.md              management API reference
+  ├─ scripts/                 the development launcher behind npm run dev
+  ├─ docs/                    management API reference and the screenshots of this README
   ├─ ports.config.json        UI and proxy ports
   └─ .github/workflows/ci.yml lint, format check, typecheck, tests and build on push
 ```
@@ -104,4 +122,6 @@ Terminating HTTPS means that whoever holds `server/certs/ca-key.pem` can imperso
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Source-available, not open source: see [LICENSE](LICENSE). You may read, run and modify the code for
+noncommercial purposes — personal use, study, or evaluating the author's work. Commercial use and
+redistribution, modified or not, are not allowed without written permission.

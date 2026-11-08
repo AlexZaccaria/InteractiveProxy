@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 (unreleased)
+## 2.0.0 (2026-11-08)
 
 ### Fixed
 
@@ -27,6 +27,7 @@
 
 ### Changed
 
+- The license is the Interactive Proxy Noncommercial No-Redistribution License 1.0, source-available and noncommercial, in place of MIT. Copies of 1.0.0 obtained under MIT keep that license.
 - The server binds to `127.0.0.1` by default (`PROXY_HOST`), browser access to the management API is limited to the UI origins (`PROXY_UI_ORIGINS`), and mutations from other sites are refused.
 - Upstream responses that no rule can rewrite and that need no inspection are streamed to the client (`PROXY_STREAM_UNINSPECTED_RESPONSES`, now on by default; `PROXY_STREAM_THRESHOLD_BYTES`).
 - One certificate authority key pair and one shared leaf key are generated with Node's `crypto`; host certificates are persisted under `server/certs/hosts/` and reused across restarts.

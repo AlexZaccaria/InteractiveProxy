@@ -1,6 +1,6 @@
 {
   "name": "interactive-proxy-server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Interactive Proxy backend: HTTP/HTTPS MITM/WebSocket proxy with rewrite rules and management API",
   "main": "index.js",
