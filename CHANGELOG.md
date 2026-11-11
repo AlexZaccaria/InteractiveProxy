@@ -6,6 +6,7 @@
 
 - Replay of a logged request from the Requests tab: a form with the method, URL, headers and body, sent again through the proxy; the new entry carries `replayOf` and a REPLAY badge. API: `GET /api/logs/:id/replay` describes the request, `POST /api/logs/:id/replay` sends it with the edits. Request bodies are kept for it up to `PROXY_REPLAY_BODY_LIMIT_BYTES` (256 KiB by default).
 - "Copy as cURL" on every HTTP entry, from `GET /api/logs/:id/curl` (`viaProxy=1` for a command through the proxy).
+- Breakpoints: rules (URL substring, request or response phase) that hold a matching flow until it is sent on, edited by hand or aborted from the UI. A Breakpoints tab (shortcut `6`) manages the rules and the paused flows, an editor opens when a flow pauses, and the entries carry a BREAKPOINT badge. API: `/api/breakpoints`, `/api/breakpoints/pending` with `resume` and `abort`, the `breakpoints-mode` flag, `breakpoint` events on the stream. Flows are held only while a UI is connected and continue unchanged after `PROXY_BREAKPOINT_TIMEOUT_MS` (two minutes by default).
 
 ### Internal
 

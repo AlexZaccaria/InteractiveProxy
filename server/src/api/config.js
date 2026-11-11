@@ -71,6 +71,13 @@ function createConfigRoutes({ configStore, ruleStore, router: proxyRouter, bypas
       set: v => {
         configStore.blockedRulesEnabled = v
       }
+    },
+    {
+      path: '/breakpoints-mode',
+      field: 'breakpointsEnabled',
+      set: v => {
+        configStore.breakpointsEnabled = v
+      }
     }
   ]
   toggles.forEach(({ path, field, set }) => {

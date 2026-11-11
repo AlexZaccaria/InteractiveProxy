@@ -4,7 +4,6 @@ Features considered during the 2.0 rework and not built. Each item stands on its
 
 ## Features
 
-- Breakpoints: pause on a URL match, edit the request or the response by hand, then send; the pause is announced over the event stream (`GET /api/events`).
 - HAR export and import; export and import of all the rules in one file.
 - Latency and throttling per rule.
 - Map-local to a folder, not only to a single file, with resolution of the request path inside it.

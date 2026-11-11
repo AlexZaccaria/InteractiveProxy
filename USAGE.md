@@ -24,7 +24,7 @@ Request bodies of any content type are forwarded byte for byte. Requests address
 
 ## The UI
 
-The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, the theme switch, the audit panel button, the keyboard shortcuts button, an export button for the current log view and a button that clears the logs. Below it, five tabs.
+The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, the theme switch, the audit panel button, the keyboard shortcuts button, an export button for the current log view and a button that clears the logs. Below it, six tabs.
 
 The layout adapts to the window: from 1280 px wide the header is one row; below that the counters move to a second row under the title and the actions, and below 768 px the theme, audit and shortcuts buttons are hidden (the `?` key still opens the shortcuts panel) and the tab bar scrolls sideways. The dark theme is the default when the operating system prefers it; the Sun/Moon button in the header switches theme and the choice is kept in the browser's `localStorage` under `proxy.theme`. Without a stored choice the UI follows the system preference, also when it changes.
 
@@ -35,7 +35,7 @@ Keyboard shortcuts, listed in the panel the `?` key or the keyboard button opens
 | `/` | Switch to the Requests tab and focus the URL search |
 | `e` | Export the current log view (the same as the export button) |
 | `c` | Clear the logs, after confirmation |
-| `1` – `5` | Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local |
+| `1` – `6` | Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local, Breakpoints |
 | `?` | Show or hide the shortcuts panel |
 | `Esc` | Close the shortcuts panel or the audit panel; in a text field, leave the field |
 
@@ -85,6 +85,10 @@ The tab also manages presets (saved rule templates), shows how many logged entri
 
 Local resources are files or inline text served instead of the upstream response when a request URL contains the resource URL. Each resource has a content type and can be enabled or disabled; the global switch disables all of them.
 
+### Breakpoints
+
+A breakpoint rule names a substring of the URL and the phase it pauses: the request, before it is forwarded, the response, before it goes back to the client, or both. When a request matches, the proxy holds it and an editor opens in the UI (a strip above the tabs lists the paused flows when the editor is closed): the method, the URL, the headers and the body of the request, or the status, the headers and the body of the response, as they would go on after the edit rules. Send passes the flow on with the edits, Abort answers the client with an error, and closing the editor leaves the flow paused. A flow nobody resumes continues unchanged after `PROXY_BREAKPOINT_TIMEOUT_MS` (two minutes by default). Flows are held only while the UI is open, because only the UI can resume them; requests forwarded without inspection by a filter rule are never held. The tab manages the rules and shows the paused flows; its switch turns every rule off at once. Entries that went through a breakpoint carry a BREAKPOINT badge.
+
 ### Audit panel
 
 The chart button in the header (or a triple click on the title in the top-left corner) opens the audit panel: upstream latency percentiles, upstream errors by category, the slowest routes grouped by handling (processed, redirected, blocked, served) and the hosts with the highest average latency. The data comes from `GET /api/audit` and `GET /api/dashboard`. `Esc` or the close button closes it.
@@ -124,6 +128,7 @@ A response is piped to the client as it arrives, instead of being buffered and d
 | `PROXY_STREAM_UNINSPECTED_RESPONSES` | `true` | Enable [streaming](#streaming); `false` buffers every response |
 | `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` | With Interactive mode on, responses declaring a larger `content-length` are streamed; `0` never streams by size alone |
 | `PROXY_REPLAY_BODY_LIMIT_BYTES` | `262144` | Request bodies up to this size are kept on their log entry for replay and "Copy as cURL" |
+| `PROXY_BREAKPOINT_TIMEOUT_MS` | `120000` | A flow held at a breakpoint continues unchanged after this time |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED` | `true` | Apply edit rules to HTTPS traffic that filter rules mark as direct; `false` forwards it untouched |
 | `PROXY_STRICT_TLS` | `false` | Verify upstream TLS certificates |
 | `PROXY_STRICT_TLS_CA_FILE` | empty | Additional PEM bundle trusted when `PROXY_STRICT_TLS` is on |

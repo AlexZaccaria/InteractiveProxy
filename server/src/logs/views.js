@@ -50,6 +50,7 @@ const LOG_VIEW_COMMON_FIELDS = [
   'responseBytes',
   'rewriteCount',
   'replayOf',
+  'breakpoint',
   'connectionId',
   'isConnectionLog',
   'isWebSocketSummary',

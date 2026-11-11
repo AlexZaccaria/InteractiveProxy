@@ -36,6 +36,10 @@ export const queryKeys = {
   filterMetrics: ['filter-metrics'],
   resources: ['resources'],
   audit: ['audit'],
+  /** The breakpoint rules; also the prefix of the pending key. */
+  breakpoints: ['breakpoints'],
+  /** The flows held at a breakpoint (`{ items }`). */
+  breakpointsPending: ['breakpoints', 'pending'],
   /** Root of the log list and detail keys, for the reset when the logs are cleared. */
   logsRoot: ['logs'],
   /**
@@ -416,4 +420,123 @@ export function useReplayLog() {
  */
 export function fetchCurlCommand(id) {
   return apiGet(`/api/logs/${encodeURIComponent(String(id))}/curl`)
+}
+
+/** @typedef {import('./types').BreakpointRule} BreakpointRule */
+/** @typedef {import('./types').PausedBreakpoint} PausedBreakpoint */
+/** @typedef {import('./types').BreakpointEvent} BreakpointEvent */
+
+/**
+ * The breakpoints endpoint answers an array on GET and `{ breakpointRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {BreakpointRule[]}
+ */
+export function normalizeBreakpointRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.breakpointRules)) return payload.breakpointRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<BreakpointRule[]>} */
+export function useBreakpointRules() {
+  return useQuery({
+    queryKey: queryKeys.breakpoints,
+    queryFn: ({ signal }) => apiGet('/api/breakpoints', { signal }),
+    select: normalizeBreakpointRules
+  })
+}
+
+/**
+ * Add, update or remove a breakpoint rule (`POST /api/breakpoints`).
+ */
+export function useBreakpointRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, url?: string, name?: string, enabled?: boolean, phase?: string }} payload */
+    mutationFn: payload => apiPost('/api/breakpoints', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.breakpoints, normalizeBreakpointRules(data))
+    }
+  })
+}
+
+/**
+ * The flows held at a breakpoint. The list is kept current by the
+ * `breakpoint` events (`applyBreakpointEvent`) and refetched when the
+ * stream (re)opens.
+ *
+ * @returns {import('@tanstack/react-query').UseQueryResult<PausedBreakpoint[]>}
+ */
+export function usePendingBreakpoints() {
+  return useQuery({
+    queryKey: queryKeys.breakpointsPending,
+    queryFn: ({ signal }) => apiGet('/api/breakpoints/pending', { signal }),
+    select: data => (data && Array.isArray(data.items) ? data.items : [])
+  })
+}
+
+/**
+ * @param {import('@tanstack/react-query').QueryClient} client
+ * @param {string} id
+ */
+function removePendingBreakpoint(client, id) {
+  client.setQueryData(
+    queryKeys.breakpointsPending,
+    /** @param {{ items?: PausedBreakpoint[] } | undefined} previous */ previous =>
+      previous && Array.isArray(previous.items)
+        ? { items: previous.items.filter(item => item.id !== id) }
+        : previous
+  )
+}
+
+/**
+ * Apply a `breakpoint` event of the stream to the pending list.
+ *
+ * @param {import('@tanstack/react-query').QueryClient} client
+ * @param {BreakpointEvent | null | undefined} event
+ */
+export function applyBreakpointEvent(client, event) {
+  if (!event || typeof event !== 'object') return
+  if (event.action === 'paused' && event.item) {
+    const item = event.item
+    client.setQueryData(
+      queryKeys.breakpointsPending,
+      /** @param {{ items?: PausedBreakpoint[] } | undefined} previous */ previous => {
+        const items = previous && Array.isArray(previous.items) ? previous.items : []
+        if (items.some(existing => existing.id === item.id)) return previous
+        return { items: [...items, item] }
+      }
+    )
+  } else if (event.action === 'resumed' && event.id) {
+    removePendingBreakpoint(client, event.id)
+  }
+}
+
+/**
+ * Send a paused flow on, with the edits of the editor
+ * (`POST /api/breakpoints/pending/:id/resume`).
+ */
+export function useResumeBreakpoint() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ id: string, overrides: Record<string, unknown> }} params */
+    mutationFn: ({ id, overrides }) =>
+      apiPost(`/api/breakpoints/pending/${encodeURIComponent(id)}/resume`, overrides),
+    onSuccess: (_data, { id }) => removePendingBreakpoint(client, id)
+  })
+}
+
+/**
+ * Abort a paused flow (`POST /api/breakpoints/pending/:id/abort`); the
+ * client gets a 502.
+ */
+export function useAbortBreakpoint() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {string} id */
+    mutationFn: id => apiPost(`/api/breakpoints/pending/${encodeURIComponent(id)}/abort`),
+    onSuccess: (_data, id) => removePendingBreakpoint(client, id)
+  })
 }

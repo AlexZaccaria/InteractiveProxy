@@ -25,6 +25,11 @@ const { MITM_BYPASS_REWRITES_ENABLED, REPLAY_BODY_MAX_BYTES } = require('../../c
 const { getCA, generateCertForHost } = require('../tls/ca')
 const { createLruCache } = require('../util/lru')
 const { retainRequestBody } = require('../logs/replay')
+const {
+  recordBreakpointOnLog,
+  abortAtBreakpoint: abortFlowAtBreakpoint,
+  headersForTarget
+} = require('./breakpoints')
 const { createRawTunnel } = require('./tunnel')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const { STREAMED_BODY_MARKER, shouldStreamResponse, pipeUpstreamBody } = require('./streaming')
@@ -87,6 +92,8 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {Pick<WebSocketProxy, 'handleWebSocketUpgrade'>} webSocketProxy
  * @property {BypassCounter} bypassCounter
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
+ * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
+ * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  */
 
 /**
@@ -106,7 +113,9 @@ function createMitmHandler({
   httpFlow,
   webSocketProxy,
   bypassCounter,
-  stats
+  stats,
+  breakpoints,
+  touchLog
 }) {
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
   const { performUpstreamRequest, attachAbortOnClose } = upstream
@@ -627,9 +636,57 @@ function createMitmHandler({
             headersToForward['content-length'] = body.length
           }
 
+          let upstreamMethod = method
+          let upstreamUrl = fullUrl
+
+          // A request breakpoint holds the flow until the UI sends it on,
+          // with its edits, or aborts it.
+          const requestBreakpoint = breakpoints.match('request', { requestUrl, fullUrl })
+          if (requestBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'request',
+              rule: requestBreakpoint,
+              request: {
+                method,
+                url: fullUrl,
+                headers: headersToForward,
+                body: body.length > 0 ? body : null
+              }
+            })
+            if (resolution.action === 'abort') {
+              abortFlowAtBreakpoint({
+                res: clientRes,
+                logEntry,
+                phase: 'request',
+                alreadyLogged: false,
+                addLog,
+                touchLog
+              })
+              return
+            }
+            if (resolution.edited) {
+              headersToForward = headersForTarget(
+                resolution.request.headers,
+                resolution.request.url,
+                fullUrl
+              )
+              upstreamMethod = resolution.request.method
+              upstreamUrl = resolution.request.url
+              body = resolution.request.body || Buffer.alloc(0)
+              if (body.length > 0) {
+                headersToForward['content-length'] = body.length
+              } else {
+                delete headersToForward['content-length']
+              }
+            }
+            recordBreakpointOnLog(logEntry, 'request', resolution.edited ? 'edited' : 'continued', {
+              request: resolution.request
+            })
+          }
+
           const { response: upstreamResponse } = await performUpstreamRequest({
-            url: fullUrl,
-            method,
+            url: upstreamUrl,
+            method: upstreamMethod,
             headers: headersToForward,
             body: body.length > 0 ? body : undefined,
             abortSignal: abortController.signal,
@@ -649,12 +706,17 @@ function createMitmHandler({
             logEntry
           )
 
+          // A response breakpoint needs the whole body: the response is then
+          // buffered as for a rule.
+          const responseBreakpoint = breakpoints.match('response', { requestUrl, fullUrl })
+
           // Stream when no rule can touch the body and nothing needs it for
           // logging; otherwise buffer it for rewrites and previews.
           const canStream =
+            !responseBreakpoint &&
             upstreamResponse.body &&
             shouldStreamResponse({
-              method,
+              method: upstreamMethod,
               contentType: getContentType(upstreamHeaders),
               contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
               hasRules: hasApplicableRules({ requestUrl, fullUrl, phase: 'response' }),
@@ -709,17 +771,64 @@ function createMitmHandler({
               frameRewriteFullUrl: fullUrl
             })
 
+          let statusCode = upstreamResponse.statusCode
+          /** @type {Record<string, any>} */
+          let responseHeadersToSend = rewrittenHeaders
+          let responseBodyToSend = finalResponseBuffer
+
+          // A response breakpoint holds the rewritten response until the UI
+          // sends it on, with its edits, or aborts it. The entry is already
+          // logged, so an edit re-publishes it.
+          if (responseBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'response',
+              rule: responseBreakpoint,
+              request: {
+                method: upstreamMethod,
+                url: upstreamUrl,
+                headers: headersToForward,
+                body: body.length > 0 ? body : null
+              },
+              response: { statusCode, headers: rewrittenHeaders, body: finalResponseBuffer }
+            })
+            if (resolution.action === 'abort') {
+              abortFlowAtBreakpoint({
+                res: clientRes,
+                logEntry,
+                phase: 'response',
+                alreadyLogged: true,
+                addLog,
+                touchLog
+              })
+              return
+            }
+            if (resolution.edited && resolution.response) {
+              statusCode = resolution.response.statusCode
+              responseHeadersToSend = resolution.response.headers
+              responseBodyToSend = resolution.response.body || Buffer.alloc(0)
+            }
+            recordBreakpointOnLog(
+              logEntry,
+              'response',
+              resolution.edited ? 'edited' : 'continued',
+              {
+                response: resolution.response || undefined
+              }
+            )
+            if (logEntry) touchLog(logEntry)
+          }
+
           // Forward response with cache-busting headers, dropping identifying
           // tracing headers for actively MITM-processed responses.
           const responseHeaders = sanitizeAndStripIdentifyingHeaders(
-            rewrittenHeaders,
+            responseHeadersToSend,
             OMIT_RESPONSE_HEADERS
           )
           applyCacheBypassHeadersToObject(responseHeaders)
-          setContentLength(responseHeaders, finalResponseBuffer)
+          setContentLength(responseHeaders, responseBodyToSend)
 
-          clientRes.writeHead(upstreamResponse.statusCode, responseHeaders)
-          clientRes.end(finalResponseBuffer)
+          clientRes.writeHead(statusCode, responseHeaders)
+          clientRes.end(responseBodyToSend)
         } catch (error) {
           handleUpstreamError({ logEntry, error: /** @type {Error} */ (error), res: clientRes })
         } finally {

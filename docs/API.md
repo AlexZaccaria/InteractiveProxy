@@ -21,6 +21,8 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
 | `GET /api/logs/:id` | One entry with bodies |
 | `GET /api/logs/:id/replay`, `POST /api/logs/:id/replay` | The replay form of an entry, and the replay itself |
 | `GET /api/logs/:id/curl` | The entry as a curl command |
+| `GET /api/breakpoints`, `POST /api/breakpoints` | Breakpoint rules |
+| `GET /api/breakpoints/pending`, `POST /api/breakpoints/pending/:id/resume`, `POST /api/breakpoints/pending/:id/abort` | Flows held at a breakpoint |
 | `DELETE /api/logs` | Clear the log window and the derived counters |
 | `GET /api/dashboard` | Counters, performance aggregates, routes |
 | `GET /api/audit` | Upstream errors by category and per-host latency |
@@ -43,6 +45,7 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
   "localResourcesEnabled": true,
   "filterRulesEnabled": true,
   "blockedRulesEnabled": true,
+  "breakpointsEnabled": true,
   "filterMode": "ignore",
   "filteredRequestCount": 0
 }
@@ -182,7 +185,8 @@ A `text/event-stream` response (`Cache-Control: no-cache, no-transform`, `X-Acce
 | `stats` | The dashboard counters changed; at most one event per 250 ms while traffic flows, and one right after the logs are cleared | `{"stats", "performance", "payloads", "routes", "editedRequests", "filterMetrics"}` as in `GET /api/dashboard` |
 | `logs-cleared` | After `DELETE /api/logs` | `{}` |
 | `config` | A flag or the filter mode changed | The flags of `GET /api/config` |
-| `rules` | Edit rules or presets, blocked rules, filter rules or local resources changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources"}` |
+| `rules` | Edit rules or presets, blocked rules, filter rules, local resources or breakpoint rules changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources" \| "breakpoints"}` |
+| `breakpoint` | A flow was held at a breakpoint, or a held flow went on | `{"action": "paused", "item": {...}}` with the item of `GET /api/breakpoints/pending`, or `{"action": "resumed", "id": "…", "reason": "resume" \| "abort" \| "timeout"}` |
 
 ```bash
 curl -N http://127.0.0.1:8050/api/events
@@ -259,6 +263,37 @@ A rule is `{"id", "enabled", "name", "url", "mode": "ignore" | "focus"}`; rules 
 | `POST /api/filters` with `{"action": "add" \| "update" \| "remove", "id", "url", "name", "enabled", "mode"}` | `{"success": true, "bypassRules": [...]}` (all rules, both modes); `400` / `404` as for blocked rules |
 | `GET /api/filters/suggestions?limit=10` (`limit` clamped between 1 and 50) | `{"suggestions": [{"pattern": "<host>", "count", "lastSeen", "paths": [{"path", "count"}]}]}`: hosts of the current log window not covered by a rule, ordered by request count then recency, with up to three paths each |
 | `GET /api/filters/metrics` | `{"totalFiltered": n, "activeRules": m}` |
+
+## Breakpoints
+
+A breakpoint rule is `{"id", "enabled", "name", "url", "phase": "request" | "response" | "both"}`; `url` is a substring matched against the request URL and the full target URL. A request that matches an enabled rule is held before it is forwarded (`request` phase) or before its response goes back to the client (`response` phase, the response is buffered as for a rule) until the flow is resumed or aborted through the API, or until `PROXY_BREAKPOINT_TIMEOUT_MS` passes (two minutes by default), after which it continues unchanged. Flows are held only while at least one event stream is open, and only with the `breakpointsEnabled` flag on (`POST /api/breakpoints-mode`). Requests forwarded without inspection by a filter rule are not held.
+
+| Request | Answer |
+|---|---|
+| `GET /api/breakpoints` | The rules, as an array |
+| `POST /api/breakpoints` with `{"action": "add", "url", "name", "enabled", "phase"}` | `{"success": true, "breakpointRules": [...]}`; `400` without `url`, with a non-boolean `enabled` or an unknown `phase` |
+| `POST /api/breakpoints` with `{"action": "update", "id", "url", "name", "enabled", "phase"}` (fields optional) | Same; `404` when the id is unknown |
+| `POST /api/breakpoints` with `{"action": "remove", "id"}` | Same |
+| `GET /api/breakpoints/pending` | `{"items": [...]}`, the flows held right now |
+| `POST /api/breakpoints/pending/:id/resume` with the edits | `{"success": true}`; `404` when nothing is held with that id, `400` for an invalid edit |
+| `POST /api/breakpoints/pending/:id/abort` | `{"success": true}`; the client gets `502 {"error": "Aborted at a breakpoint"}`; `404` when nothing is held with that id |
+
+A held flow is described as:
+
+```json
+{
+  "id": "…", "phase": "request", "rule": {"id": "…", "name": "Orders", "url": "/orders"},
+  "createdAt": "2026-11-11T10:00:00.000Z",
+  "method": "POST", "url": "https://api.example.com/orders",
+  "headers": {"content-type": "application/json"},
+  "body": "{\"qty\":1}", "bodyBase64": null, "bodyIsText": true, "bodySize": 9,
+  "response": null
+}
+```
+
+In the `response` phase, `response` is `{"statusCode", "headers", "body", "bodyBase64", "bodyIsText", "bodySize", "bodyDecoded"}`: the response after the edit rules, with the body decompressed for display when `bodyDecoded` is true. The request fields show what was forwarded.
+
+The edits of `resume` are, for the request phase, `method`, `url`, `headers` (the whole set, as for a replay) and `body` or `bodyBase64` (`null` for no body); for the response phase, `statusCode` (100–599), `headers` (the whole set; `content-length`, `transfer-encoding`, `connection` and `keep-alive` are dropped) and `body` or `bodyBase64`. An edited body is sent as given, so `content-encoding` is dropped with it; an unchanged body goes out as received. Absent fields keep their values, and a resume whose fields equal the held ones counts as unchanged. The log entry of the flow carries `breakpoint: {"request": …, "response": …}` with `edited`, `continued` or `aborted` per phase; after an edit the entry shows what was sent.
 
 ## System
 

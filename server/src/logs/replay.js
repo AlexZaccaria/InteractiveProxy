@@ -436,6 +436,7 @@ function createReplayRunner({ port, host, logStore, timeoutMs = 120_000 }) {
 
 module.exports = {
   ReplayInputError,
+  bodyAsText,
   retainRequestBody,
   isReplayable,
   buildReplayRequest,

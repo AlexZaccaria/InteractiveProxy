@@ -14,6 +14,7 @@
  * @property {boolean} localResourcesEnabled
  * @property {boolean} filterRulesEnabled
  * @property {boolean} blockedRulesEnabled
+ * @property {boolean} breakpointsEnabled
  * @property {FilterMode} filterMode
  * @property {number} [filteredRequestCount]
  */
@@ -167,6 +168,7 @@
  * @property {string} [localResource]
  * @property {string} [error]
  * @property {string} [replayOf] Id of the entry this request repeated.
+ * @property {{ request?: string, response?: string }} [breakpoint] Outcome of the breakpoints the entry went through (`edited`, `continued`, `aborted`).
  * @property {boolean} [isConnectionLog]
  * @property {boolean} [isWebSocketSummary]
  * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
@@ -282,6 +284,52 @@
  * @property {string} command
  * @property {boolean} bodyIncluded
  * @property {'text' | 'base64' | null} bodyEncoding
+ */
+
+/**
+ * A breakpoint rule (`GET /api/breakpoints`).
+ *
+ * @typedef {Object} BreakpointRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} url Substring of the request URL.
+ * @property {'request' | 'response' | 'both'} phase
+ */
+
+/**
+ * The response part of a flow held at a response breakpoint.
+ *
+ * @typedef {Object} PausedResponse
+ * @property {number} statusCode
+ * @property {Record<string, string>} headers
+ * @property {string | null} body
+ * @property {string | null} bodyBase64
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {boolean} bodyDecoded The body is shown decompressed.
+ */
+
+/**
+ * A flow held at a breakpoint (`GET /api/breakpoints/pending`, `breakpoint` events).
+ *
+ * @typedef {Object} PausedBreakpoint
+ * @property {string} id
+ * @property {'request' | 'response'} phase
+ * @property {{ id: string, name: string, url: string }} rule
+ * @property {string} createdAt
+ * @property {string} method
+ * @property {string} url
+ * @property {Record<string, string>} headers
+ * @property {string | null} body
+ * @property {string | null} bodyBase64
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {PausedResponse | null} response
+ */
+
+/**
+ * @typedef {{ action: 'paused', item: PausedBreakpoint } | { action: 'resumed', id: string, reason: 'resume' | 'abort' | 'timeout' }} BreakpointEvent
  */
 
 export {}

@@ -79,3 +79,10 @@ describe('LogRow replay actions', () => {
     expect(screen.getByText('REPLAY')).toBeInTheDocument()
   })
 })
+
+describe('LogRow breakpoint badge', () => {
+  it('marks the entries that went through a breakpoint', () => {
+    renderRow({ ...httpLog, breakpoint: { request: 'edited', response: 'continued' } })
+    expect(screen.getByText('BREAKPOINT')).toBeInTheDocument()
+  })
+})

@@ -23,6 +23,7 @@ const fsPromises = fs.promises
  * @property {boolean} localResourcesEnabled
  * @property {boolean} filterRulesEnabled
  * @property {boolean} blockedRulesEnabled
+ * @property {boolean} breakpointsEnabled
  * @property {FilterMode} filterMode
  */
 
@@ -32,6 +33,7 @@ const fsPromises = fs.promises
  * @property {boolean} localResourcesEnabled Serving of uploaded local resources.
  * @property {boolean} filterRulesEnabled Bypass engine (ignore/focus rules).
  * @property {boolean} blockedRulesEnabled Blocked URL rules.
+ * @property {boolean} breakpointsEnabled Breakpoint rules (pause and edit by hand).
  * @property {FilterMode} filterMode Normalised filter mode; assigning an unknown value is ignored.
  * @property {() => void} load Read config.json synchronously (a missing or invalid file keeps the defaults).
  * @property {() => void} persist Write the flags to config.json, coalescing concurrent writes.
@@ -66,6 +68,7 @@ function createConfigStore({ file, ruleStore }) {
   let localResourcesEnabled = true // global local resources flag
   let filterRulesEnabled = true // global filter rules flag
   let blockedRulesEnabled = true // global blocked rules flag
+  let breakpointsEnabled = true // global breakpoints flag
   /** @type {FilterMode} */
   let filterMode = 'ignore' // bypass mode: 'ignore' (default) or 'focus'
   /** @type {Promise<void> | null} */
@@ -121,6 +124,9 @@ function createConfigStore({ file, ruleStore }) {
         if (typeof config.blockedRulesEnabled === 'boolean') {
           blockedRulesEnabled = config.blockedRulesEnabled
         }
+        if (typeof config.breakpointsEnabled === 'boolean') {
+          breakpointsEnabled = config.breakpointsEnabled
+        }
 
         let rawMode = null
         if (typeof config.filterMode === 'string') {
@@ -173,6 +179,7 @@ function createConfigStore({ file, ruleStore }) {
           localResourcesEnabled,
           filterRulesEnabled,
           blockedRulesEnabled,
+          breakpointsEnabled,
           filterMode
         }
 
@@ -204,6 +211,7 @@ function createConfigStore({ file, ruleStore }) {
       localResourcesEnabled,
       filterRulesEnabled,
       blockedRulesEnabled,
+      breakpointsEnabled,
       filterMode
     }
   }
@@ -244,6 +252,15 @@ function createConfigStore({ file, ruleStore }) {
       const next = value === true
       if (next === blockedRulesEnabled) return
       blockedRulesEnabled = next
+      notifyChange()
+    },
+    get breakpointsEnabled() {
+      return breakpointsEnabled
+    },
+    set breakpointsEnabled(value) {
+      const next = value === true
+      if (next === breakpointsEnabled) return
+      breakpointsEnabled = next
       notifyChange()
     },
     get filterMode() {

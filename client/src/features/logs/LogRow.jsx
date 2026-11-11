@@ -41,6 +41,19 @@ export function isReplayableLog(log) {
 }
 
 /**
+ * The outcome of the breakpoints an entry went through, one phase per line.
+ *
+ * @param {{ request?: string, response?: string }} breakpoint
+ * @returns {string}
+ */
+export function describeBreakpoint(breakpoint) {
+  return ['request', 'response']
+    .filter(phase => typeof breakpoint[phase] === 'string')
+    .map(phase => `${phase === 'request' ? 'Request' : 'Response'}: ${breakpoint[phase]}`)
+    .join(' · ')
+}
+
+/**
  * The "Rewrites" badge with the panel listing the rules that applied; the
  * panel shows on hover and stays open while the badge is pinned by a click.
  *
@@ -223,6 +236,13 @@ function LogRow({
                   >
                     <span className="px-2 py-1 rounded text-xs font-medium border bg-cyan-500/10 border-cyan-500/40 text-cyan-300">
                       REPLAY
+                    </span>
+                  </Tooltip>
+                )}
+                {log.breakpoint && typeof log.breakpoint === 'object' && (
+                  <Tooltip title="Breakpoint" description={describeBreakpoint(log.breakpoint)}>
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-amber-500/10 border-amber-500/40 text-amber-300">
+                      BREAKPOINT
                     </span>
                   </Tooltip>
                 )}

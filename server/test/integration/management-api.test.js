@@ -91,6 +91,7 @@ test('GET /api/config exposes the global flags', async () => {
     localResourcesEnabled: true,
     filterRulesEnabled: true,
     blockedRulesEnabled: true,
+    breakpointsEnabled: true,
     filteredRequestCount: 0,
     filterMode: 'ignore'
   })
