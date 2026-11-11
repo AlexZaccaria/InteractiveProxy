@@ -2,9 +2,17 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '../../components/Modal'
 import { useModal } from '../../hooks/useModal'
 import { ApiError } from '../../lib/api'
-import { useBlockedRuleMutation, useBlockedRules, useResourceMutations } from '../../lib/queries'
+import { copyText } from '../../lib/clipboard'
+import {
+  fetchCurlCommand,
+  useBlockedRuleMutation,
+  useBlockedRules,
+  useResourceMutations
+} from '../../lib/queries'
+import CurlCommandDialog from './CurlCommandDialog'
 import LogFilters from './LogFilters'
 import LogList from './LogList'
+import ReplayDialog from './ReplayDialog'
 import { downloadLogsExport } from './exportLogs'
 import { useLogFilters } from './useLogFilters'
 import { useLogList } from './useLogList'
@@ -59,6 +67,18 @@ function RequestLogsInner({
   const [pinnedRewritesId, setPinnedRewritesId] = useState(null)
   // Entries marked for export; a client-side flag that does not persist.
   const [exportSelection, setExportSelection] = useState(() => new Set())
+  // The entry whose replay form is open, and the curl command shown when
+  // the clipboard is not available; the copied state lasts two seconds.
+  const [replayLog, setReplayLog] = useState(/** @type {LogSummary | null} */ (null))
+  const [curlCommand, setCurlCommand] = useState(/** @type {string | null} */ (null))
+  const [curlCopiedId, setCurlCopiedId] = useState(/** @type {string | null} */ (null))
+  const curlTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null))
+  useEffect(
+    () => () => {
+      if (curlTimerRef.current) clearTimeout(curlTimerRef.current)
+    },
+    []
+  )
 
   const list = useLogList({
     filters,
@@ -84,6 +104,28 @@ function RequestLogsInner({
   )
   const blockedMutation = useBlockedRuleMutation()
   const { create: createResource } = useResourceMutations()
+
+  const copyCurl = useCallback(
+    /** @param {LogSummary} log */
+    async log => {
+      try {
+        const { command } = await fetchCurlCommand(log.id)
+        if (await copyText(command)) {
+          setCurlCopiedId(String(log.id))
+          if (curlTimerRef.current) clearTimeout(curlTimerRef.current)
+          curlTimerRef.current = setTimeout(() => setCurlCopiedId(null), 2000)
+        } else {
+          setCurlCommand(command)
+        }
+      } catch (error) {
+        showAlert('Copy as cURL', error instanceof Error ? error.message : String(error), 'error')
+      }
+    },
+    [showAlert]
+  )
+
+  const closeReplay = useCallback(() => setReplayLog(null), [])
+  const closeCurl = useCallback(() => setCurlCommand(null), [])
 
   const isBlocked = useCallback(
     /** @param {string} targetUrl */
@@ -220,6 +262,8 @@ function RequestLogsInner({
         inputPlaceholder={modalState.inputPlaceholder}
         examples={modalState.examples}
       />
+      {replayLog && <ReplayDialog log={replayLog} onClose={closeReplay} />}
+      {curlCommand !== null && <CurlCommandDialog command={curlCommand} onClose={closeCurl} />}
 
       <div className="space-y-4">
         <LogFilters
@@ -259,6 +303,9 @@ function RequestLogsInner({
           onToggleBlock={toggleBlockUrl}
           onToggleRewritesPin={toggleRewritesPin}
           onReplaceResource={replaceResource}
+          onReplay={setReplayLog}
+          onCopyCurl={copyCurl}
+          curlCopiedId={curlCopiedId}
           onCreateJsonPathRule={onCreateJsonPathRule}
         />
       </div>

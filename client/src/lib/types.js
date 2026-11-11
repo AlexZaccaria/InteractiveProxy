@@ -166,6 +166,9 @@
  * @property {string} [fileType]
  * @property {string} [localResource]
  * @property {string} [error]
+ * @property {string} [replayOf] Id of the entry this request repeated.
+ * @property {boolean} [isConnectionLog]
+ * @property {boolean} [isWebSocketSummary]
  * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
  * @property {number} [requestBytes]
  * @property {number} [responseBytes]
@@ -236,6 +239,49 @@
  * @property {Record<string, number>} errorBuckets
  * @property {number} totalErrors
  * @property {Array<{ host: string, count: number, avgDuration: number }>} hostStats
+ */
+
+/**
+ * The replay form of an entry (`GET /api/logs/:id/replay`).
+ *
+ * @typedef {Object} ReplayDescription
+ * @property {string} method
+ * @property {string} url
+ * @property {Record<string, string>} headers
+ * @property {string | null} body The body as text, when it is text.
+ * @property {string | null} bodyBase64 The body in base64, when it is binary.
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {boolean} bodyCaptured
+ * @property {boolean} bodyExpected The original request carried a body.
+ * @property {number} bodyNotKeptBytes Size of a body over the retention limit, else 0.
+ */
+
+/**
+ * The edits sent with `POST /api/logs/:id/replay`.
+ *
+ * @typedef {Object} ReplayOverrides
+ * @property {string} [method]
+ * @property {string} [url]
+ * @property {Record<string, string>} [headers]
+ * @property {string | null} [body]
+ * @property {string | null} [bodyBase64]
+ */
+
+/**
+ * @typedef {Object} ReplayResult
+ * @property {boolean} success
+ * @property {number} statusCode
+ * @property {number} responseBytes
+ * @property {number} durationMs
+ * @property {string | number | null} logId
+ */
+
+/**
+ * @typedef {Object} CurlCommand
+ * @property {string} command
+ * @property {boolean} bodyIncluded
+ * @property {'text' | 'base64' | null} bodyEncoding
  */
 
 export {}

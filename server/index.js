@@ -125,6 +125,7 @@ const { createHttpFlow } = require('./src/proxy/http-flow')
 const { createWebSocketProxy } = require('./src/proxy/websocket')
 const { createMitmHandler } = require('./src/proxy/mitm')
 const { createApiRouter } = require('./src/api')
+const { createReplayRunner } = require('./src/logs/replay')
 const { createApp } = require('./src/app')
 const { createProxyServer } = require('./src/server')
 
@@ -307,6 +308,7 @@ const httpFlow = createHttpFlow({
   stats: streamedSizeStats,
   port: PORT
 })
+const replayRunner = createReplayRunner({ port: PORT, host: HOST, logStore })
 const apiRouter = createApiRouter({
   logStore,
   stats,
@@ -317,7 +319,8 @@ const apiRouter = createApiRouter({
   resourceStore,
   storageDir: STORAGE_DIR,
   uiOrigins: UI_ORIGINS,
-  bypassCounter
+  bypassCounter,
+  replay: replayRunner
 })
 const app = createApp({
   uiOrigins: UI_ORIGINS,

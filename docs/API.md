@@ -19,6 +19,8 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
 | `GET /api/logs` | Page of log entries |
 | `GET /api/logs/export` | Raw entries of the current filter |
 | `GET /api/logs/:id` | One entry with bodies |
+| `GET /api/logs/:id/replay`, `POST /api/logs/:id/replay` | The replay form of an entry, and the replay itself |
+| `GET /api/logs/:id/curl` | The entry as a curl command |
 | `DELETE /api/logs` | Clear the log window and the derived counters |
 | `GET /api/dashboard` | Counters, performance aggregates, routes |
 | `GET /api/audit` | Upstream errors by category and per-host latency |
@@ -79,7 +81,7 @@ Entries whose URL matches a blocked rule pattern are never returned.
 { "items": [ ... ], "total": 12, "hasMore": false, "offset": 0, "limit": 50 }
 ```
 
-An item carries `id`, `timestamp`, `method`, `url`, `fullUrl`, `source`, `statusCode`, `responseSize`, `fileType`, `targetUrl`, `localResource`, `error`, `direction`, the timings (`upstreamDurationMs`, `totalDurationMs`, `proxyOverheadMs`, `requestStartTs`), the sizes (`requestBytes`, `responseBytes`), `headers`, `responseHeaders`, `requestBodySummary`, `responseBodySummary`, `rewrites` (the rules that applied, with `id`, `name`, `kind`, `target`, `phase`), `connectSummary`, `wsSummary` and the WebSocket fields (`connectionId`, `direction`, `isConnectionLog`, `isWebSocketSummary`). The full view adds `body`, `responseBody`, the JSON views before and after rewriting (`requestBodyJson`, `requestBodyJsonBefore`, `responseBodyJson`, `responseBodyJsonBefore`, `wsBodyJsonBefore`, `wsBodyJsonAfter`), the text views (`requestBodyTextBefore` / `After`, `responseBodyTextBefore` / `After`), `originalBody`, the raw previews and the decoded Connect frames (`connectRequest`, `connectResponse`).
+An item carries `id`, `timestamp`, `method`, `url`, `fullUrl`, `source`, `statusCode`, `responseSize`, `fileType`, `targetUrl`, `localResource`, `error`, `direction`, the timings (`upstreamDurationMs`, `totalDurationMs`, `proxyOverheadMs`, `requestStartTs`), the sizes (`requestBytes`, `responseBytes`), `headers`, `responseHeaders`, `requestBodySummary`, `responseBodySummary`, `rewrites` (the rules that applied, with `id`, `name`, `kind`, `target`, `phase`), `replayOf` (the id of the entry a replay repeated), `connectSummary`, `wsSummary` and the WebSocket fields (`connectionId`, `direction`, `isConnectionLog`, `isWebSocketSummary`). The full view adds `body`, `responseBody`, the JSON views before and after rewriting (`requestBodyJson`, `requestBodyJsonBefore`, `responseBodyJson`, `responseBodyJsonBefore`, `wsBodyJsonBefore`, `wsBodyJsonAfter`), the text views (`requestBodyTextBefore` / `After`, `responseBodyTextBefore` / `After`), `originalBody`, the raw previews and the decoded Connect frames (`connectRequest`, `connectResponse`).
 
 ### `GET /api/logs/export`
 
@@ -88,6 +90,39 @@ Same filters as `GET /api/logs`, no pagination; `ids=a,b,c` restricts the export
 ### `GET /api/logs/:id`
 
 The full view of one entry; `404 {"error": "Log not found"}` when the id is not in the window.
+
+### `GET /api/logs/:id/replay`
+
+The request an entry would send again:
+
+```json
+{
+  "method": "POST", "url": "https://api.example.com/items",
+  "headers": { "content-type": "application/json", "x-custom": "a" },
+  "body": "{\"name\":\"one\"}", "bodyBase64": null, "bodyIsText": true, "bodySize": 14,
+  "bodyCaptured": true, "bodyExpected": true, "bodyNotKeptBytes": 0
+}
+```
+
+`headers` are the request headers of the entry without the ones a client must not repeat (`host`, `content-length`, `transfer-encoding`, `expect`, the hop-by-hop ones, `proxy-authorization`, `x-target-url`). The body is the one the client sent, before any rule: `body` as text when it is text, `bodyBase64` otherwise. Bodies are kept up to `PROXY_REPLAY_BODY_LIMIT_BYTES` (256 KiB by default); a larger body has `bodyCaptured: false` and its size in `bodyNotKeptBytes`, and so has a request forwarded without inspection by a filter rule (`bodyNotKeptBytes: 0`). `404` when the id is not in the window, `400 {"error": "This entry cannot be replayed"}` for WebSocket connections, messages and summaries.
+
+### `POST /api/logs/:id/replay`
+
+Sends the entry again through the proxy, with the edits of the JSON body: `method` (one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS), `url` (`http` or `https`), `headers` (replaces the whole set; the headers listed above are dropped again), `body` (a text body; `null` sends none) or `bodyBase64` (a binary body). Fields that are absent keep the values of the entry. The request takes the same path as the original one: blocked and filter rules, local resources, rewrites and logging, so with Interactive mode on the response is a new entry whose `replayOf` is the id of the replayed one. Answers:
+
+```json
+{ "success": true, "statusCode": 200, "responseBytes": 1297, "durationMs": 312, "logId": "1762860123456.7" }
+```
+
+`logId` is `null` when logging is off. `400` for an invalid edit, `502 {"error": "Replay failed: …"}` when the request could not be completed.
+
+### `GET /api/logs/:id/curl`
+
+The entry as a curl command, one option per line: `-X` for methods other than GET (`-I` for HEAD), one `-H` per header, the body as `--data-raw` when it is text and, when it is binary, piped from base64 into `--data-binary @-`. Quoting is for a POSIX shell (Git Bash, WSL, macOS, Linux). `viaProxy=1` adds `-x` with the proxy's address.
+
+```json
+{ "command": "curl -X POST 'https://api.example.com/items' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"name\":\"one\"}'", "bodyIncluded": true, "bodyEncoding": "text" }
+```
 
 ### `DELETE /api/logs`
 

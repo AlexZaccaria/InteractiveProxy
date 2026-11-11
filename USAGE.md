@@ -43,7 +43,9 @@ Shortcuts are ignored while a text field has the focus (except `Esc`), while a d
 
 ### Requests
 
-The list is chronological: the oldest entry of the in-memory window is first and new traffic is appended at the end. Each entry shows method, source (`proxied`, `mitm`, `websocket`, `local`, `blocked`, `error`, `direct`, `tunnel`), status, file type and URL; expanding it loads headers, bodies, Connect frames and WebSocket messages, with before/after views when a rule rewrote something. The buttons on an entry mark it for export, create a local resource from its response, or add its URL to the blocked rules.
+The list is chronological: the oldest entry of the in-memory window is first and new traffic is appended at the end. Each entry shows method, source (`proxied`, `mitm`, `websocket`, `local`, `blocked`, `error`, `direct`, `tunnel`), status, file type and URL; expanding it loads headers, bodies, Connect frames and WebSocket messages, with before/after views when a rule rewrote something. The buttons on an entry replay it, copy it as a curl command, mark it for export, create a local resource from its response, or add its URL to the blocked rules.
+
+Replay opens a form with the method, the URL, the headers (one per line) and the body of the request, as the client sent them; Send puts the edited request through the proxy again, so the rules apply and the response is logged as a new entry marked REPLAY. The body is kept for this purpose up to `PROXY_REPLAY_BODY_LIMIT_BYTES` per request (256 KiB by default); a larger body, or the body of a request forwarded without inspection by a filter rule, is not available and the form says so. A binary body is sent as captured unless a text body is typed in its place. "Copy as cURL" puts on the clipboard a command for a POSIX shell (Git Bash, WSL, macOS, Linux) with the same method, URL, headers and body; when the clipboard is not available, the command is shown for a manual copy.
 
 Search fields:
 
@@ -121,6 +123,7 @@ A response is piped to the client as it arrives, instead of being buffered and d
 | `PROXY_UPSTREAM_H2` | `false` | Negotiate HTTP/2 with TLS upstreams that offer it (ALPN). Off by default because HTTP/2 changes what the upstream receives: `Host` becomes `:authority`, header names are lower-cased and connection-specific headers disappear, so the upstream no longer sees the request as the client sent it. The client side of the proxy is always HTTP/1.1 |
 | `PROXY_STREAM_UNINSPECTED_RESPONSES` | `true` | Enable [streaming](#streaming); `false` buffers every response |
 | `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` | With Interactive mode on, responses declaring a larger `content-length` are streamed; `0` never streams by size alone |
+| `PROXY_REPLAY_BODY_LIMIT_BYTES` | `262144` | Request bodies up to this size are kept on their log entry for replay and "Copy as cURL" |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED` | `true` | Apply edit rules to HTTPS traffic that filter rules mark as direct; `false` forwards it untouched |
 | `PROXY_STRICT_TLS` | `false` | Verify upstream TLS certificates |
 | `PROXY_STRICT_TLS_CA_FILE` | empty | Additional PEM bundle trusted when `PROXY_STRICT_TLS` is on |

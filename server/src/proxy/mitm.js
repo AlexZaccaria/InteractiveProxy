@@ -21,9 +21,10 @@ const http = require('http')
 const https = require('https')
 const tls = require('tls')
 const { URL } = require('url')
-const { MITM_BYPASS_REWRITES_ENABLED } = require('../../config')
+const { MITM_BYPASS_REWRITES_ENABLED, REPLAY_BODY_MAX_BYTES } = require('../../config')
 const { getCA, generateCertForHost } = require('../tls/ca')
 const { createLruCache } = require('../util/lru')
+const { retainRequestBody } = require('../logs/replay')
 const { createRawTunnel } = require('./tunnel')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const { STREAMED_BODY_MARKER, shouldStreamResponse, pipeUpstreamBody } = require('./streaming')
@@ -568,6 +569,9 @@ function createMitmHandler({
         clientRes.end()
         return
       }
+
+      // The client's bytes are kept for a replay before any rule touches them.
+      if (logEntry) retainRequestBody(logEntry, body, REPLAY_BODY_MAX_BYTES)
 
       if (body.length > 0) {
         const { buffer: rewrittenBody } = processRequestBodyWithRewrites({

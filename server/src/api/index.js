@@ -42,6 +42,7 @@ const { createEventsRoutes } = require('./events')
  * @property {string} storageDir
  * @property {string[]} uiOrigins Browser origins allowed to mutate through the API.
  * @property {BypassCounter} bypassCounter
+ * @property {import('../logs/replay').ReplayRunner} replay Sends replays through the proxy.
  * @property {number} [eventsKeepAliveMs] Keep-alive interval of the `/api/events` stream.
  */
 
@@ -89,6 +90,7 @@ function createApiRouter(deps) {
     storageDir,
     uiOrigins,
     bypassCounter,
+    replay,
     eventsKeepAliveMs
   } = deps
 
@@ -97,7 +99,7 @@ function createApiRouter(deps) {
 
   router.use(createCrossSiteGuard(uiOrigins))
 
-  router.use(createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCounter }))
+  router.use(createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCounter, replay }))
   router.use(createConfigRoutes({ configStore, ruleStore, router: proxyRouter, bypassCounter }))
   router.use(createSystemRoutes())
   router.use(createResourcesRoutes({ resourceStore, storageDir, upload }))

@@ -10,7 +10,7 @@
  */
 
 const { WS_MAX_TEXT_BYTES } = require('../../config')
-const { sanitizeAndStripIdentifyingHeaders } = require('../proxy/headers')
+const { REPLAY_MARKER_HEADER, sanitizeAndStripIdentifyingHeaders } = require('../proxy/headers')
 const { httpUrlToWebSocketUrl } = require('../proxy/websocket-url')
 const { tryParseWebSocketJson } = require('./preview')
 const { classifyUpstreamError } = require('./stats')
@@ -69,9 +69,23 @@ function createLogEntry({
 }) {
   const ts =
     Number.isFinite(requestStart) && typeof requestStart === 'number' ? requestStart : Date.now()
-  const processedHeaders = sanitizeHeaders
+  let processedHeaders = sanitizeHeaders
     ? sanitizeAndStripIdentifyingHeaders(headers || {})
     : headers || {}
+
+  // A replay sent by the management API carries the id of the entry it
+  // repeats and a token; they are recorded on the entry, not logged as a
+  // header.
+  const replayMarker = headers ? headers[REPLAY_MARKER_HEADER] : undefined
+  /** @type {string | undefined} */
+  let replayOf
+  /** @type {string | undefined} */
+  let replayToken
+  if (replayMarker !== undefined) {
+    ;[replayOf, replayToken] = String(replayMarker).split(';')
+    processedHeaders = { ...processedHeaders }
+    delete processedHeaders[REPLAY_MARKER_HEADER]
+  }
 
   const base = {
     id: ts + Math.random(),
@@ -80,7 +94,8 @@ function createLogEntry({
     url,
     fullUrl,
     source,
-    headers: processedHeaders
+    headers: processedHeaders,
+    ...(replayOf !== undefined && { replayOf, replayToken })
   }
 
   if (wsOptions) {

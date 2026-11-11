@@ -14,7 +14,7 @@
     "start": "node server/index.js",
     "build": "npm run build --workspace client",
     "lint": "eslint .",
-    "lint:server": "eslint server scripts *.js",
+    "lint:server": "eslint server scripts",
     "lint:client": "eslint client/src",
     "typecheck": "tsc -p server/jsconfig.json && tsc -p client/jsconfig.json",
     "test": "npm test --workspace server",

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Replay of a logged request from the Requests tab: a form with the method, URL, headers and body, sent again through the proxy; the new entry carries `replayOf` and a REPLAY badge. API: `GET /api/logs/:id/replay` describes the request, `POST /api/logs/:id/replay` sends it with the edits. Request bodies are kept for it up to `PROXY_REPLAY_BODY_LIMIT_BYTES` (256 KiB by default).
+- "Copy as cURL" on every HTTP entry, from `GET /api/logs/:id/curl` (`viaProxy=1` for a command through the proxy).
+
+### Internal
+
+- `npm run lint:server` no longer fails on the empty root pattern.
+
 ## 2.0.0 (2026-11-08)
 
 ### Fixed

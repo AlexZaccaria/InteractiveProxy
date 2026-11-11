@@ -10,6 +10,14 @@ const express = require('express')
 const { safeString } = require('../util/strings')
 const { filterLogsCore, getFileTypeFromLogEntry } = require('../logs/search')
 const { buildClientLogView, filterLogsForApiRequest } = require('../logs/views')
+const {
+  ReplayInputError,
+  isReplayable,
+  buildReplayRequest,
+  describeReplayRequest,
+  applyReplayOverrides,
+  buildCurlCommand
+} = require('../logs/replay')
 
 /**
  * @typedef {object} LogsRoutesDeps
@@ -18,14 +26,82 @@ const { buildClientLogView, filterLogsForApiRequest } = require('../logs/views')
  * @property {import('../logs/suggestions').SuggestionTracker} suggestions
  * @property {import('../rules/store').RuleStore} ruleStore
  * @property {import('./index').BypassCounter} bypassCounter
+ * @property {import('../logs/replay').ReplayRunner} replay
  */
 
 /**
  * @param {LogsRoutesDeps} deps
  * @returns {import('express').Router}
  */
-function createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCounter }) {
+function createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCounter, replay }) {
   const router = express.Router()
+
+  /**
+   * The entry of `/logs/:id/...` when it exists and can be replayed; answers
+   * the request otherwise.
+   *
+   * @param {import('express').Request} req
+   * @param {import('express').Response} res
+   * @returns {import('../logs/search').LogEntry | null}
+   */
+  function findReplayableLog(req, res) {
+    const log = logStore.findById(req.params.id)
+    if (!log) {
+      res.status(404).json({ error: 'Log not found' })
+      return null
+    }
+    if (!isReplayable(log)) {
+      res.status(400).json({ error: 'This entry cannot be replayed' })
+      return null
+    }
+    return log
+  }
+
+  router.get('/logs/:id/replay', (req, res) => {
+    const log = findReplayableLog(req, res)
+    if (!log) return
+    try {
+      res.json(describeReplayRequest(log))
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to build the replay request' })
+    }
+  })
+
+  router.post('/logs/:id/replay', async (req, res) => {
+    const log = findReplayableLog(req, res)
+    if (!log) return
+
+    let request
+    try {
+      request = applyReplayOverrides(buildReplayRequest(log), req.body)
+    } catch (error) {
+      if (error instanceof ReplayInputError) {
+        return res.status(400).json({ error: error.message })
+      }
+      return res.status(500).json({ error: 'Failed to build the replay request' })
+    }
+
+    try {
+      const result = await replay.send(log, request)
+      res.json({ success: true, ...result })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      res.status(502).json({ error: `Replay failed: ${message}` })
+    }
+  })
+
+  router.get('/logs/:id/curl', (req, res) => {
+    const log = findReplayableLog(req, res)
+    if (!log) return
+    try {
+      const viaProxy = ['1', 'true', 'yes'].includes(safeString(req.query.viaProxy).toLowerCase())
+      res.json(
+        buildCurlCommand(buildReplayRequest(log), { proxyUrl: viaProxy ? replay.proxyUrl : null })
+      )
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to build the curl command' })
+    }
+  })
 
   router.get('/logs', (req, res) => {
     try {

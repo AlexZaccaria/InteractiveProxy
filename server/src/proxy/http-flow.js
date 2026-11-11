@@ -18,6 +18,8 @@
 const { URL } = require('url')
 const { safeString } = require('../util/strings')
 const { logDebug } = require('../util/logger')
+const { REPLAY_BODY_MAX_BYTES } = require('../../config')
+const { retainRequestBody } = require('../logs/replay')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const {
   STREAMED_BODY_MARKER,
@@ -503,6 +505,9 @@ function createHttpFlow({
           clientIp
         })
       : null
+
+    // The client's bytes are kept for a replay before any rule touches them.
+    if (logEntry && req.rawBody) retainRequestBody(logEntry, req.rawBody, REPLAY_BODY_MAX_BYTES)
 
     if (req.rawBody) {
       const { buffer: rewrittenBuffer } = processRequestBodyWithRewrites({

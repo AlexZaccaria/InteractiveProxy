@@ -47,7 +47,12 @@ export const queryKeys = {
    * The full view of one entry (`features/logs/useLogDetail.js`).
    * @param {string | number} id
    */
-  logDetail: id => ['logs', 'detail', String(id)]
+  logDetail: id => ['logs', 'detail', String(id)],
+  /**
+   * The replay form of one entry (`features/logs/ReplayDialog.jsx`).
+   * @param {string | number} id
+   */
+  logReplay: id => ['logs', 'replay', String(id)]
 }
 
 /**
@@ -364,4 +369,51 @@ export function useClearLogs() {
         client.invalidateQueries({ queryKey: queryKeys.editRuleUsage })
       ])
   })
+}
+
+/** @typedef {import('./types').ReplayDescription} ReplayDescription */
+/** @typedef {import('./types').ReplayOverrides} ReplayOverrides */
+/** @typedef {import('./types').ReplayResult} ReplayResult */
+/** @typedef {import('./types').CurlCommand} CurlCommand */
+
+/**
+ * The replay form of an entry, fetched when the dialog opens and not kept
+ * afterwards (the entry may have been evicted in the meantime).
+ *
+ * @param {string | number} id
+ * @returns {import('@tanstack/react-query').UseQueryResult<ReplayDescription>}
+ */
+export function useReplayForm(id) {
+  return useQuery({
+    queryKey: queryKeys.logReplay(id),
+    queryFn: ({ signal }) =>
+      apiGet(`/api/logs/${encodeURIComponent(String(id))}/replay`, { signal }),
+    staleTime: 0,
+    gcTime: 0
+  })
+}
+
+/**
+ * Sends an entry again through the proxy. The new entry reaches the list
+ * through the event stream; the dashboard is refetched for the counters.
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult<ReplayResult, Error, { id: string | number, request: ReplayOverrides }>}
+ */
+export function useReplayLog() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, request }) =>
+      apiPost(`/api/logs/${encodeURIComponent(String(id))}/replay`, request),
+    onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.dashboard })
+  })
+}
+
+/**
+ * The curl command that repeats an entry.
+ *
+ * @param {string | number} id
+ * @returns {Promise<CurlCommand>}
+ */
+export function fetchCurlCommand(id) {
+  return apiGet(`/api/logs/${encodeURIComponent(String(id))}/curl`)
 }
