@@ -14,7 +14,8 @@ export const EXPORT_LIMIT = 5000
 export const SOURCE_OPTIONS = [
   { key: 'proxied', label: 'HTTP' },
   { key: 'mitm', label: 'HTTPS' },
-  { key: 'websocket', label: 'WebSocket' }
+  { key: 'websocket', label: 'WebSocket' },
+  { key: 'imported', label: 'Imported' }
 ]
 
 /** @type {string[]} */
@@ -156,6 +157,15 @@ export function migrateStoredSources(saved) {
   const filtered = saved.filter(source => DEFAULT_SOURCES.includes(source))
   if ((saved.includes('tunnel') || saved.includes('direct')) && !filtered.includes('websocket')) {
     filtered.push('websocket')
+  }
+  // A list saved before the `imported` source existed, with every source of
+  // that time selected, keeps every source selected.
+  const sourcesBeforeImport = ['proxied', 'mitm', 'websocket']
+  if (
+    !filtered.includes('imported') &&
+    sourcesBeforeImport.every(source => filtered.includes(source))
+  ) {
+    filtered.push('imported')
   }
   return filtered.length > 0 ? filtered : [...DEFAULT_SOURCES]
 }

@@ -18,6 +18,9 @@ const {
   applyReplayOverrides,
   buildCurlCommand
 } = require('../logs/replay')
+const { buildHar, parseHar } = require('../logs/har')
+const { REPLAY_BODY_MAX_BYTES } = require('../../config')
+const { version: PROXY_VERSION } = require('../../package.json')
 
 /**
  * @typedef {object} LogsRoutesDeps
@@ -141,6 +144,11 @@ function createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCount
         }
       }
 
+      if (safeString(query.format).toLowerCase() === 'har') {
+        res.json(buildHar(effective, { version: PROXY_VERSION }))
+        return
+      }
+
       const items = effective.map(log => ({
         ...log,
         fileType: log && log.fileType ? log.fileType : getFileTypeFromLogEntry(log)
@@ -150,6 +158,21 @@ function createLogsRoutes({ logStore, stats, suggestions, ruleStore, bypassCount
     } catch (error) {
       res.status(500).json({ error: 'Failed to export logs' })
     }
+  })
+
+  router.post('/logs/import', (req, res) => {
+    let parsed
+    try {
+      parsed = parseHar(req.body, {
+        maxEntries: logStore.capacity,
+        retainBodyBytes: REPLAY_BODY_MAX_BYTES
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return res.status(400).json({ error: message })
+    }
+    for (const entry of parsed.entries) logStore.add(entry)
+    res.json({ success: true, imported: parsed.entries.length, skipped: parsed.skipped })
   })
 
   router.get('/logs/:id', (req, res) => {

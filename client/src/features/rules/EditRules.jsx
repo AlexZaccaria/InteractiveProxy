@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Edit3, Plus } from 'lucide-react'
+import { Download, Edit3, Plus, Upload } from 'lucide-react'
 import {
   useEditRuleMutations,
   useEditRulePresets,
@@ -12,6 +12,7 @@ import HowItWorks from './HowItWorks'
 import RuleForm from './RuleForm'
 import RuleList from './RuleList'
 import { doesPresetMatchRuleCriteria } from './presets'
+import { describeImport, downloadRulesExport, importRulesFile } from './rulesTransfer'
 import { buildPresetRule, buildRulePayload, useRuleForm, validateRuleForm } from './useRuleForm'
 import Tooltip from '../../components/Tooltip'
 
@@ -153,6 +154,27 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
   }
 
   /** Persist the form, creating or updating a rule, then close it. */
+  const handleExportRules = async () => {
+    try {
+      await downloadRulesExport()
+    } catch (error) {
+      showAlert('Export rules', error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
+  /** @param {import('react').ChangeEvent<HTMLInputElement>} event */
+  const handleImportRules = async event => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      const result = await importRulesFile(file)
+      showAlert('Import rules', describeImport(result))
+    } catch (error) {
+      showAlert('Import rules', error instanceof Error ? error.message : String(error), 'error')
+    }
+  }
+
   const handleSave = async () => {
     const validationError = validateRuleForm(formData)
     if (validationError) {
@@ -305,14 +327,46 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
               </p>
             </div>
           </div>
-          <button
-            onClick={form.startCreate}
-            disabled={form.isOpen}
-            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 hover:text-fg disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50 transition-colors text-xs font-medium"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Rule</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Tooltip
+              title="Export rules"
+              description="Download every rule kind (edit rules and presets, blocked, filter and breakpoint rules) as one JSON file."
+            >
+              <button
+                type="button"
+                onClick={handleExportRules}
+                className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-edge text-fg-body hover:bg-surface-highlight transition-colors text-xs"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export rules</span>
+              </button>
+            </Tooltip>
+            <Tooltip
+              title="Import rules"
+              description="Add the rules of a file exported here; a rule with the id of an existing one replaces it."
+            >
+              <label className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-edge text-fg-body hover:bg-surface-highlight cursor-pointer transition-colors text-xs">
+                <Upload className="w-4 h-4" />
+                <span>Import rules</span>
+                <input
+                  type="file"
+                  name="import-rules"
+                  accept=".json,application/json"
+                  className="hidden"
+                  aria-label="Import rules file"
+                  onChange={handleImportRules}
+                />
+              </label>
+            </Tooltip>
+            <button
+              onClick={form.startCreate}
+              disabled={form.isOpen}
+              className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 hover:text-fg disabled:bg-surface-highlight disabled:text-fg-faint disabled:border-fg-dim/50 transition-colors text-xs font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Rule</span>
+            </button>
+          </div>
         </div>
       </div>
 

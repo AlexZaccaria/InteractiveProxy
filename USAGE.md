@@ -47,6 +47,8 @@ The list is chronological: the oldest entry of the in-memory window is first and
 
 Replay opens a form with the method, the URL, the headers (one per line) and the body of the request, as the client sent them; Send puts the edited request through the proxy again, so the rules apply and the response is logged as a new entry marked REPLAY. The body is kept for this purpose up to `PROXY_REPLAY_BODY_LIMIT_BYTES` per request (256 KiB by default); a larger body, or the body of a request forwarded without inspection by a filter rule, is not available and the form says so. A binary body is sent as captured unless a text body is typed in its place. "Copy as cURL" puts on the clipboard a command for a POSIX shell (Git Bash, WSL, macOS, Linux) with the same method, URL, headers and body; when the clipboard is not available, the command is shown for a manual copy.
 
+The two buttons above the list exchange HTTP Archives: "Export HAR" downloads the current view (or the entries marked for export) as a HAR 1.2 file for other tools, "Import HAR" adds the entries of a HAR file to the window with the source `imported`, bodies and timings included, so that they can be searched and replayed like captured traffic. WebSocket entries have no HAR form and stay out of the export.
+
 Search fields:
 
 - URL search: terms separated by `;` must all match (AND); a term starting with `!` must not match (NOT); groups separated by `||` are alternatives (OR). It looks at the URL, the method, the target URL and the local resource name. Example: `!facebook; !scontent; api`.
@@ -79,7 +81,7 @@ URL patterns use the same semantics for every rule kind: a full URL matches by h
 
 Rules apply in file order and each rule sees the output of the previous one. A rule whose regular expression does not compile is skipped with a warning. Text rules apply to HTTP bodies with a textual content type, to headers, to each frame of a Connect envelope (including printable strings inside Protobuf messages) and to WebSocket text frames. JSONPath rules apply to `application/json` bodies, to decoded Protobuf messages (re-encoded afterwards) and to the JSON part of WebSocket frames, Socket.IO prefixes preserved. A field that contains JSON as a string stays a string.
 
-The tab also manages presets (saved rule templates), shows how many logged entries each rule touched, and receives rules created from the Requests tab: clicking a key in a Connect frame opens the form pre-filled with the URL pattern, the JSON path and the current value.
+The tab also manages presets (saved rule templates), shows how many logged entries each rule touched, and receives rules created from the Requests tab: clicking a key in a Connect frame opens the form pre-filled with the URL pattern, the JSON path and the current value. "Export rules" downloads every rule kind (edit rules and presets, blocked, filter and breakpoint rules) as one JSON file; "Import rules" adds the rules of such a file, replacing the ones whose id already exists (the API also offers a mode that replaces everything).
 
 ### Local
 

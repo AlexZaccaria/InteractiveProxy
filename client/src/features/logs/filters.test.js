@@ -44,7 +44,7 @@ function storageOf(entries) {
 describe('filtersToQuery', () => {
   it('sends the lists and the WebSocket flag, omitting empty searches and unset flags', () => {
     expect(filtersToQuery(defaults)).toEqual({
-      sources: 'proxied,mitm,websocket',
+      sources: 'proxied,mitm,websocket,imported',
       methods: 'GET,POST,PUT,DELETE,PATCH',
       fileTypes: 'json,html,css,js,image,video,audio,font,other',
       showWsConnections: 'false'
@@ -129,6 +129,13 @@ describe('stored filters', () => {
     expect(migrateStoredSources(['proxied', 'tunnel'])).toEqual(['proxied', 'websocket'])
     expect(migrateStoredSources(['direct', 'websocket'])).toEqual(['websocket'])
     expect(migrateStoredSources(['mitm'])).toEqual(['mitm'])
+    expect(migrateStoredSources(['proxied', 'mitm', 'websocket'])).toEqual([
+      'proxied',
+      'mitm',
+      'websocket',
+      'imported'
+    ])
+    expect(migrateStoredSources(['proxied', 'imported'])).toEqual(['proxied', 'imported'])
     expect(migrateStoredSources(['bogus'])).toEqual(DEFAULT_SOURCES)
     expect(readStoredSources(storageOf({ [STORAGE_KEYS.sources]: '["tunnel"]' }))).toEqual([
       'websocket'

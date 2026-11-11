@@ -20,7 +20,7 @@ describe('useLogFilters', () => {
       responseSearch: '',
       requestRewrittenOnly: false,
       responseRewrittenOnly: false,
-      sources: ['proxied', 'mitm', 'websocket'],
+      sources: ['proxied', 'mitm', 'websocket', 'imported'],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
       fileTypes: ['json', 'html', 'css', 'js', 'image', 'video', 'audio', 'font', 'other'],
       showWsConnections: false
@@ -87,7 +87,7 @@ describe('useLogFilters', () => {
     act(() => result.current.toggleMethod('HEAD'))
     expect(result.current.filters.methods).toEqual(['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'])
     act(() => result.current.toggleSource('mitm'))
-    expect(result.current.filters.sources).toEqual(['proxied', 'websocket'])
+    expect(result.current.filters.sources).toEqual(['proxied', 'websocket', 'imported'])
     act(() => result.current.toggleFileType('json'))
     expect(result.current.filters.fileTypes).not.toContain('json')
     act(() => result.current.toggleResponseRewrittenOnly())
@@ -95,7 +95,7 @@ describe('useLogFilters', () => {
     act(() => result.current.setShowWsConnections(true))
     expect(result.current.filters.showWsConnections).toBe(true)
     expect(result.current.isDebouncing).toBe(false)
-    expect(localStorage.getItem(STORAGE_KEYS.sources)).toBe('["proxied","websocket"]')
+    expect(localStorage.getItem(STORAGE_KEYS.sources)).toBe('["proxied","websocket","imported"]')
     expect(localStorage.getItem(STORAGE_KEYS.responseRewrittenOnly)).toBe('true')
   })
 })

@@ -17,7 +17,9 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
 | `POST /api/interactive-mode`, `/api/edit-rules-mode`, `/api/local-resources-mode`, `/api/filter-rules-mode`, `/api/blocked-rules-mode` | Set one flag |
 | `GET /api/filter-mode`, `POST /api/filter-mode` | Read or set `ignore` / `focus` |
 | `GET /api/logs` | Page of log entries |
-| `GET /api/logs/export` | Raw entries of the current filter |
+| `GET /api/logs/export` | Raw entries of the current filter, or a HAR archive with `format=har` |
+| `POST /api/logs/import` | Add the entries of a HAR archive to the window |
+| `GET /api/rules/export`, `POST /api/rules/import` | Every rule kind in one file |
 | `GET /api/logs/:id` | One entry with bodies |
 | `GET /api/logs/:id/replay`, `POST /api/logs/:id/replay` | The replay form of an entry, and the replay itself |
 | `GET /api/logs/:id/curl` | The entry as a curl command |
@@ -72,7 +74,7 @@ Body `{"enabled": true}`; `enabled` must be a boolean, otherwise `400 {"error": 
 | `view` | full | `summary` omits bodies and decoded payloads |
 | `search` | empty | URL search: `;` separates terms that must all match, a leading `!` negates a term, `\|\|` separates alternative groups |
 | `requestSearch`, `responseSearch` | empty | Substring searched in the request (or response) headers and body snapshots |
-| `sources` | `proxied,mitm,websocket` | Sources to include; `local`, `blocked` and `error` entries are always included |
+| `sources` | `proxied,mitm,websocket,imported` | Sources to include; `local`, `blocked` and `error` entries are always included |
 | `methods` | `GET,POST,PUT,DELETE,PATCH` | Methods to include; WebSocket entries (`WS`) ignore this filter |
 | `fileTypes` | `json,html,css,js,image,video,audio,font,other` | File types to include |
 | `showWsConnections` | `false` | Include WebSocket connection and summary entries |
@@ -88,7 +90,11 @@ An item carries `id`, `timestamp`, `method`, `url`, `fullUrl`, `source`, `status
 
 ### `GET /api/logs/export`
 
-Same filters as `GET /api/logs`, no pagination; `ids=a,b,c` restricts the export to those entries. Answers `{"items": [...], "total": n}` with the raw entries.
+Same filters as `GET /api/logs`, no pagination; `ids=a,b,c` restricts the export to those entries. Answers `{"items": [...], "total": n}` with the raw entries. With `format=har` the answer is an HTTP Archive 1.2 (`{"log": {"version": "1.2", "creator": {...}, "entries": [...]}}`) of the HTTP entries: WebSocket connections, messages and summaries have no HAR form and are left out. Each entry carries the request (method, URL, headers, cookies, query string, `postData` when the body is held, as text or as base64 with `"comment": "base64"`), the response (status, headers, `content` with the text when the log holds it, `redirectURL`), the timings (`wait` is the upstream time) and a `comment` with the source, `replayOf`, `breakpoint` and `error` when present.
+
+### `POST /api/logs/import`
+
+Body: a HAR document. Its entries with a method and an absolute `http(s)` URL enter the log window with `source: "imported"`, oldest first, with the request body kept for replay (up to `PROXY_REPLAY_BODY_LIMIT_BYTES`) and the JSON bodies parsed for the views; the window's capacity caps the number. Answers `{"success": true, "imported": n, "skipped": n}`; `400 {"error": "Not a HAR document: ..."}` when `log.entries` is missing. The body size limit of the proxy (`PROXY_BODY_LIMIT`, 10 MB by default) applies.
 
 ### `GET /api/logs/:id`
 
@@ -263,6 +269,25 @@ A rule is `{"id", "enabled", "name", "url", "mode": "ignore" | "focus"}`; rules 
 | `POST /api/filters` with `{"action": "add" \| "update" \| "remove", "id", "url", "name", "enabled", "mode"}` | `{"success": true, "bypassRules": [...]}` (all rules, both modes); `400` / `404` as for blocked rules |
 | `GET /api/filters/suggestions?limit=10` (`limit` clamped between 1 and 50) | `{"suggestions": [{"pattern": "<host>", "count", "lastSeen", "paths": [{"path", "count"}]}]}`: hosts of the current log window not covered by a rule, ordered by request count then recency, with up to three paths each |
 | `GET /api/filters/metrics` | `{"totalFiltered": n, "activeRules": m}` |
+
+## Rules export and import
+
+### `GET /api/rules/export`
+
+Every rule kind in one document:
+
+```json
+{
+  "format": "interactive-proxy-rules", "version": 1, "exportedAt": "2026-11-11T10:00:00.000Z",
+  "editRules": [...], "presets": [...], "blockedRules": [...], "filterRules": [...], "breakpointRules": [...]
+}
+```
+
+The lists are the ones the respective endpoints answer; edit rules whose value comes from an uploaded file keep their `valueSource`, the file itself is not included.
+
+### `POST /api/rules/import`
+
+Body: a document of the form above (`format` must be `interactive-proxy-rules`; a `version` above 1 is rejected with `400`), plus `mode`: `merge` (default) keeps the existing rules and, for every list present, replaces the records whose id already exists and adds the others; `replace` keeps only the file's records, also for the lists it leaves empty. Lists that are absent are left alone in `merge` mode. Each list is saved and announced on the event stream as it is today. Answers `{"success": true, "mode": "merge", "counts": {"editRules": n, "presets": n, "blockedRules": n, "filterRules": n, "breakpointRules": n}}`.
 
 ## Breakpoints
 

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Download, Upload } from 'lucide-react'
 import Modal from '../../components/Modal'
 import { useModal } from '../../hooks/useModal'
 import { ApiError } from '../../lib/api'
@@ -13,7 +14,7 @@ import CurlCommandDialog from './CurlCommandDialog'
 import LogFilters from './LogFilters'
 import LogList from './LogList'
 import ReplayDialog from './ReplayDialog'
-import { downloadLogsExport } from './exportLogs'
+import { downloadHarExport, downloadLogsExport, importHarFile } from './exportLogs'
 import { useLogFilters } from './useLogFilters'
 import { useLogList } from './useLogList'
 
@@ -239,6 +240,34 @@ function RequestLogsInner({
     [filters, exportSelection]
   )
 
+  const exportHar = useCallback(async () => {
+    try {
+      await downloadHarExport(filters, Array.from(exportSelection))
+    } catch (error) {
+      showAlert('Export HAR', error instanceof Error ? error.message : String(error), 'error')
+    }
+  }, [filters, exportSelection, showAlert])
+
+  const importHar = useCallback(
+    /** @param {import('react').ChangeEvent<HTMLInputElement>} event */
+    async event => {
+      const file = event.target.files && event.target.files[0]
+      event.target.value = ''
+      if (!file) return
+      try {
+        const result = await importHarFile(file)
+        showAlert(
+          'Import HAR',
+          `${result.imported} ${result.imported === 1 ? 'entry' : 'entries'} imported` +
+            (result.skipped > 0 ? `, ${result.skipped} skipped.` : '.')
+        )
+      } catch (error) {
+        showAlert('Import HAR', error instanceof Error ? error.message : String(error), 'error')
+      }
+    },
+    [showAlert]
+  )
+
   const { total } = list
   useEffect(() => {
     if (onFilteredCountChange) onFilteredCountChange(total)
@@ -286,6 +315,31 @@ function RequestLogsInner({
           onToggleFileType={filterState.toggleFileType}
           onShowWsConnectionsChange={filterState.setShowWsConnections}
         />
+
+        {/* HAR archive: the current view (or the marked entries) out, a file in */}
+        <div className="flex items-center justify-end gap-2">
+          <label className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs border border-edge text-fg-body hover:bg-surface-highlight cursor-pointer transition-colors">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Import HAR</span>
+            <input
+              type="file"
+              name="import-har"
+              accept=".har,application/json"
+              className="hidden"
+              aria-label="Import HAR file"
+              onChange={importHar}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={exportHar}
+            disabled={list.items.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs border border-edge text-fg-body hover:bg-surface-highlight disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export HAR</span>
+          </button>
+        </div>
 
         <LogList
           items={list.items}

@@ -20,6 +20,7 @@ const { createFiltersRoutes } = require('./filters')
 const { createDashboardRoutes } = require('./dashboard')
 const { createEventsRoutes } = require('./events')
 const { createBreakpointsRoutes } = require('./breakpoints')
+const { createRulesTransferRoutes } = require('./rules-transfer')
 
 /**
  * Counter of the requests bypassed (redirected) by the filter rules. Owned by
@@ -114,6 +115,7 @@ function createApiRouter(deps) {
   router.use(createBlockedRoutes({ router: proxyRouter }))
   router.use(createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }))
   router.use(createBreakpointsRoutes({ breakpointStore, breakpointGate }))
+  router.use(createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointStore }))
   router.use(
     createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter })
   )
