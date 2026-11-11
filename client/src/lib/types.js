@@ -132,13 +132,15 @@
 /**
  * @typedef {Object} LocalResource
  * @property {string} url
- * @property {'file' | 'text'} type
+ * @property {'file' | 'text' | 'folder'} type
  * @property {string} filename
  * @property {string} [originalName]
  * @property {string} contentType
- * @property {number} size
+ * @property {number} [size]
  * @property {string} createdAt
  * @property {boolean} enabled
+ * @property {string} [path] Folder mapping: the directory on the proxy's machine.
+ * @property {boolean} [fallthrough] Folder mapping: forward to the upstream when the file is missing.
  */
 
 /**

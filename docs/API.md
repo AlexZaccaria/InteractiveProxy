@@ -202,13 +202,14 @@ curl -N http://127.0.0.1:8050/api/events
 
 ## Local resources
 
-A resource is `{"url", "type": "file" | "text", "filename", "originalName", "contentType", "size", "createdAt", "enabled"}`; `url` is the fragment matched against request URLs.
+A resource is `{"url", "type": "file" | "text" | "folder", "filename", "originalName", "contentType", "size", "createdAt", "enabled"}`; `url` is the fragment matched against request URLs. A folder mapping (`type: "folder"`) adds `path`, a directory of the proxy's machine, and `fallthrough`: the part of the URL path after the matched fragment is looked up inside the directory (never outside it; an empty remainder or one ending in `/` means `index.html`), the content type follows the extension, and a missing file is answered with `404 {"error": "Not found in the mapped folder"}` unless `fallthrough` is true, in which case the request goes to the upstream.
 
 | Request | Response |
 |---|---|
 | `GET /api/resources` | Array of resources |
 | `POST /api/resources` as `multipart/form-data` with fields `url`, `contentType` (optional, defaults to the file's type) and `file` | `{"success": true, "message": "Resource added successfully", "resource": {...}}`; `400` without `url` or without file/content |
 | `POST /api/resources` as JSON `{"url", "contentType", "content"}` | Same; `content` is stored as a text file, `contentType` defaults to `text/plain` |
+| `POST /api/resources` as JSON `{"url", "folderPath", "fallthrough"}` | Same, with a folder mapping; `400 {"error": "The folder does not exist"}` when `folderPath` is not a directory |
 | `POST /api/resources/toggle` with `{"url", "enabled"}` | `{"success": true, "resource": {...}}`; `404` for an unknown URL, `400` for a non-boolean `enabled` |
 | `DELETE /api/resources/:encodedUrl` (URL-encoded resource URL) | `{"success": true, "message": "Resource deleted successfully"}`; `404` when unknown |
 
@@ -338,4 +339,4 @@ The edits of `resume` are, for the request phase, `method`, `url`, `headers` (th
 
 ### `POST /api/system/file-picker`
 
-Opens the Windows file dialog on the machine running the proxy; body `{"title", "filter"}` (both optional, `filter` in the WinForms `Description|*.ext` form). Answers `{"path": "C:\\…", "canceled": false}` or `{"path": null, "canceled": true}`; `501` on other platforms.
+Opens the Windows file dialog on the machine running the proxy; body `{"title", "filter", "kind"}` (all optional, `filter` in the WinForms `Description|*.ext` form, `kind: "folder"` for the folder browser). Answers `{"path": "C:\\…", "canceled": false}` or `{"path": null, "canceled": true}`; `501` on other platforms.

@@ -24,9 +24,10 @@ function createSystemRoutes() {
     const body = req.body && typeof req.body === 'object' ? req.body : {}
     const title = body.title == null ? undefined : String(body.title)
     const filter = body.filter == null ? undefined : String(body.filter)
+    const kind = body.kind === 'folder' ? 'folder' : 'file'
 
     try {
-      const filePath = await showNativeFilePicker({ title, filter })
+      const filePath = await showNativeFilePicker({ title, filter, kind })
       res.json({ path: filePath || null, canceled: !filePath })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''

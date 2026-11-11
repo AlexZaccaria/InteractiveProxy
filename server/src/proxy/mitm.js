@@ -607,6 +607,7 @@ function createMitmHandler({
         if (logEntry) {
           logEntry.source = 'local'
           logEntry.localResource = matchedUrl
+          logEntry.statusCode = typeof resource.status === 'number' ? resource.status : 200
           addLog(logEntry)
         }
 

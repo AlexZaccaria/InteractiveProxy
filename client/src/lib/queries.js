@@ -309,7 +309,7 @@ export function usePresetMutations() {
 export function useFilePicker() {
   return useMutation({
     /**
-     * @param {{ title?: string, filter?: string }} [options]
+     * @param {{ title?: string, filter?: string, kind?: 'file' | 'folder' }} [options]
      * @returns {Promise<string | null>}
      */
     mutationFn: async options => {
@@ -351,6 +351,11 @@ export function useResourceMutations() {
     mutationFn: formData => apiUpload('/api/resources', formData),
     onSuccess: invalidate
   })
+  const createFolder = useMutation({
+    /** @param {{ url: string, folderPath: string, fallthrough: boolean }} mapping */
+    mutationFn: mapping => apiPost('/api/resources', mapping),
+    onSuccess: invalidate
+  })
   const toggle = useMutation({
     /** @param {{ url: string, enabled: boolean }} input */
     mutationFn: input => apiPost('/api/resources/toggle', input),
@@ -361,7 +366,7 @@ export function useResourceMutations() {
     mutationFn: url => apiDelete(`/api/resources/${encodeURIComponent(url)}`),
     onSuccess: invalidate
   })
-  return { create, toggle, remove }
+  return { create, createFolder, toggle, remove }
 }
 
 export function useClearLogs() {

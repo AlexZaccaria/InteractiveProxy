@@ -107,7 +107,7 @@ All files live under the storage directory (`server/storage` by default) and are
 | `filter-urls.json` | Array of `{"id", "enabled", "name", "url", "mode"}`; `bypass-urls.json` is the pre-2.0 name and is still read |
 | `edit-rules.json` | Array of rules in the shapes shown in [docs/API.md](docs/API.md#edit-rules); long `replacement` and `value` strings may be stored as arrays of segments and are joined on load; records with a single `start` / `end` pair (the pre-2.0 format) are folded into `startVariants` / `endVariants` |
 | `edit-rule-presets.json` | Array of `{"id", "name", "kind", "rule", "createdAt"}` |
-| `resources.json` | Object keyed by resource URL: `{"type", "filename", "originalName", "contentType", "size", "createdAt", "enabled"}`; the payloads are files next to it |
+| `resources.json` | Object keyed by resource URL: `{"type", "filename", "originalName", "contentType", "size", "createdAt", "enabled"}`, plus `path` and `fallthrough` for a folder mapping; the payloads are files next to it |
 
 Writes happen after the in-memory state is updated, so a change is active before its file is written; blocked rules and edit rules await the write before answering the API.
 

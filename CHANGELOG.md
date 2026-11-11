@@ -10,6 +10,7 @@
 - HAR export and import: `GET /api/logs/export?format=har` renders the current view as an HTTP Archive 1.2, `POST /api/logs/import` adds the entries of a HAR file to the window as `imported` entries that can be searched and replayed; two buttons above the Requests list.
 - Rules export and import in one file (`GET /api/rules/export`, `POST /api/rules/import` with `merge` or `replace`): edit rules and presets, blocked, filter, breakpoint and network-condition rules; two buttons in the Edited tab.
 - Latency and throttling per URL pattern (`/api/throttle`, the `throttling-mode` flag): a delay before the request is forwarded and a bandwidth cap on the response, for buffered and streamed bodies alike; a card in the Edited tab and a SLOW badge on the entries.
+- Local resources can map a folder: the URL path after the pattern is served from a directory of the proxy's machine, with the content type from the extension and `index.html` for directory paths; a miss answers 404 or falls through to the upstream. The Windows picker can browse for a folder.
 
 ### Internal
 

@@ -54,6 +54,28 @@ function createResourcesRoutes({ resourceStore, storageDir, upload }) {
           createdAt: new Date().toISOString(),
           enabled: true
         }
+      } else if (req.body && safeTrim(req.body.folderPath)) {
+        // Folder mapping: the request path after the URL pattern is served
+        // from a directory of the proxy's machine.
+        const folderPath = path.resolve(safeTrim(req.body.folderPath))
+        let stats
+        try {
+          stats = await fsPromises.stat(folderPath)
+        } catch {
+          stats = null
+        }
+        if (!stats || !stats.isDirectory()) {
+          return res.status(400).json({ error: 'The folder does not exist' })
+        }
+        resourceData = {
+          type: 'folder',
+          filename: '',
+          contentType: '',
+          path: folderPath,
+          fallthrough: req.body.fallthrough === true || req.body.fallthrough === 'true',
+          createdAt: new Date().toISOString(),
+          enabled: true
+        }
       } else if (req.body && Object.hasOwn(req.body, 'content') && req.body.content) {
         // Text/JSON content
         const filename = `${Date.now()}-content.txt`

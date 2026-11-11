@@ -4,7 +4,6 @@ Features considered during the 2.0 rework and not built. Each item stands on its
 
 ## Features
 
-- Map-local to a folder, not only to a single file, with resolution of the request path inside it.
 - Side-by-side diff of the original and the rewritten body in the log card.
 - Per-host passthrough in the MITM: hosts with certificate pinning tunnelled as raw bytes.
 - Download of the CA certificate from the UI, with the installation steps per platform.
