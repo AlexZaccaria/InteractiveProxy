@@ -8,7 +8,8 @@
 - "Copy as cURL" on every HTTP entry, from `GET /api/logs/:id/curl` (`viaProxy=1` for a command through the proxy).
 - Breakpoints: rules (URL substring, request or response phase) that hold a matching flow until it is sent on, edited by hand or aborted from the UI. A Breakpoints tab (shortcut `6`) manages the rules and the paused flows, an editor opens when a flow pauses, and the entries carry a BREAKPOINT badge. API: `/api/breakpoints`, `/api/breakpoints/pending` with `resume` and `abort`, the `breakpoints-mode` flag, `breakpoint` events on the stream. Flows are held only while a UI is connected and continue unchanged after `PROXY_BREAKPOINT_TIMEOUT_MS` (two minutes by default).
 - HAR export and import: `GET /api/logs/export?format=har` renders the current view as an HTTP Archive 1.2, `POST /api/logs/import` adds the entries of a HAR file to the window as `imported` entries that can be searched and replayed; two buttons above the Requests list.
-- Rules export and import in one file (`GET /api/rules/export`, `POST /api/rules/import` with `merge` or `replace`): edit rules and presets, blocked, filter and breakpoint rules; two buttons in the Edited tab.
+- Rules export and import in one file (`GET /api/rules/export`, `POST /api/rules/import` with `merge` or `replace`): edit rules and presets, blocked, filter, breakpoint and network-condition rules; two buttons in the Edited tab.
+- Latency and throttling per URL pattern (`/api/throttle`, the `throttling-mode` flag): a delay before the request is forwarded and a bandwidth cap on the response, for buffered and streamed bodies alike; a card in the Edited tab and a SLOW badge on the entries.
 
 ### Internal
 

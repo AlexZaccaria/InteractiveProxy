@@ -30,6 +30,7 @@ const {
   abortAtBreakpoint: abortFlowAtBreakpoint,
   headersForTarget
 } = require('./breakpoints')
+const { sleep, writeThrottled } = require('./throttle')
 const { createRawTunnel } = require('./tunnel')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const { STREAMED_BODY_MARKER, shouldStreamResponse, pipeUpstreamBody } = require('./streaming')
@@ -93,6 +94,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {BypassCounter} bypassCounter
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
  * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
+ * @property {import('./throttle').NetworkConditionsMatcher} network Latency and bandwidth cap per URL.
  * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  */
 
@@ -115,6 +117,7 @@ function createMitmHandler({
   bypassCounter,
   stats,
   breakpoints,
+  network,
   touchLog
 }) {
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
@@ -684,6 +687,15 @@ function createMitmHandler({
             })
           }
 
+          // Network conditions: a latency before the upstream request and a
+          // bandwidth cap on the response.
+          const conditions = network.match({ requestUrl, fullUrl: upstreamUrl })
+          const bytesPerSecond = conditions ? conditions.bytesPerSecond : 0
+          if (conditions) {
+            if (logEntry) logEntry.network = conditions.summary
+            if (conditions.delayMs > 0) await sleep(conditions.delayMs)
+          }
+
           const { response: upstreamResponse } = await performUpstreamRequest({
             url: upstreamUrl,
             method: upstreamMethod,
@@ -743,7 +755,9 @@ function createMitmHandler({
 
             // Awaited so that the abort-on-close listener stays attached for
             // the whole transfer; the size is known only at the end.
-            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes)
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes, {
+              bytesPerSecond
+            })
             if (logEntry) {
               logEntry.responseSize = bytes
               stats.recordStreamedResponseSize(logEntry, bytes)
@@ -828,7 +842,11 @@ function createMitmHandler({
           setContentLength(responseHeaders, responseBodyToSend)
 
           clientRes.writeHead(statusCode, responseHeaders)
-          clientRes.end(responseBodyToSend)
+          if (bytesPerSecond > 0) {
+            await writeThrottled(clientRes, responseBodyToSend, bytesPerSecond)
+          } else {
+            clientRes.end(responseBodyToSend)
+          }
         } catch (error) {
           handleUpstreamError({ logEntry, error: /** @type {Error} */ (error), res: clientRes })
         } finally {

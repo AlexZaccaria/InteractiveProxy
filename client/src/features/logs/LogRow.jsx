@@ -54,6 +54,19 @@ export function describeBreakpoint(breakpoint) {
 }
 
 /**
+ * The network conditions a rule applied to an entry.
+ *
+ * @param {{ ruleName: string, delayMs: number, throttleKbps: number }} network
+ * @returns {string}
+ */
+export function describeNetwork(network) {
+  const parts = []
+  if (network.delayMs > 0) parts.push(`+${network.delayMs} ms`)
+  if (network.throttleKbps > 0) parts.push(`${network.throttleKbps} kbps`)
+  return `${parts.join(' · ')} (${network.ruleName})`
+}
+
+/**
  * The "Rewrites" badge with the panel listing the rules that applied; the
  * panel shows on hover and stays open while the badge is pinned by a click.
  *
@@ -243,6 +256,13 @@ function LogRow({
                   <Tooltip title="Breakpoint" description={describeBreakpoint(log.breakpoint)}>
                     <span className="px-2 py-1 rounded text-xs font-medium border bg-amber-500/10 border-amber-500/40 text-amber-300">
                       BREAKPOINT
+                    </span>
+                  </Tooltip>
+                )}
+                {log.network && typeof log.network === 'object' && (
+                  <Tooltip title="Network conditions" description={describeNetwork(log.network)}>
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-pink-500/10 border-pink-500/40 text-pink-300">
+                      SLOW
                     </span>
                   </Tooltip>
                 )}

@@ -129,6 +129,8 @@ const { createApiRouter } = require('./src/api')
 const { createReplayRunner } = require('./src/logs/replay')
 const { createBreakpointStore } = require('./src/rules/breakpoint-store')
 const { createBreakpointGate } = require('./src/proxy/breakpoints')
+const { createThrottleStore } = require('./src/rules/throttle-store')
+const { createNetworkConditions } = require('./src/proxy/throttle')
 const { createApp } = require('./src/app')
 const { createProxyServer } = require('./src/server')
 
@@ -141,6 +143,7 @@ const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
 const RESOURCES_FILE = path.join(STORAGE_DIR, 'resources.json')
 const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
 const BREAKPOINTS_FILE = path.join(STORAGE_DIR, 'breakpoints.json')
+const THROTTLE_RULES_FILE = path.join(STORAGE_DIR, 'throttle-rules.json')
 
 // Ensure directories exist
 try {
@@ -219,6 +222,14 @@ const breakpointGate = createBreakpointGate({
   isEnabled: () => configStore.breakpointsEnabled,
   hasListeners: () => streamPresence.clients > 0,
   timeoutMs: BREAKPOINT_TIMEOUT_MS
+})
+
+// Network-condition rules (latency, bandwidth cap) and their matcher.
+const throttleStore = createThrottleStore({ file: THROTTLE_RULES_FILE })
+throttleStore.load()
+const network = createNetworkConditions({
+  store: throttleStore,
+  isEnabled: () => configStore.throttlingEnabled
 })
 
 // Rewrite orchestration bound to the rule store. Interactive mode and the
@@ -325,6 +336,7 @@ const httpFlow = createHttpFlow({
   bypassCounter,
   stats: streamedSizeStats,
   breakpoints: breakpointGate,
+  network,
   touchLog: entry => logStore.touch(entry),
   port: PORT
 })
@@ -343,6 +355,7 @@ const apiRouter = createApiRouter({
   replay: replayRunner,
   breakpointStore,
   breakpointGate,
+  throttleStore,
   streamPresence
 })
 const app = createApp({
@@ -375,6 +388,7 @@ const mitm = createMitmHandler({
   bypassCounter,
   stats: streamedSizeStats,
   breakpoints: breakpointGate,
+  network,
   touchLog: entry => logStore.touch(entry)
 })
 const { server, start, stop } = createProxyServer({

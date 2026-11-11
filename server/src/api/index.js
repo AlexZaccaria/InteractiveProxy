@@ -21,6 +21,7 @@ const { createDashboardRoutes } = require('./dashboard')
 const { createEventsRoutes } = require('./events')
 const { createBreakpointsRoutes } = require('./breakpoints')
 const { createRulesTransferRoutes } = require('./rules-transfer')
+const { createThrottleRoutes } = require('./throttle')
 
 /**
  * Counter of the requests bypassed (redirected) by the filter rules. Owned by
@@ -47,6 +48,7 @@ const { createRulesTransferRoutes } = require('./rules-transfer')
  * @property {import('../logs/replay').ReplayRunner} replay Sends replays through the proxy.
  * @property {import('../rules/breakpoint-store').BreakpointStore} breakpointStore
  * @property {import('../proxy/breakpoints').BreakpointGate} breakpointGate
+ * @property {import('../rules/throttle-store').ThrottleStore} throttleStore
  * @property {import('./events').StreamPresence} streamPresence Count of the open event streams.
  * @property {number} [eventsKeepAliveMs] Keep-alive interval of the `/api/events` stream.
  */
@@ -98,6 +100,7 @@ function createApiRouter(deps) {
     replay,
     breakpointStore,
     breakpointGate,
+    throttleStore,
     streamPresence,
     eventsKeepAliveMs
   } = deps
@@ -115,7 +118,10 @@ function createApiRouter(deps) {
   router.use(createBlockedRoutes({ router: proxyRouter }))
   router.use(createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }))
   router.use(createBreakpointsRoutes({ breakpointStore, breakpointGate }))
-  router.use(createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointStore }))
+  router.use(createThrottleRoutes({ throttleStore }))
+  router.use(
+    createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointStore, throttleStore })
+  )
   router.use(
     createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter })
   )
@@ -130,6 +136,7 @@ function createApiRouter(deps) {
       bypassCounter,
       breakpointStore,
       breakpointGate,
+      throttleStore,
       streamPresence,
       keepAliveMs: eventsKeepAliveMs
     })

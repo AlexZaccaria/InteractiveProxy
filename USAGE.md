@@ -83,6 +83,8 @@ Rules apply in file order and each rule sees the output of the previous one. A r
 
 The tab also manages presets (saved rule templates), shows how many logged entries each rule touched, and receives rules created from the Requests tab: clicking a key in a Connect frame opens the form pre-filled with the URL pattern, the JSON path and the current value. "Export rules" downloads every rule kind (edit rules and presets, blocked, filter and breakpoint rules) as one JSON file; "Import rules" adds the rules of such a file, replacing the ones whose id already exists (the API also offers a mode that replaces everything).
 
+The "Latency and throttling" card at the bottom of the tab holds the network-condition rules: a URL pattern, a latency in milliseconds added before the request is forwarded, and a bandwidth cap in kilobits per second on the response body (either one is enough). The first enabled rule that matches applies to HTTP and HTTPS alike; its switch turns every rule off at once. Entries slowed down by a rule carry a SLOW badge with the conditions that applied.
+
 ### Local
 
 Local resources are files or inline text served instead of the upstream response when a request URL contains the resource URL. Each resource has a content type and can be enabled or disabled; the global switch disables all of them.

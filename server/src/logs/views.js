@@ -51,6 +51,7 @@ const LOG_VIEW_COMMON_FIELDS = [
   'rewriteCount',
   'replayOf',
   'breakpoint',
+  'network',
   'connectionId',
   'isConnectionLog',
   'isWebSocketSummary',

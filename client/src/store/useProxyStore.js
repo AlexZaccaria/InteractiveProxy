@@ -16,7 +16,7 @@ import { applyThemeToDocument, resolveInitialTheme, storeTheme } from '../lib/th
 /**
  * API flag name → store field.
  *
- * @type {Record<string, 'interactiveModeEnabled' | 'editRulesEnabled' | 'localResourcesEnabled' | 'filterRulesEnabled' | 'blockedRulesEnabled' | 'breakpointsEnabled'>}
+ * @type {Record<string, 'interactiveModeEnabled' | 'editRulesEnabled' | 'localResourcesEnabled' | 'filterRulesEnabled' | 'blockedRulesEnabled' | 'breakpointsEnabled' | 'throttlingEnabled'>}
  */
 export const FLAG_FIELDS = {
   'interactive-mode': 'interactiveModeEnabled',
@@ -24,7 +24,8 @@ export const FLAG_FIELDS = {
   'local-resources-mode': 'localResourcesEnabled',
   'filter-rules-mode': 'filterRulesEnabled',
   'blocked-rules-mode': 'blockedRulesEnabled',
-  'breakpoints-mode': 'breakpointsEnabled'
+  'breakpoints-mode': 'breakpointsEnabled',
+  'throttling-mode': 'throttlingEnabled'
 }
 
 /** @typedef {keyof typeof FLAG_FIELDS} FlagName */
@@ -47,6 +48,7 @@ export const FLAG_FIELDS = {
  * @property {boolean} filterRulesEnabled
  * @property {boolean} blockedRulesEnabled
  * @property {boolean} breakpointsEnabled
+ * @property {boolean} throttlingEnabled
  * @property {FilterMode} filterMode
  * @property {boolean} eventsConnected
  * @property {string} activeTab
@@ -85,6 +87,7 @@ export const useProxyStore = create(
       filterRulesEnabled: true,
       blockedRulesEnabled: true,
       breakpointsEnabled: true,
+      throttlingEnabled: true,
       filterMode: 'ignore',
       eventsConnected: false,
       activeTab: 'logs',

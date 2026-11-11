@@ -15,6 +15,7 @@
  * @property {boolean} filterRulesEnabled
  * @property {boolean} blockedRulesEnabled
  * @property {boolean} breakpointsEnabled
+ * @property {boolean} throttlingEnabled
  * @property {FilterMode} filterMode
  * @property {number} [filteredRequestCount]
  */
@@ -169,6 +170,7 @@
  * @property {string} [error]
  * @property {string} [replayOf] Id of the entry this request repeated.
  * @property {{ request?: string, response?: string }} [breakpoint] Outcome of the breakpoints the entry went through (`edited`, `continued`, `aborted`).
+ * @property {{ ruleId: string, ruleName: string, delayMs: number, throttleKbps: number }} [network] The network-condition rule that applied.
  * @property {boolean} [isConnectionLog]
  * @property {boolean} [isWebSocketSummary]
  * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
@@ -295,6 +297,18 @@
  * @property {string} name
  * @property {string} url Substring of the request URL.
  * @property {'request' | 'response' | 'both'} phase
+ */
+
+/**
+ * A network-condition rule (`GET /api/throttle`).
+ *
+ * @typedef {Object} ThrottleRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} url Substring of the request URL.
+ * @property {number} delayMs Latency added before the request is forwarded; 0 for none.
+ * @property {number} throttleKbps Bandwidth cap on the response in kilobits per second; 0 for none.
  */
 
 /**

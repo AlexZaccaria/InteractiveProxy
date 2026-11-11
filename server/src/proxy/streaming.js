@@ -16,6 +16,7 @@ const { pipeline, Transform } = require('stream')
 const { STREAM_UNINSPECTED_RESPONSES, STREAM_THRESHOLD_BYTES } = require('../../config')
 const { isClearlyBinaryContentType } = require('../codecs/compression')
 const { buildUrlMatchContext, jsonPathRuleMatchesUrl } = require('../rules/url-match')
+const { createThrottleTransform } = require('./throttle')
 
 /** @typedef {import('../rules/store').RuleStore} RuleStore */
 
@@ -83,9 +84,10 @@ function shouldStreamResponse({ method, contentType, contentLength, hasRules, in
  *
  * @param {import('stream').Readable} body
  * @param {import('http').ServerResponse} res
+ * @param {{ bytesPerSecond?: number }} [options] A bandwidth cap (network-condition rule), 0 for none.
  * @returns {Promise<{ bytes: number, error: Error | null }>}
  */
-function pipeUpstreamBody(body, res) {
+function pipeUpstreamBody(body, res, { bytesPerSecond = 0 } = {}) {
   let bytes = 0
   const counter = new Transform({
     transform(chunk, _encoding, callback) {
@@ -93,9 +95,10 @@ function pipeUpstreamBody(body, res) {
       callback(null, chunk)
     }
   })
+  const stages = bytesPerSecond > 0 ? [counter, createThrottleTransform(bytesPerSecond)] : [counter]
 
   return new Promise(resolve => {
-    pipeline(body, counter, res, error => {
+    pipeline(body, ...stages, res, error => {
       if (error && !res.writableEnded) {
         res.destroy()
       }

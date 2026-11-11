@@ -161,6 +161,7 @@ test('every rule kind exports to one file and imports back, merged or replaced',
   await api('POST', '/api/blocked', { action: 'add', url: '/blocked-me', name: 'Blocked' })
   await api('POST', '/api/filters', { action: 'add', url: '/filtered-me', mode: 'ignore' })
   await api('POST', '/api/breakpoints', { action: 'add', url: '/paused-me', phase: 'request' })
+  await api('POST', '/api/throttle', { action: 'add', url: '/slow-me', delayMs: 10 })
   await api('POST', '/api/edit-rule-presets', {
     name: 'Preset',
     kind: 'text',
@@ -177,6 +178,7 @@ test('every rule kind exports to one file and imports back, merged or replaced',
   assert.equal(file.blockedRules.length, 1)
   assert.equal(file.filterRules.length, 1)
   assert.equal(file.breakpointRules.length, 1)
+  assert.equal(file.throttleRules.length, 1)
 
   // Merge: a changed record with a known id replaces it, a new one is added.
   const merged = await api('POST', '/api/rules/import', {
@@ -192,7 +194,8 @@ test('every rule kind exports to one file and imports back, merged or replaced',
     presets: 1,
     blockedRules: 2,
     filterRules: 1,
-    breakpointRules: 1
+    breakpointRules: 1,
+    throttleRules: 1
   })
 
   const rules = (await api('GET', '/api/edit-rules')).json.rules
@@ -229,6 +232,7 @@ test('every rule kind exports to one file and imports back, merged or replaced',
     ['/only']
   )
   assert.deepEqual((await api('GET', '/api/breakpoints')).json, [])
+  assert.deepEqual((await api('GET', '/api/throttle')).json, [])
 
   assert.equal((await api('POST', '/api/rules/import', { editRules: [] })).status, 400)
   assert.equal(

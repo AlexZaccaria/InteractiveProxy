@@ -86,3 +86,13 @@ describe('LogRow breakpoint badge', () => {
     expect(screen.getByText('BREAKPOINT')).toBeInTheDocument()
   })
 })
+
+describe('LogRow network badge', () => {
+  it('marks the entries a network-condition rule slowed down', () => {
+    renderRow({
+      ...httpLog,
+      network: { ruleId: 'n1', ruleName: 'Slow', delayMs: 300, throttleKbps: 64 }
+    })
+    expect(screen.getByText('SLOW')).toBeInTheDocument()
+  })
+})

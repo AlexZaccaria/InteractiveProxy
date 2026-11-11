@@ -40,6 +40,8 @@ export const queryKeys = {
   breakpoints: ['breakpoints'],
   /** The flows held at a breakpoint (`{ items }`). */
   breakpointsPending: ['breakpoints', 'pending'],
+  /** The network-condition rules (latency, bandwidth cap). */
+  throttle: ['throttle'],
   /** Root of the log list and detail keys, for the reset when the logs are cleared. */
   logsRoot: ['logs'],
   /**
@@ -538,5 +540,43 @@ export function useAbortBreakpoint() {
     /** @param {string} id */
     mutationFn: id => apiPost(`/api/breakpoints/pending/${encodeURIComponent(id)}/abort`),
     onSuccess: (_data, id) => removePendingBreakpoint(client, id)
+  })
+}
+
+/** @typedef {import('./types').ThrottleRule} ThrottleRule */
+
+/**
+ * The throttle endpoint answers an array on GET and `{ throttleRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {ThrottleRule[]}
+ */
+export function normalizeThrottleRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.throttleRules)) return payload.throttleRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<ThrottleRule[]>} */
+export function useThrottleRules() {
+  return useQuery({
+    queryKey: queryKeys.throttle,
+    queryFn: ({ signal }) => apiGet('/api/throttle', { signal }),
+    select: normalizeThrottleRules
+  })
+}
+
+/**
+ * Add, update or remove a network-condition rule (`POST /api/throttle`).
+ */
+export function useThrottleRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, url?: string, name?: string, enabled?: boolean, delayMs?: number, throttleKbps?: number }} payload */
+    mutationFn: payload => apiPost('/api/throttle', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.throttle, normalizeThrottleRules(data))
+    }
   })
 }

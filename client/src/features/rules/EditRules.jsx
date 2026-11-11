@@ -13,6 +13,7 @@ import RuleForm from './RuleForm'
 import RuleList from './RuleList'
 import { doesPresetMatchRuleCriteria } from './presets'
 import { describeImport, downloadRulesExport, importRulesFile } from './rulesTransfer'
+import ThrottleRules from './ThrottleRules'
 import { buildPresetRule, buildRulePayload, useRuleForm, validateRuleForm } from './useRuleForm'
 import Tooltip from '../../components/Tooltip'
 
@@ -408,6 +409,8 @@ function EditRules({ showConfirm, showPrompt, showAlert }) {
         onEdit={form.startEdit}
         onDelete={handleDelete}
       />
+
+      <ThrottleRules showConfirm={showConfirm} />
     </div>
   )
 }

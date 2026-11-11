@@ -20,6 +20,7 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
 | `GET /api/logs/export` | Raw entries of the current filter, or a HAR archive with `format=har` |
 | `POST /api/logs/import` | Add the entries of a HAR archive to the window |
 | `GET /api/rules/export`, `POST /api/rules/import` | Every rule kind in one file |
+| `GET /api/throttle`, `POST /api/throttle` | Network-condition rules (latency, bandwidth cap) |
 | `GET /api/logs/:id` | One entry with bodies |
 | `GET /api/logs/:id/replay`, `POST /api/logs/:id/replay` | The replay form of an entry, and the replay itself |
 | `GET /api/logs/:id/curl` | The entry as a curl command |
@@ -48,6 +49,7 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
   "filterRulesEnabled": true,
   "blockedRulesEnabled": true,
   "breakpointsEnabled": true,
+  "throttlingEnabled": true,
   "filterMode": "ignore",
   "filteredRequestCount": 0
 }
@@ -191,7 +193,7 @@ A `text/event-stream` response (`Cache-Control: no-cache, no-transform`, `X-Acce
 | `stats` | The dashboard counters changed; at most one event per 250 ms while traffic flows, and one right after the logs are cleared | `{"stats", "performance", "payloads", "routes", "editedRequests", "filterMetrics"}` as in `GET /api/dashboard` |
 | `logs-cleared` | After `DELETE /api/logs` | `{}` |
 | `config` | A flag or the filter mode changed | The flags of `GET /api/config` |
-| `rules` | Edit rules or presets, blocked rules, filter rules, local resources or breakpoint rules changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources" \| "breakpoints"}` |
+| `rules` | Edit rules or presets, blocked rules, filter rules, local resources, breakpoint rules or network-condition rules changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources" \| "breakpoints" \| "throttle"}` |
 | `breakpoint` | A flow was held at a breakpoint, or a held flow went on | `{"action": "paused", "item": {...}}` with the item of `GET /api/breakpoints/pending`, or `{"action": "resumed", "id": "…", "reason": "resume" \| "abort" \| "timeout"}` |
 
 ```bash
@@ -279,7 +281,8 @@ Every rule kind in one document:
 ```json
 {
   "format": "interactive-proxy-rules", "version": 1, "exportedAt": "2026-11-11T10:00:00.000Z",
-  "editRules": [...], "presets": [...], "blockedRules": [...], "filterRules": [...], "breakpointRules": [...]
+  "editRules": [...], "presets": [...], "blockedRules": [...], "filterRules": [...], "breakpointRules": [...],
+  "throttleRules": [...]
 }
 ```
 
@@ -287,7 +290,18 @@ The lists are the ones the respective endpoints answer; edit rules whose value c
 
 ### `POST /api/rules/import`
 
-Body: a document of the form above (`format` must be `interactive-proxy-rules`; a `version` above 1 is rejected with `400`), plus `mode`: `merge` (default) keeps the existing rules and, for every list present, replaces the records whose id already exists and adds the others; `replace` keeps only the file's records, also for the lists it leaves empty. Lists that are absent are left alone in `merge` mode. Each list is saved and announced on the event stream as it is today. Answers `{"success": true, "mode": "merge", "counts": {"editRules": n, "presets": n, "blockedRules": n, "filterRules": n, "breakpointRules": n}}`.
+Body: a document of the form above (`format` must be `interactive-proxy-rules`; a `version` above 1 is rejected with `400`), plus `mode`: `merge` (default) keeps the existing rules and, for every list present, replaces the records whose id already exists and adds the others; `replace` keeps only the file's records, also for the lists it leaves empty. Lists that are absent are left alone in `merge` mode. Each list is saved and announced on the event stream as it is today. Answers `{"success": true, "mode": "merge", "counts": {"editRules": n, "presets": n, "blockedRules": n, "filterRules": n, "breakpointRules": n, "throttleRules": n}}`.
+
+## Network conditions
+
+A rule is `{"id", "enabled", "name", "url", "delayMs", "throttleKbps"}`: `url` is a substring matched against the request URL and the full target URL, `delayMs` a latency added before the request is forwarded (0 to 600000) and `throttleKbps` a bandwidth cap on the response body in kilobits per second (0 for none); a rule needs at least one of the two. The first enabled rule that matches applies, to the plain HTTP and the HTTPS MITM flows alike (requests forwarded without inspection by a filter rule are not affected); the cap paces both buffered and streamed responses. The `throttlingEnabled` flag (`POST /api/throttling-mode`) turns every rule off at once. The log entry of an affected request carries `network: {"ruleId", "ruleName", "delayMs", "throttleKbps"}`.
+
+| Request | Answer |
+|---|---|
+| `GET /api/throttle` | The rules, as an array |
+| `POST /api/throttle` with `{"action": "add", "url", "name", "enabled", "delayMs", "throttleKbps"}` | `{"success": true, "throttleRules": [...]}`; `400` without `url`, with a negative or non-numeric value, or when both numbers are 0 |
+| `POST /api/throttle` with `{"action": "update", "id", ...}` (fields optional) | Same; `404` when the id is unknown |
+| `POST /api/throttle` with `{"action": "remove", "id"}` | Same |
 
 ## Breakpoints
 

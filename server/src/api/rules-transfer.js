@@ -11,6 +11,7 @@
 const express = require('express')
 const { normalizeBlockedRule, normalizeBypassRule } = require('../proxy/router')
 const { normalizeBreakpointRule } = require('../rules/breakpoint-store')
+const { normalizeThrottleRule } = require('../rules/throttle-store')
 const { safeString } = require('../util/strings')
 
 const FORMAT = 'interactive-proxy-rules'
@@ -21,6 +22,7 @@ const VERSION = 1
  * @property {import('../rules/store').RuleStore} ruleStore
  * @property {import('../proxy/router').Router} router
  * @property {import('../rules/breakpoint-store').BreakpointStore} breakpointStore
+ * @property {import('../rules/throttle-store').ThrottleStore} throttleStore
  */
 
 /**
@@ -56,7 +58,12 @@ function recordsOf(value) {
  * @param {RulesTransferDeps} deps
  * @returns {import('express').Router}
  */
-function createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointStore }) {
+function createRulesTransferRoutes({
+  ruleStore,
+  router: proxyRouter,
+  breakpointStore,
+  throttleStore
+}) {
   const router = express.Router()
 
   router.get('/rules/export', (req, res) => {
@@ -68,7 +75,8 @@ function createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointS
       presets: ruleStore.getPresets(),
       blockedRules: proxyRouter.getBlockedRules(),
       filterRules: proxyRouter.getBypassRules(),
-      breakpointRules: breakpointStore.getRules()
+      breakpointRules: breakpointStore.getRules(),
+      throttleRules: throttleStore.getRules()
     })
   })
 
@@ -89,6 +97,9 @@ function createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointS
     const breakpointRules = recordsOf(body.breakpointRules)
       .map(normalizeBreakpointRule)
       .filter(rule => rule.url)
+    const throttleRules = recordsOf(body.throttleRules)
+      .map(normalizeThrottleRule)
+      .filter(rule => rule.url && (rule.delayMs > 0 || rule.throttleKbps > 0))
 
     try {
       if (editRules.length > 0 || mode === 'replace') {
@@ -128,6 +139,13 @@ function createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointS
         )
         await breakpointStore.save()
       }
+
+      if (throttleRules.length > 0 || mode === 'replace') {
+        throttleStore.setRules(
+          mode === 'replace' ? throttleRules : mergeById(throttleStore.getRules(), throttleRules)
+        )
+        await throttleStore.save()
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return res.status(500).json({ error: `Import failed: ${message}` })
@@ -141,7 +159,8 @@ function createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointS
         presets: presets.length,
         blockedRules: blockedRules.length,
         filterRules: filterRules.length,
-        breakpointRules: breakpointRules.length
+        breakpointRules: breakpointRules.length,
+        throttleRules: throttleRules.length
       }
     })
   })

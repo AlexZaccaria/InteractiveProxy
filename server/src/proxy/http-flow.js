@@ -26,6 +26,7 @@ const {
   headersForTarget,
   toBodyBuffer
 } = require('./breakpoints')
+const { sleep, writeThrottled } = require('./throttle')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const {
   STREAMED_BODY_MARKER,
@@ -84,6 +85,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {BypassCounter} bypassCounter
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
  * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
+ * @property {import('./throttle').NetworkConditionsMatcher} network Latency and bandwidth cap per URL.
  * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  * @property {number} port Listening port, the default authority of client-facing URLs.
  */
@@ -155,6 +157,7 @@ function createHttpFlow({
   bypassCounter,
   stats,
   breakpoints,
+  network,
   touchLog,
   port
 }) {
@@ -662,6 +665,15 @@ function createHttpFlow({
             })
           }
 
+          // Network conditions: a latency before the upstream request and a
+          // bandwidth cap on the response.
+          const conditions = network.match({ requestUrl, fullUrl: targetUrl })
+          const bytesPerSecond = conditions ? conditions.bytesPerSecond : 0
+          if (conditions) {
+            if (logEntry) logEntry.network = conditions.summary
+            if (conditions.delayMs > 0) await sleep(conditions.delayMs)
+          }
+
           const { response: upstreamResponse } = await performUpstreamRequest({
             url: targetUrl,
             method,
@@ -733,7 +745,9 @@ function createHttpFlow({
             res.status(upstreamResponse.statusCode)
             // Awaited so that the abort-on-close listener stays attached for
             // the whole transfer; the size is known only at the end.
-            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res)
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res, {
+              bytesPerSecond
+            })
             if (logEntry) {
               logEntry.responseSize = bytes
               stats.recordStreamedResponseSize(logEntry, bytes)
@@ -814,6 +828,8 @@ function createHttpFlow({
 
           if (method === 'HEAD') {
             res.end()
+          } else if (bytesPerSecond > 0) {
+            await writeThrottled(res, responseBodyToSend, bytesPerSecond)
           } else {
             res.send(responseBodyToSend)
           }
