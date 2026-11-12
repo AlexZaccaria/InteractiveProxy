@@ -70,6 +70,8 @@ The tab is named after the current filter mode. A rule is a pattern: one that lo
 
 The tab also lists suggestions computed from the current log window: the hosts with the most requests that no rule covers yet, with their most frequent paths.
 
+At the bottom, the TLS passthrough hosts: the HTTPS tunnels to these hosts (and their subdomains) are relayed as they are, without the proxy's certificate, so that applications which pin their certificates keep working. Nothing of that traffic is logged or rewritten; only the tunnel itself is recorded. Use it for the hosts an app refuses to talk to through the proxy, and keep the list short, because every host on it is invisible to the rules.
+
 ### Edited
 
 Edit rules rewrite traffic in flight. Two kinds exist:

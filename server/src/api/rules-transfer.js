@@ -12,6 +12,7 @@ const express = require('express')
 const { normalizeBlockedRule, normalizeBypassRule } = require('../proxy/router')
 const { normalizeBreakpointRule } = require('../rules/breakpoint-store')
 const { normalizeThrottleRule } = require('../rules/throttle-store')
+const { normalizePassthroughRule } = require('../rules/passthrough-store')
 const { safeString } = require('../util/strings')
 
 const FORMAT = 'interactive-proxy-rules'
@@ -23,6 +24,7 @@ const VERSION = 1
  * @property {import('../proxy/router').Router} router
  * @property {import('../rules/breakpoint-store').BreakpointStore} breakpointStore
  * @property {import('../rules/throttle-store').ThrottleStore} throttleStore
+ * @property {import('../rules/passthrough-store').PassthroughStore} passthroughStore
  */
 
 /**
@@ -62,7 +64,8 @@ function createRulesTransferRoutes({
   ruleStore,
   router: proxyRouter,
   breakpointStore,
-  throttleStore
+  throttleStore,
+  passthroughStore
 }) {
   const router = express.Router()
 
@@ -76,7 +79,8 @@ function createRulesTransferRoutes({
       blockedRules: proxyRouter.getBlockedRules(),
       filterRules: proxyRouter.getBypassRules(),
       breakpointRules: breakpointStore.getRules(),
-      throttleRules: throttleStore.getRules()
+      throttleRules: throttleStore.getRules(),
+      passthroughRules: passthroughStore.getRules()
     })
   })
 
@@ -100,6 +104,9 @@ function createRulesTransferRoutes({
     const throttleRules = recordsOf(body.throttleRules)
       .map(normalizeThrottleRule)
       .filter(rule => rule.url && (rule.delayMs > 0 || rule.throttleKbps > 0))
+    const passthroughRules = recordsOf(body.passthroughRules)
+      .map(normalizePassthroughRule)
+      .filter(rule => rule.host)
 
     try {
       if (editRules.length > 0 || mode === 'replace') {
@@ -146,6 +153,15 @@ function createRulesTransferRoutes({
         )
         await throttleStore.save()
       }
+
+      if (passthroughRules.length > 0 || mode === 'replace') {
+        passthroughStore.setRules(
+          mode === 'replace'
+            ? passthroughRules
+            : mergeById(passthroughStore.getRules(), passthroughRules)
+        )
+        await passthroughStore.save()
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return res.status(500).json({ error: `Import failed: ${message}` })
@@ -160,7 +176,8 @@ function createRulesTransferRoutes({
         blockedRules: blockedRules.length,
         filterRules: filterRules.length,
         breakpointRules: breakpointRules.length,
-        throttleRules: throttleRules.length
+        throttleRules: throttleRules.length,
+        passthroughRules: passthroughRules.length
       }
     })
   })

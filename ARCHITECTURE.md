@@ -42,7 +42,7 @@ The proxy-targeted guard runs before the API router, so a proxied request whose 
 
 ### HTTPS (CONNECT)
 
-`proxy/mitm` handles the `connect` event. A tunnel that the filter rules mark as direct is piped byte for byte (`proxy/tunnel`). Every other tunnel is terminated: the handler keeps one `https.Server`, created on the first CONNECT, whose SNI callback issues the certificate of the name the client asks for (secure contexts cached, 500 entries); clients without SNI get the certificate of the CONNECT host, set as the server's default context right before the socket is handed over. The target host and port travel with the socket, so the decrypted requests know where to go even on a non-443 port. Decrypted requests then follow the same local-resource / rewrite / forward / log pipeline as plain HTTP; a decrypted WebSocket upgrade goes to the WebSocket relay; any other `Upgrade:` request is forwarded as a plain request.
+`proxy/mitm` handles the `connect` event. A tunnel that the filter rules mark as direct, or whose host a passthrough rule covers (`rules/passthrough-store`, for clients that pin their certificates), is piped byte for byte (`proxy/tunnel`). Every other tunnel is terminated: the handler keeps one `https.Server`, created on the first CONNECT, whose SNI callback issues the certificate of the name the client asks for (secure contexts cached, 500 entries); clients without SNI get the certificate of the CONNECT host, set as the server's default context right before the socket is handed over. The target host and port travel with the socket, so the decrypted requests know where to go even on a non-443 port. Decrypted requests then follow the same local-resource / rewrite / forward / log pipeline as plain HTTP; a decrypted WebSocket upgrade goes to the WebSocket relay; any other `Upgrade:` request is forwarded as a plain request.
 
 The certificate authority (`tls/ca`) is created on first use: `ca-key.pem` and `ca-cert.pem` (`CN=Cascade Proxy CA`, ten years), one shared leaf key pair `leaf-key.pem`, and one certificate per host under `hosts/<host>.pem` (subject and `*.host` alternative name, one year, random serial), written atomically and reloaded on a cache miss when still valid and bound to the leaf key. Keys come from Node's `crypto`; node-forge builds and signs the X.509 structures. Issuing a certificate for a new host costs the signature alone (about 19 ms measured); a reload from disk about 4 ms; the in-memory cache (500 entries) nothing.
 
@@ -104,6 +104,9 @@ All files live under the storage directory (`server/storage` by default) and are
 |---|---|
 | `config.json` | `{"interactiveModeEnabled", "editRulesEnabled", "localResourcesEnabled", "filterRulesEnabled", "blockedRulesEnabled", "filterMode"}` |
 | `blocked-urls.json` | Array of `{"id", "enabled", "name", "url"}` |
+| `breakpoints.json` | Array of `{"id", "enabled", "name", "url", "phase"}` |
+| `throttle-rules.json` | Array of `{"id", "enabled", "name", "url", "delayMs", "throttleKbps"}` |
+| `passthrough.json` | Array of `{"id", "enabled", "name", "host"}` |
 | `filter-urls.json` | Array of `{"id", "enabled", "name", "url", "mode"}`; `bypass-urls.json` is the pre-2.0 name and is still read |
 | `edit-rules.json` | Array of rules in the shapes shown in [docs/API.md](docs/API.md#edit-rules); long `replacement` and `value` strings may be stored as arrays of segments and are joined on load; records with a single `start` / `end` pair (the pre-2.0 format) are folded into `startVariants` / `endVariants` |
 | `edit-rule-presets.json` | Array of `{"id", "name", "kind", "rule", "createdAt"}` |

@@ -52,6 +52,7 @@ const LOG_VIEW_COMMON_FIELDS = [
   'replayOf',
   'breakpoint',
   'network',
+  'passthrough',
   'connectionId',
   'isConnectionLog',
   'isWebSocketSummary',

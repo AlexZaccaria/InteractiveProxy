@@ -95,6 +95,7 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
  * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
  * @property {import('./throttle').NetworkConditionsMatcher} network Latency and bandwidth cap per URL.
+ * @property {Pick<import('../rules/passthrough-store').PassthroughStore, 'match'>} passthrough Hosts tunnelled without TLS termination.
  * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  */
 
@@ -118,6 +119,7 @@ function createMitmHandler({
   stats,
   breakpoints,
   network,
+  passthrough,
   touchLog
 }) {
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
@@ -280,8 +282,12 @@ function createMitmHandler({
 
     const httpHandling = router.decideHttpHandling(routingContext)
 
-    if (httpHandling === 'direct') {
-      bypassCounter.increment()
+    // A tunnel the filter rules mark as direct, or a host covered by a
+    // passthrough rule (certificate pinning), is relayed as raw bytes.
+    const passthroughRule = httpHandling === 'direct' ? null : passthrough.match(targetHost)
+
+    if (httpHandling === 'direct' || passthroughRule) {
+      if (!passthroughRule) bypassCounter.increment()
 
       if (configStore.interactiveModeEnabled) {
         const requestStart = Date.now()
@@ -298,6 +304,9 @@ function createMitmHandler({
         // Represent the raw CONNECT tunnel by its 200 Connection Established
         // handshake for auditing purposes.
         logEntry.statusCode = 200
+        if (passthroughRule) {
+          logEntry.passthrough = { ruleId: passthroughRule.id, ruleName: passthroughRule.name }
+        }
         addLog(logEntry)
       }
 

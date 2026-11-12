@@ -1,10 +1,6 @@
 # Future development
 
-Features considered during the 2.0 rework and not built. Each item stands on its own; the order is the one of value for a tool of this kind. Where a design was worked out, it is recorded here so that the work can start from it.
-
-## Features
-
-- Per-host passthrough in the MITM: hosts with certificate pinning tunnelled as raw bytes.
+The one design worked out during the 2.0 rework and not built, recorded so that the work can start from it.
 
 ## Transparent mode through WireGuard
 

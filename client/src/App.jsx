@@ -247,7 +247,8 @@ function App() {
         queryKeys.resources,
         queryKeys.dashboard,
         queryKeys.breakpoints,
-        queryKeys.throttle
+        queryKeys.throttle,
+        queryKeys.passthrough
       ]) {
         queryClient.invalidateQueries({ queryKey })
       }

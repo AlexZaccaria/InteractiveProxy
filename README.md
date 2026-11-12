@@ -112,7 +112,7 @@ InteractiveProxy
 - [ARCHITECTURE.md](ARCHITECTURE.md): modules, request flows, persistence, tests
 - [INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md): trusting the proxy's CA
 - [CHANGELOG.md](CHANGELOG.md)
-- [FUTURE-DEVELOPMENT.md](FUTURE-DEVELOPMENT.md): features not yet built, with the design of the transparent mode
+- [FUTURE-DEVELOPMENT.md](FUTURE-DEVELOPMENT.md): the design of the transparent mode through WireGuard, not yet built
 
 ## Scope and security
 

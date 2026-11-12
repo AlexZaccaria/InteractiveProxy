@@ -96,3 +96,15 @@ describe('LogRow network badge', () => {
     expect(screen.getByText('SLOW')).toBeInTheDocument()
   })
 })
+
+describe('LogRow passthrough badge', () => {
+  it('marks the tunnels a passthrough rule kept raw', () => {
+    renderRow({
+      ...httpLog,
+      method: 'CONNECT',
+      source: 'tunnel',
+      passthrough: { ruleId: 'p1', ruleName: 'Bank' }
+    })
+    expect(screen.getByText('PASSTHROUGH')).toBeInTheDocument()
+  })
+})

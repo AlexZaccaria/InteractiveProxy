@@ -11,7 +11,7 @@ import { triggerDownload } from '../logs/exportLogs'
  * @typedef {Object} RulesImportResult
  * @property {boolean} success
  * @property {'merge' | 'replace'} mode
- * @property {{ editRules: number, presets: number, blockedRules: number, filterRules: number, breakpointRules: number }} counts
+ * @property {{ editRules: number, presets: number, blockedRules: number, filterRules: number, breakpointRules: number, throttleRules?: number, passthroughRules?: number }} counts
  */
 
 /**
@@ -62,7 +62,9 @@ export function describeImport(result) {
     [counts.presets, 'preset'],
     [counts.blockedRules, 'blocked rule'],
     [counts.filterRules, 'filter rule'],
-    [counts.breakpointRules, 'breakpoint rule']
+    [counts.breakpointRules, 'breakpoint rule'],
+    [counts.throttleRules || 0, 'network-condition rule'],
+    [counts.passthroughRules || 0, 'passthrough host']
   ]
   const parts = entries
     .filter(([count]) => count > 0)

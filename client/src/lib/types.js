@@ -173,6 +173,7 @@
  * @property {string} [replayOf] Id of the entry this request repeated.
  * @property {{ request?: string, response?: string }} [breakpoint] Outcome of the breakpoints the entry went through (`edited`, `continued`, `aborted`).
  * @property {{ ruleId: string, ruleName: string, delayMs: number, throttleKbps: number }} [network] The network-condition rule that applied.
+ * @property {{ ruleId: string, ruleName: string }} [passthrough] The passthrough rule that kept the tunnel raw.
  * @property {boolean} [isConnectionLog]
  * @property {boolean} [isWebSocketSummary]
  * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
@@ -315,6 +316,16 @@
  * @property {string} url Substring of the request URL.
  * @property {number} delayMs Latency added before the request is forwarded; 0 for none.
  * @property {number} throttleKbps Bandwidth cap on the response in kilobits per second; 0 for none.
+ */
+
+/**
+ * A TLS passthrough rule (`GET /api/passthrough`).
+ *
+ * @typedef {Object} PassthroughRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} host Host name or IP; subdomains match too.
  */
 
 /**

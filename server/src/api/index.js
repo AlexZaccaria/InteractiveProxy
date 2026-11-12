@@ -22,6 +22,7 @@ const { createEventsRoutes } = require('./events')
 const { createBreakpointsRoutes } = require('./breakpoints')
 const { createRulesTransferRoutes } = require('./rules-transfer')
 const { createThrottleRoutes } = require('./throttle')
+const { createPassthroughRoutes } = require('./passthrough')
 
 /**
  * Counter of the requests bypassed (redirected) by the filter rules. Owned by
@@ -49,6 +50,7 @@ const { createThrottleRoutes } = require('./throttle')
  * @property {import('../rules/breakpoint-store').BreakpointStore} breakpointStore
  * @property {import('../proxy/breakpoints').BreakpointGate} breakpointGate
  * @property {import('../rules/throttle-store').ThrottleStore} throttleStore
+ * @property {import('../rules/passthrough-store').PassthroughStore} passthroughStore
  * @property {import('./events').StreamPresence} streamPresence Count of the open event streams.
  * @property {number} [eventsKeepAliveMs] Keep-alive interval of the `/api/events` stream.
  */
@@ -101,6 +103,7 @@ function createApiRouter(deps) {
     breakpointStore,
     breakpointGate,
     throttleStore,
+    passthroughStore,
     streamPresence,
     eventsKeepAliveMs
   } = deps
@@ -119,8 +122,15 @@ function createApiRouter(deps) {
   router.use(createFiltersRoutes({ router: proxyRouter, suggestions, bypassCounter }))
   router.use(createBreakpointsRoutes({ breakpointStore, breakpointGate }))
   router.use(createThrottleRoutes({ throttleStore }))
+  router.use(createPassthroughRoutes({ passthroughStore }))
   router.use(
-    createRulesTransferRoutes({ ruleStore, router: proxyRouter, breakpointStore, throttleStore })
+    createRulesTransferRoutes({
+      ruleStore,
+      router: proxyRouter,
+      breakpointStore,
+      throttleStore,
+      passthroughStore
+    })
   )
   router.use(
     createDashboardRoutes({ logStore, stats, router: proxyRouter, resourceStore, bypassCounter })
@@ -137,6 +147,7 @@ function createApiRouter(deps) {
       breakpointStore,
       breakpointGate,
       throttleStore,
+      passthroughStore,
       streamPresence,
       keepAliveMs: eventsKeepAliveMs
     })

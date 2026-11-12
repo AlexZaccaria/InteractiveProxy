@@ -21,6 +21,7 @@ The proxy exposes its state under `/api` on its own origin (`http://127.0.0.1:80
 | `POST /api/logs/import` | Add the entries of a HAR archive to the window |
 | `GET /api/rules/export`, `POST /api/rules/import` | Every rule kind in one file |
 | `GET /api/throttle`, `POST /api/throttle` | Network-condition rules (latency, bandwidth cap) |
+| `GET /api/passthrough`, `POST /api/passthrough` | TLS passthrough hosts |
 | `GET /api/logs/:id` | One entry with bodies |
 | `GET /api/logs/:id/replay`, `POST /api/logs/:id/replay` | The replay form of an entry, and the replay itself |
 | `GET /api/logs/:id/curl` | The entry as a curl command |
@@ -193,7 +194,7 @@ A `text/event-stream` response (`Cache-Control: no-cache, no-transform`, `X-Acce
 | `stats` | The dashboard counters changed; at most one event per 250 ms while traffic flows, and one right after the logs are cleared | `{"stats", "performance", "payloads", "routes", "editedRequests", "filterMetrics"}` as in `GET /api/dashboard` |
 | `logs-cleared` | After `DELETE /api/logs` | `{}` |
 | `config` | A flag or the filter mode changed | The flags of `GET /api/config` |
-| `rules` | Edit rules or presets, blocked rules, filter rules, local resources, breakpoint rules or network-condition rules changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources" \| "breakpoints" \| "throttle"}` |
+| `rules` | Edit rules or presets, blocked rules, filter rules, local resources, breakpoint rules, network-condition rules or passthrough hosts changed | `{"kind": "edit" \| "blocked" \| "filter" \| "resources" \| "breakpoints" \| "throttle" \| "passthrough"}` |
 | `breakpoint` | A flow was held at a breakpoint, or a held flow went on | `{"action": "paused", "item": {...}}` with the item of `GET /api/breakpoints/pending`, or `{"action": "resumed", "id": "…", "reason": "resume" \| "abort" \| "timeout"}` |
 
 ```bash
@@ -283,7 +284,7 @@ Every rule kind in one document:
 {
   "format": "interactive-proxy-rules", "version": 1, "exportedAt": "2026-11-11T10:00:00.000Z",
   "editRules": [...], "presets": [...], "blockedRules": [...], "filterRules": [...], "breakpointRules": [...],
-  "throttleRules": [...]
+  "throttleRules": [...], "passthroughRules": [...]
 }
 ```
 
@@ -291,7 +292,18 @@ The lists are the ones the respective endpoints answer; edit rules whose value c
 
 ### `POST /api/rules/import`
 
-Body: a document of the form above (`format` must be `interactive-proxy-rules`; a `version` above 1 is rejected with `400`), plus `mode`: `merge` (default) keeps the existing rules and, for every list present, replaces the records whose id already exists and adds the others; `replace` keeps only the file's records, also for the lists it leaves empty. Lists that are absent are left alone in `merge` mode. Each list is saved and announced on the event stream as it is today. Answers `{"success": true, "mode": "merge", "counts": {"editRules": n, "presets": n, "blockedRules": n, "filterRules": n, "breakpointRules": n, "throttleRules": n}}`.
+Body: a document of the form above (`format` must be `interactive-proxy-rules`; a `version` above 1 is rejected with `400`), plus `mode`: `merge` (default) keeps the existing rules and, for every list present, replaces the records whose id already exists and adds the others; `replace` keeps only the file's records, also for the lists it leaves empty. Lists that are absent are left alone in `merge` mode. Each list is saved and announced on the event stream as it is today. Answers `{"success": true, "mode": "merge", "counts": {"editRules": n, "presets": n, "blockedRules": n, "filterRules": n, "breakpointRules": n, "throttleRules": n, "passthroughRules": n}}`.
+
+## TLS passthrough
+
+A rule is `{"id", "enabled", "name", "host"}`: `host` is a host name or an IP, stored in lower case without scheme, path or port (a leading `*.` or `.` is dropped), and covers the host and its subdomains. A `CONNECT` tunnel to a covered host is relayed as raw bytes, without TLS termination: the client sees the server's own certificate, so applications that pin their certificates keep working, and nothing of that traffic is logged or rewritten beyond the tunnel entry itself (source `tunnel`, method `CONNECT`, with `passthrough: {"ruleId", "ruleName"}`; the log filter shows such entries with `sources=tunnel&methods=CONNECT`). Tunnels the filter rules already forward directly are unaffected.
+
+| Request | Answer |
+|---|---|
+| `GET /api/passthrough` | The rules, as an array |
+| `POST /api/passthrough` with `{"action": "add", "host", "name", "enabled"}` | `{"success": true, "passthroughRules": [...]}`; `400` without `host` or with one that is not a host name or an IP |
+| `POST /api/passthrough` with `{"action": "update", "id", "host", "name", "enabled"}` (fields optional) | Same; `404` when the id is unknown |
+| `POST /api/passthrough` with `{"action": "remove", "id"}` | Same |
 
 ## Network conditions
 

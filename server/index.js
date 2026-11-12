@@ -131,6 +131,7 @@ const { createBreakpointStore } = require('./src/rules/breakpoint-store')
 const { createBreakpointGate } = require('./src/proxy/breakpoints')
 const { createThrottleStore } = require('./src/rules/throttle-store')
 const { createNetworkConditions } = require('./src/proxy/throttle')
+const { createPassthroughStore } = require('./src/rules/passthrough-store')
 const { createApp } = require('./src/app')
 const { createProxyServer } = require('./src/server')
 
@@ -144,6 +145,7 @@ const RESOURCES_FILE = path.join(STORAGE_DIR, 'resources.json')
 const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
 const BREAKPOINTS_FILE = path.join(STORAGE_DIR, 'breakpoints.json')
 const THROTTLE_RULES_FILE = path.join(STORAGE_DIR, 'throttle-rules.json')
+const PASSTHROUGH_FILE = path.join(STORAGE_DIR, 'passthrough.json')
 
 // Ensure directories exist
 try {
@@ -231,6 +233,10 @@ const network = createNetworkConditions({
   store: throttleStore,
   isEnabled: () => configStore.throttlingEnabled
 })
+
+// Hosts whose CONNECT tunnels are relayed without TLS termination.
+const passthroughStore = createPassthroughStore({ file: PASSTHROUGH_FILE })
+passthroughStore.load()
 
 // Rewrite orchestration bound to the rule store. Interactive mode and the
 // log store are reached through a getter and a callback (both resolve at
@@ -356,6 +362,7 @@ const apiRouter = createApiRouter({
   breakpointStore,
   breakpointGate,
   throttleStore,
+  passthroughStore,
   streamPresence
 })
 const app = createApp({
@@ -389,6 +396,7 @@ const mitm = createMitmHandler({
   stats: streamedSizeStats,
   breakpoints: breakpointGate,
   network,
+  passthrough: passthroughStore,
   touchLog: entry => logStore.touch(entry)
 })
 const { server, start, stop } = createProxyServer({

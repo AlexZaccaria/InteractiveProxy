@@ -266,6 +266,16 @@ function LogRow({
                     </span>
                   </Tooltip>
                 )}
+                {log.passthrough && typeof log.passthrough === 'object' && (
+                  <Tooltip
+                    title="TLS passthrough"
+                    description={`Relayed without TLS termination by the rule ${log.passthrough.ruleName}.`}
+                  >
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-blue-500/10 border-blue-500/40 text-blue-300">
+                      PASSTHROUGH
+                    </span>
+                  </Tooltip>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
                 {replayable && (

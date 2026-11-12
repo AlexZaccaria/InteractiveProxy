@@ -107,6 +107,7 @@ function formatEvent(event) {
  * @property {import('../rules/breakpoint-store').BreakpointStore} [breakpointStore] Its saves publish `rules` events of kind `breakpoints`.
  * @property {import('../proxy/breakpoints').BreakpointGate} [breakpointGate] Its pauses and resumptions publish `breakpoint` events.
  * @property {import('../rules/throttle-store').ThrottleStore} [throttleStore] Its saves publish `rules` events of kind `throttle`.
+ * @property {import('../rules/passthrough-store').PassthroughStore} [passthroughStore] Its saves publish `rules` events of kind `passthrough`.
  * @property {StreamPresence} [streamPresence] Kept equal to the number of open streams.
  * @property {number} [keepAliveMs] Interval of the `: ping` comment lines (default 15 s).
  * @property {number} [statsCoalesceMs] Minimum spacing of `stats` events while traffic flows (default 250 ms).
@@ -134,6 +135,7 @@ function createEventsRoutes({
   breakpointStore,
   breakpointGate,
   throttleStore,
+  passthroughStore,
   streamPresence,
   keepAliveMs,
   statsCoalesceMs = DEFAULT_STATS_COALESCE_MS
@@ -255,6 +257,12 @@ function createEventsRoutes({
   if (throttleStore) {
     throttleStore.onChange(() => {
       bus.publish('rules', { kind: 'throttle' })
+    })
+  }
+
+  if (passthroughStore) {
+    passthroughStore.onChange(() => {
+      bus.publish('rules', { kind: 'passthrough' })
     })
   }
 

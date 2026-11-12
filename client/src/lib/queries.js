@@ -42,6 +42,8 @@ export const queryKeys = {
   breakpointsPending: ['breakpoints', 'pending'],
   /** The network-condition rules (latency, bandwidth cap). */
   throttle: ['throttle'],
+  /** The TLS passthrough rules. */
+  passthrough: ['passthrough'],
   /** Root of the log list and detail keys, for the reset when the logs are cleared. */
   logsRoot: ['logs'],
   /**
@@ -582,6 +584,44 @@ export function useThrottleRuleMutation() {
     mutationFn: payload => apiPost('/api/throttle', payload),
     onSuccess: data => {
       client.setQueryData(queryKeys.throttle, normalizeThrottleRules(data))
+    }
+  })
+}
+
+/** @typedef {import('./types').PassthroughRule} PassthroughRule */
+
+/**
+ * The passthrough endpoint answers an array on GET and `{ passthroughRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {PassthroughRule[]}
+ */
+export function normalizePassthroughRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.passthroughRules)) return payload.passthroughRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<PassthroughRule[]>} */
+export function usePassthroughRules() {
+  return useQuery({
+    queryKey: queryKeys.passthrough,
+    queryFn: ({ signal }) => apiGet('/api/passthrough', { signal }),
+    select: normalizePassthroughRules
+  })
+}
+
+/**
+ * Add, update or remove a TLS passthrough rule (`POST /api/passthrough`).
+ */
+export function usePassthroughRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, host?: string, name?: string, enabled?: boolean }} payload */
+    mutationFn: payload => apiPost('/api/passthrough', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.passthrough, normalizePassthroughRules(data))
     }
   })
 }

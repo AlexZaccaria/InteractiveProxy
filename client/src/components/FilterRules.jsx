@@ -19,6 +19,7 @@ import {
 } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
 import Tooltip from './Tooltip'
+import PassthroughHosts from './PassthroughHosts'
 
 /** Suggestions polling period while the event stream is not open (Redirect mode only). */
 const SUGGESTIONS_POLL_MS = 1000
@@ -575,6 +576,8 @@ function FilterRules({ showConfirm }) {
           </div>
         )}
       </div>
+
+      <PassthroughHosts showConfirm={showConfirm} />
     </div>
   )
 }
