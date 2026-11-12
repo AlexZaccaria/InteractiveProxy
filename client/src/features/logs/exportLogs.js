@@ -1,4 +1,4 @@
-import { apiGet } from '../../lib/api'
+import { apiGet, apiPost } from '../../lib/api'
 import { buildExportQuery } from './filters'
 
 /** @typedef {import('./filters').LogFilters} LogFilters */
@@ -49,4 +49,45 @@ export async function downloadLogsExport(filters, selectedIds) {
   } catch (error) {
     console.error('Error exporting logs:', error)
   }
+}
+
+/**
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function harFilename(now = new Date()) {
+  const timestamp = now.toISOString().replace(/[:.]/g, '-')
+  return `proxy-logs-${timestamp}.har`
+}
+
+/**
+ * Download the same selection as `downloadLogsExport` as a HAR 1.2 archive.
+ *
+ * @param {LogFilters} filters
+ * @param {string[]} selectedIds
+ * @returns {Promise<void>}
+ */
+export async function downloadHarExport(filters, selectedIds) {
+  const data = await apiGet('/api/logs/export', {
+    query: { ...buildExportQuery(filters, selectedIds), format: 'har' }
+  })
+  triggerDownload(JSON.stringify(data, null, 2), harFilename())
+}
+
+/**
+ * Read a HAR file and add its entries to the log window
+ * (`POST /api/logs/import`).
+ *
+ * @param {File} file
+ * @returns {Promise<{ imported: number, skipped: number }>}
+ */
+export async function importHarFile(file) {
+  const text = await file.text()
+  let archive
+  try {
+    archive = JSON.parse(text)
+  } catch {
+    throw new Error('The file is not valid JSON')
+  }
+  return apiPost('/api/logs/import', archive)
 }

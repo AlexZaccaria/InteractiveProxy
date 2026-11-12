@@ -24,7 +24,7 @@ Request bodies of any content type are forwarded byte for byte. Requests address
 
 ## The UI
 
-The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, the theme switch, the audit panel button, the keyboard shortcuts button, an export button for the current log view and a button that clears the logs. Below it, five tabs.
+The header shows the dashboard counters (total, blocked, redirected, processed, edited, served), the Interactive mode switch, the theme switch, the audit panel button, the keyboard shortcuts button, an export button for the current log view and a button that clears the logs. Below it, six tabs.
 
 The layout adapts to the window: from 1280 px wide the header is one row; below that the counters move to a second row under the title and the actions, and below 768 px the theme, audit and shortcuts buttons are hidden (the `?` key still opens the shortcuts panel) and the tab bar scrolls sideways. The dark theme is the default when the operating system prefers it; the Sun/Moon button in the header switches theme and the choice is kept in the browser's `localStorage` under `proxy.theme`. Without a stored choice the UI follows the system preference, also when it changes.
 
@@ -35,7 +35,7 @@ Keyboard shortcuts, listed in the panel the `?` key or the keyboard button opens
 | `/` | Switch to the Requests tab and focus the URL search |
 | `e` | Export the current log view (the same as the export button) |
 | `c` | Clear the logs, after confirmation |
-| `1` – `5` | Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local |
+| `1` – `6` | Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local, Breakpoints |
 | `?` | Show or hide the shortcuts panel |
 | `Esc` | Close the shortcuts panel or the audit panel; in a text field, leave the field |
 
@@ -43,7 +43,11 @@ Shortcuts are ignored while a text field has the focus (except `Esc`), while a d
 
 ### Requests
 
-The list is chronological: the oldest entry of the in-memory window is first and new traffic is appended at the end. Each entry shows method, source (`proxied`, `mitm`, `websocket`, `local`, `blocked`, `error`, `direct`, `tunnel`), status, file type and URL; expanding it loads headers, bodies, Connect frames and WebSocket messages, with before/after views when a rule rewrote something. The buttons on an entry mark it for export, create a local resource from its response, or add its URL to the blocked rules.
+The list is chronological: the oldest entry of the in-memory window is first and new traffic is appended at the end. Each entry shows method, source (`proxied`, `mitm`, `websocket`, `local`, `blocked`, `error`, `direct`, `tunnel`), status, file type and URL; expanding it loads headers, bodies, Connect frames and WebSocket messages, with before/after views when a rule rewrote something: JSON bodies as two trees or, with the Diff switch, as a line-by-line comparison; text bodies as the comparison, with the body as sent below it. The buttons on an entry replay it, copy it as a curl command, mark it for export, create a local resource from its response, or add its URL to the blocked rules.
+
+Replay opens a form with the method, the URL, the headers (one per line) and the body of the request, as the client sent them; Send puts the edited request through the proxy again, so the rules apply and the response is logged as a new entry marked REPLAY. The body is kept for this purpose up to `PROXY_REPLAY_BODY_LIMIT_BYTES` per request (256 KiB by default); a larger body, or the body of a request forwarded without inspection by a filter rule, is not available and the form says so. A binary body is sent as captured unless a text body is typed in its place. "Copy as cURL" puts on the clipboard a command for a POSIX shell (Git Bash, WSL, macOS, Linux) with the same method, URL, headers and body; when the clipboard is not available, the command is shown for a manual copy.
+
+The two buttons above the list exchange HTTP Archives: "Export HAR" downloads the current view (or the entries marked for export) as a HAR 1.2 file for other tools, "Import HAR" adds the entries of a HAR file to the window with the source `imported`, bodies and timings included, so that they can be searched and replayed like captured traffic. WebSocket entries have no HAR form and stay out of the export.
 
 Search fields:
 
@@ -66,6 +70,8 @@ The tab is named after the current filter mode. A rule is a pattern: one that lo
 
 The tab also lists suggestions computed from the current log window: the hosts with the most requests that no rule covers yet, with their most frequent paths.
 
+At the bottom, the TLS passthrough hosts: the HTTPS tunnels to these hosts (and their subdomains) are relayed as they are, without the proxy's certificate, so that applications which pin their certificates keep working. Nothing of that traffic is logged or rewritten; only the tunnel itself is recorded. Use it for the hosts an app refuses to talk to through the proxy, and keep the list short, because every host on it is invisible to the rules.
+
 ### Edited
 
 Edit rules rewrite traffic in flight. Two kinds exist:
@@ -77,11 +83,19 @@ URL patterns use the same semantics for every rule kind: a full URL matches by h
 
 Rules apply in file order and each rule sees the output of the previous one. A rule whose regular expression does not compile is skipped with a warning. Text rules apply to HTTP bodies with a textual content type, to headers, to each frame of a Connect envelope (including printable strings inside Protobuf messages) and to WebSocket text frames. JSONPath rules apply to `application/json` bodies, to decoded Protobuf messages (re-encoded afterwards) and to the JSON part of WebSocket frames, Socket.IO prefixes preserved. A field that contains JSON as a string stays a string.
 
-The tab also manages presets (saved rule templates), shows how many logged entries each rule touched, and receives rules created from the Requests tab: clicking a key in a Connect frame opens the form pre-filled with the URL pattern, the JSON path and the current value.
+The tab also manages presets (saved rule templates), shows how many logged entries each rule touched, and receives rules created from the Requests tab: clicking a key in a Connect frame opens the form pre-filled with the URL pattern, the JSON path and the current value. "Export rules" downloads every rule kind (edit rules and presets, blocked, filter and breakpoint rules) as one JSON file; "Import rules" adds the rules of such a file, replacing the ones whose id already exists (the API also offers a mode that replaces everything).
+
+The "Latency and throttling" card at the bottom of the tab holds the network-condition rules: a URL pattern, a latency in milliseconds added before the request is forwarded, and a bandwidth cap in kilobits per second on the response body (either one is enough). The first enabled rule that matches applies to HTTP and HTTPS alike; its switch turns every rule off at once. Entries slowed down by a rule carry a SLOW badge with the conditions that applied.
 
 ### Local
 
 Local resources are files or inline text served instead of the upstream response when a request URL contains the resource URL. Each resource has a content type and can be enabled or disabled; the global switch disables all of them.
+
+A resource can also map a folder: the part of the URL after the pattern is looked up inside a directory of the proxy's machine (a built site, for instance), with the content type taken from the file extension and `index.html` for paths ending in `/`. A file that is missing is answered with a 404, or forwarded to the upstream when the mapping is set to fall through. On Windows the Browse button opens the folder browser; elsewhere the path is typed.
+
+### Breakpoints
+
+A breakpoint rule names a substring of the URL and the phase it pauses: the request, before it is forwarded, the response, before it goes back to the client, or both. When a request matches, the proxy holds it and an editor opens in the UI (a strip above the tabs lists the paused flows when the editor is closed): the method, the URL, the headers and the body of the request, or the status, the headers and the body of the response, as they would go on after the edit rules. Send passes the flow on with the edits, Abort answers the client with an error, and closing the editor leaves the flow paused. A flow nobody resumes continues unchanged after `PROXY_BREAKPOINT_TIMEOUT_MS` (two minutes by default). Flows are held only while the UI is open, because only the UI can resume them; requests forwarded without inspection by a filter rule are never held. The tab manages the rules and shows the paused flows; its switch turns every rule off at once. Entries that went through a breakpoint carry a BREAKPOINT badge.
 
 ### Audit panel
 
@@ -121,6 +135,8 @@ A response is piped to the client as it arrives, instead of being buffered and d
 | `PROXY_UPSTREAM_H2` | `false` | Negotiate HTTP/2 with TLS upstreams that offer it (ALPN). Off by default because HTTP/2 changes what the upstream receives: `Host` becomes `:authority`, header names are lower-cased and connection-specific headers disappear, so the upstream no longer sees the request as the client sent it. The client side of the proxy is always HTTP/1.1 |
 | `PROXY_STREAM_UNINSPECTED_RESPONSES` | `true` | Enable [streaming](#streaming); `false` buffers every response |
 | `PROXY_STREAM_THRESHOLD_BYTES` | `1048576` | With Interactive mode on, responses declaring a larger `content-length` are streamed; `0` never streams by size alone |
+| `PROXY_REPLAY_BODY_LIMIT_BYTES` | `262144` | Request bodies up to this size are kept on their log entry for replay and "Copy as cURL" |
+| `PROXY_BREAKPOINT_TIMEOUT_MS` | `120000` | A flow held at a breakpoint continues unchanged after this time |
 | `PROXY_MITM_BYPASS_REWRITES_ENABLED` | `true` | Apply edit rules to HTTPS traffic that filter rules mark as direct; `false` forwards it untouched |
 | `PROXY_STRICT_TLS` | `false` | Verify upstream TLS certificates |
 | `PROXY_STRICT_TLS_CA_FILE` | empty | Additional PEM bundle trusted when `PROXY_STRICT_TLS` is on |

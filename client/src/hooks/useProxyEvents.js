@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { buildApiUrl } from '../config/apiConfig'
 
-const EVENT_NAMES = ['hello', 'log', 'stats', 'config', 'rules', 'logs-cleared']
+const EVENT_NAMES = ['hello', 'log', 'stats', 'config', 'rules', 'logs-cleared', 'breakpoint']
 
 /**
  * @typedef {(data: any, event: MessageEvent) => void} ProxyEventHandler

@@ -1,5 +1,14 @@
 import { Suspense, lazy, memo } from 'react'
-import { Check, ChevronDown, Clock, HardDrive, Replace, ShieldAlert } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  HardDrive,
+  Replace,
+  RotateCw,
+  ShieldAlert,
+  Terminal
+} from 'lucide-react'
 import Spinner from '../../components/Spinner'
 import {
   SourceIcon,
@@ -14,6 +23,48 @@ import Tooltip from '../../components/Tooltip'
 const LogDetail = lazy(() => import('./LogDetail'))
 
 /** @typedef {import('../../lib/types').LogSummary} LogSummary */
+
+/**
+ * HTTP entries can be replayed and copied as curl; WebSocket connections,
+ * messages and summaries cannot.
+ *
+ * @param {LogSummary} log
+ * @returns {boolean}
+ */
+export function isReplayableLog(log) {
+  return (
+    log.method !== 'WS' &&
+    log.source !== 'websocket' &&
+    !log.isConnectionLog &&
+    !log.isWebSocketSummary
+  )
+}
+
+/**
+ * The outcome of the breakpoints an entry went through, one phase per line.
+ *
+ * @param {{ request?: string, response?: string }} breakpoint
+ * @returns {string}
+ */
+export function describeBreakpoint(breakpoint) {
+  return ['request', 'response']
+    .filter(phase => typeof breakpoint[phase] === 'string')
+    .map(phase => `${phase === 'request' ? 'Request' : 'Response'}: ${breakpoint[phase]}`)
+    .join(' · ')
+}
+
+/**
+ * The network conditions a rule applied to an entry.
+ *
+ * @param {{ ruleName: string, delayMs: number, throttleKbps: number }} network
+ * @returns {string}
+ */
+export function describeNetwork(network) {
+  const parts = []
+  if (network.delayMs > 0) parts.push(`+${network.delayMs} ms`)
+  if (network.throttleKbps > 0) parts.push(`${network.throttleKbps} kbps`)
+  return `${parts.join(' · ')} (${network.ruleName})`
+}
 
 /**
  * The "Rewrites" badge with the panel listing the rules that applied; the
@@ -117,6 +168,9 @@ function DetailFallback() {
  * @param {(url: string) => void} props.onToggleBlock
  * @param {(id: string) => void} props.onToggleRewritesPin
  * @param {(log: LogSummary, file: File) => void} props.onReplaceResource
+ * @param {(log: LogSummary) => void} props.onReplay Opens the replay form for the entry.
+ * @param {(log: LogSummary) => void} props.onCopyCurl Copies the entry as a curl command.
+ * @param {boolean} [props.curlCopied] The curl command of this entry was just copied.
  * @param {(seed: import('./jsonPath').JsonPathRuleSeed) => void} [props.onCreateJsonPathRule]
  */
 function LogRow({
@@ -130,11 +184,15 @@ function LogRow({
   onToggleBlock,
   onToggleRewritesPin,
   onReplaceResource,
+  onReplay,
+  onCopyCurl,
+  curlCopied = false,
   onCreateJsonPathRule
 }) {
   const url = log.fullUrl || log.url
   const contentInfo = log.responseHeaders ? getContentTypeInfo(log) : null
   const ContentIcon = contentInfo ? contentInfo.icon : null
+  const replayable = isReplayableLog(log)
 
   return (
     <div className="bg-surface-raised rounded-lg border border-edge hover:border-fg-faint/70 transition-colors">
@@ -184,8 +242,86 @@ function LogRow({
                     onTogglePin={() => onToggleRewritesPin(log.id)}
                   />
                 )}
+                {log.replayOf && (
+                  <Tooltip
+                    title="Replay"
+                    description="Sent again from the UI. The original entry is still in the list."
+                  >
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-cyan-500/10 border-cyan-500/40 text-cyan-300">
+                      REPLAY
+                    </span>
+                  </Tooltip>
+                )}
+                {log.breakpoint && typeof log.breakpoint === 'object' && (
+                  <Tooltip title="Breakpoint" description={describeBreakpoint(log.breakpoint)}>
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-amber-500/10 border-amber-500/40 text-amber-300">
+                      BREAKPOINT
+                    </span>
+                  </Tooltip>
+                )}
+                {log.network && typeof log.network === 'object' && (
+                  <Tooltip title="Network conditions" description={describeNetwork(log.network)}>
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-pink-500/10 border-pink-500/40 text-pink-300">
+                      SLOW
+                    </span>
+                  </Tooltip>
+                )}
+                {log.passthrough && typeof log.passthrough === 'object' && (
+                  <Tooltip
+                    title="TLS passthrough"
+                    description={`Relayed without TLS termination by the rule ${log.passthrough.ruleName}.`}
+                  >
+                    <span className="px-2 py-1 rounded text-xs font-medium border bg-blue-500/10 border-blue-500/40 text-blue-300">
+                      PASSTHROUGH
+                    </span>
+                  </Tooltip>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
+                {replayable && (
+                  <Tooltip
+                    title="Replay request"
+                    description="Send this request again through the proxy, after editing its method, URL, headers or body."
+                  >
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation()
+                        onReplay(log)
+                      }}
+                      aria-label="Replay request"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-cyan-600/15 border border-cyan-500/60 text-cyan-200 hover:bg-cyan-600/30 hover:text-fg transition-colors"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                  </Tooltip>
+                )}
+                {replayable && (
+                  <Tooltip
+                    title={curlCopied ? 'Copied' : 'Copy as cURL'}
+                    description="Copy a curl command that repeats this request, headers and body included."
+                  >
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation()
+                        onCopyCurl(log)
+                      }}
+                      aria-label={curlCopied ? 'Copied as cURL' : 'Copy as cURL'}
+                      className={`inline-flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${
+                        curlCopied
+                          ? 'bg-emerald-500/20 border-emerald-500/70 text-emerald-200'
+                          : 'bg-surface-sunken border-fg-dim/80 text-fg-body hover:bg-surface-highlight hover:border-fg-muted hover:text-fg-strong'
+                      }`}
+                    >
+                      {curlCopied ? (
+                        <Check className="w-4 h-4" />
+                      ) : (
+                        <Terminal className="w-4 h-4" />
+                      )}
+                    </button>
+                  </Tooltip>
+                )}
                 <Tooltip
                   title="Export selection"
                   description={

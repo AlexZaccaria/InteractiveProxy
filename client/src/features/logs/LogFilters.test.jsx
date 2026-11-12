@@ -20,7 +20,7 @@ function renderFilters(overrides = {}) {
     responseSearchTerm: '',
     requestRewrittenOnly: false,
     responseRewrittenOnly: false,
-    selectedSources: ['proxied', 'mitm', 'websocket'],
+    selectedSources: ['proxied', 'mitm', 'websocket', 'imported'],
     selectedMethods: ['GET', 'POST'],
     selectedFileTypes: ['json'],
     showWsConnections: false,
@@ -46,7 +46,7 @@ describe('LogFilters', () => {
 
   it('shows the counts of the dropdowns', () => {
     renderFilters()
-    expect(screen.getByRole('button', { name: 'Sources (3)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sources (4)' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Methods (2)' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Types (1)' })).toBeInTheDocument()
   })
@@ -65,7 +65,7 @@ describe('LogFilters', () => {
     fireEvent.click(screen.getByLabelText('WS Connection Status'))
     expect(handlers.onShowWsConnectionsChange).toHaveBeenCalledWith(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sources (3)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sources (4)' }))
     expect(screen.queryByLabelText('OPTIONS')).not.toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('HTTPS'))
     expect(handlers.onToggleSource).toHaveBeenCalledWith('mitm')

@@ -37,6 +37,9 @@ const EXPANDED_CARD_MARGIN_TOP = 80
  * @param {(url: string) => void} props.onToggleBlock
  * @param {(id: string) => void} props.onToggleRewritesPin
  * @param {(log: LogSummary, file: File) => void} props.onReplaceResource
+ * @param {(log: LogSummary) => void} props.onReplay
+ * @param {(log: LogSummary) => void} props.onCopyCurl
+ * @param {string | null} props.curlCopiedId The entry whose curl command was just copied.
  * @param {(seed: import('./jsonPath').JsonPathRuleSeed) => void} [props.onCreateJsonPathRule]
  */
 export default function LogList({
@@ -55,6 +58,9 @@ export default function LogList({
   onToggleBlock,
   onToggleRewritesPin,
   onReplaceResource,
+  onReplay,
+  onCopyCurl,
+  curlCopiedId,
   onCreateJsonPathRule
 }) {
   const listRef = useRef(null)
@@ -151,6 +157,9 @@ export default function LogList({
                 onToggleBlock={onToggleBlock}
                 onToggleRewritesPin={onToggleRewritesPin}
                 onReplaceResource={onReplaceResource}
+                onReplay={onReplay}
+                onCopyCurl={onCopyCurl}
+                curlCopied={curlCopiedId !== null && String(curlCopiedId) === String(log.id)}
                 onCreateJsonPathRule={onCreateJsonPathRule}
               />
             </div>

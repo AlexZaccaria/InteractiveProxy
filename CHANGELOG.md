@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Replay of a logged request from the Requests tab: a form with the method, URL, headers and body, sent again through the proxy; the new entry carries `replayOf` and a REPLAY badge. API: `GET /api/logs/:id/replay` describes the request, `POST /api/logs/:id/replay` sends it with the edits. Request bodies are kept for it up to `PROXY_REPLAY_BODY_LIMIT_BYTES` (256 KiB by default).
+- "Copy as cURL" on every HTTP entry, from `GET /api/logs/:id/curl` (`viaProxy=1` for a command through the proxy).
+- Breakpoints: rules (URL substring, request or response phase) that hold a matching flow until it is sent on, edited by hand or aborted from the UI. A Breakpoints tab (shortcut `6`) manages the rules and the paused flows, an editor opens when a flow pauses, and the entries carry a BREAKPOINT badge. API: `/api/breakpoints`, `/api/breakpoints/pending` with `resume` and `abort`, the `breakpoints-mode` flag, `breakpoint` events on the stream. Flows are held only while a UI is connected and continue unchanged after `PROXY_BREAKPOINT_TIMEOUT_MS` (two minutes by default).
+- HAR export and import: `GET /api/logs/export?format=har` renders the current view as an HTTP Archive 1.2, `POST /api/logs/import` adds the entries of a HAR file to the window as `imported` entries that can be searched and replayed; two buttons above the Requests list.
+- Rules export and import in one file (`GET /api/rules/export`, `POST /api/rules/import` with `merge` or `replace`): edit rules and presets, blocked, filter, breakpoint and network-condition rules; two buttons in the Edited tab.
+- Latency and throttling per URL pattern (`/api/throttle`, the `throttling-mode` flag): a delay before the request is forwarded and a bandwidth cap on the response, for buffered and streamed bodies alike; a card in the Edited tab and a SLOW badge on the entries.
+- Local resources can map a folder: the URL path after the pattern is served from a directory of the proxy's machine, with the content type from the extension and `index.html` for directory paths; a miss answers 404 or falls through to the upstream. The Windows picker can browse for a folder.
+- Side-by-side diff of a body before and after a rewrite in the log card: a Diff switch next to the JSON trees, and the comparison itself for text bodies rewritten by a text rule.
+- TLS passthrough hosts (`/api/passthrough`, a card in the Redirected tab): the CONNECT tunnels to these hosts and their subdomains are relayed as raw bytes, for applications that pin their certificates; the tunnel entry carries `passthrough`.
+
+### Internal
+
+- `npm run lint:server` no longer fails on the empty root pattern.
+
 ## 2.0.0 (2026-11-08)
 
 ### Fixed

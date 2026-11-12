@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import {
   Trash2,
   FileText,
+  Folder,
+  FolderOpen,
   Image,
   File,
   HardDrive,
@@ -14,7 +16,7 @@ import {
 } from 'lucide-react'
 import Spinner from './Spinner'
 import { ApiError } from '../lib/api'
-import { useResourceMutations, useResources, useSetFlag } from '../lib/queries'
+import { useFilePicker, useResourceMutations, useResources, useSetFlag } from '../lib/queries'
 import { useProxyStore } from '../store/useProxyStore'
 import Tooltip from './Tooltip'
 
@@ -35,7 +37,8 @@ function LocalResources({ showConfirm }) {
   const enabled = useProxyStore(state => state.localResourcesEnabled)
   const setLocalResourcesMode = useSetFlag('local-resources-mode')
   const resourcesQuery = useResources()
-  const { create, toggle, remove } = useResourceMutations()
+  const { create, createFolder, toggle, remove } = useResourceMutations()
+  const folderPicker = useFilePicker()
   const resources = resourcesQuery.data || []
   const [showAddForm, setShowAddForm] = useState(false)
   const [mode, setMode] = useState('file') // 'file' or 'text'
@@ -43,6 +46,8 @@ function LocalResources({ showConfirm }) {
   const [file, setFile] = useState(null)
   const [textContent, setTextContent] = useState('')
   const [contentType, setContentType] = useState('text/plain')
+  const [folderPath, setFolderPath] = useState('')
+  const [fallthrough, setFallthrough] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -112,20 +117,29 @@ function LocalResources({ showConfirm }) {
       return
     }
 
+    if (mode === 'folder' && !folderPath.trim()) {
+      setError('Enter the folder to map')
+      return
+    }
+
     setLoading(true)
 
     try {
-      const formData = new FormData()
-      formData.append('url', url)
-      formData.append('contentType', contentType)
-
-      if (mode === 'file') {
-        formData.append('file', file)
+      if (mode === 'folder') {
+        await createFolder.mutateAsync({ url, folderPath: folderPath.trim(), fallthrough })
       } else {
-        formData.append('content', textContent)
-      }
+        const formData = new FormData()
+        formData.append('url', url)
+        formData.append('contentType', contentType)
 
-      await create.mutateAsync(formData)
+        if (mode === 'file') {
+          formData.append('file', file)
+        } else {
+          formData.append('content', textContent)
+        }
+
+        await create.mutateAsync(formData)
+      }
 
       setSuccess('Resource added successfully!')
 
@@ -134,6 +148,8 @@ function LocalResources({ showConfirm }) {
         setFile(null)
         setTextContent('')
         setContentType('text/plain')
+        setFolderPath('')
+        setFallthrough(false)
         setSuccess('')
         setShowAddForm(false)
       }, 1500)
@@ -147,6 +163,22 @@ function LocalResources({ showConfirm }) {
       setLoading(false)
     }
   }
+  const browseFolder = async () => {
+    try {
+      const picked = await folderPicker.mutateAsync({
+        title: 'Select the folder to map',
+        kind: 'folder'
+      })
+      if (picked) setFolderPath(picked)
+    } catch (err) {
+      setError(
+        err instanceof ApiError && typeof err.body?.error === 'string'
+          ? err.body.error
+          : 'The folder browser could not be opened'
+      )
+    }
+  }
+
   const formatBytes = bytes => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -280,6 +312,17 @@ function LocalResources({ showConfirm }) {
               >
                 Text
               </button>
+              <button
+                type="button"
+                onClick={() => setMode('folder')}
+                className={`px-3 h-8 text-xs font-medium tracking-wide rounded-full transform transition-all duration-150 ml-0.5 ${
+                  mode === 'folder'
+                    ? 'bg-emerald-500/10 border border-emerald-600/60 text-emerald-200 scale-100'
+                    : 'bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-strong scale-95'
+                }`}
+              >
+                Folder
+              </button>
             </div>
           </div>
 
@@ -304,8 +347,56 @@ function LocalResources({ showConfirm }) {
               />
             </div>
 
+            {/* Folder mapping */}
+            {mode === 'folder' && (
+              <div className="space-y-3">
+                <div>
+                  <label
+                    htmlFor="local-resource-folder"
+                    className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
+                  >
+                    Folder on the proxy's machine
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      id="local-resource-folder"
+                      name="local-resource-folder"
+                      value={folderPath}
+                      onChange={e => setFolderPath(e.target.value)}
+                      placeholder="C:\projects\site\dist"
+                      className="flex-1 min-w-0 px-3 h-8 bg-surface border border-edge rounded-lg text-xs text-fg font-mono placeholder-fg-muted focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      onClick={browseFolder}
+                      disabled={folderPicker.isPending}
+                      className="shrink-0 inline-flex items-center gap-1.5 px-3 h-8 rounded-lg border border-edge text-xs text-fg-body hover:bg-surface-highlight disabled:opacity-50 transition-colors"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      <span>Browse</span>
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-fg-muted">
+                    The part of the URL after the pattern is looked up inside the folder; a path
+                    ending in / serves index.html. The content type follows the file extension.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs text-fg-body">
+                  <input
+                    type="checkbox"
+                    name="local-resource-fallthrough"
+                    checked={fallthrough}
+                    onChange={e => setFallthrough(e.target.checked)}
+                  />
+                  Forward to the upstream when the file is missing (otherwise answer 404)
+                </label>
+              </div>
+            )}
+
             {/* Content Type */}
-            <div>
+            <div className={mode === 'folder' ? 'hidden' : undefined}>
               <label
                 htmlFor="local-resource-content-type"
                 className="block text-xs font-semibold uppercase tracking-wide text-fg-muted mb-2"
@@ -458,15 +549,31 @@ function LocalResources({ showConfirm }) {
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2 mb-2">
-                      {getFileIcon(resource.contentType)}
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-medium border ${getContentTypeBadge(resource.contentType)}`}
-                      >
-                        {resource.contentType}
-                      </span>
-                      <span className="px-2 py-1 rounded text-xs font-medium border bg-fg-faint/20 text-fg-muted border-fg-faint/30">
-                        {formatBytes(resource.size)}
-                      </span>
+                      {resource.type === 'folder' ? (
+                        <>
+                          <Folder className="w-5 h-5 text-emerald-400" />
+                          <span className="px-2 py-1 rounded text-xs font-medium border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                            Folder
+                          </span>
+                          {resource.fallthrough && (
+                            <span className="px-2 py-1 rounded text-xs font-medium border bg-fg-faint/20 text-fg-muted border-fg-faint/30">
+                              falls through
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {getFileIcon(resource.contentType)}
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium border ${getContentTypeBadge(resource.contentType)}`}
+                          >
+                            {resource.contentType}
+                          </span>
+                          <span className="px-2 py-1 rounded text-xs font-medium border bg-fg-faint/20 text-fg-muted border-fg-faint/30">
+                            {formatBytes(resource.size || 0)}
+                          </span>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex items-start space-x-2 mb-2">
@@ -475,7 +582,9 @@ function LocalResources({ showConfirm }) {
                     </div>
 
                     <p className="text-fg-muted text-xs mb-1">
-                      File: {resource.originalName || resource.filename}
+                      {resource.type === 'folder'
+                        ? `Folder: ${resource.path}`
+                        : `File: ${resource.originalName || resource.filename}`}
                     </p>
                   </div>
 

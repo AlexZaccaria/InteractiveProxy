@@ -104,8 +104,20 @@ function formatEvent(event) {
  * @property {import('../proxy/router').Router} router
  * @property {import('../resources/store').ResourceStore} resourceStore
  * @property {import('./index').BypassCounter} bypassCounter
+ * @property {import('../rules/breakpoint-store').BreakpointStore} [breakpointStore] Its saves publish `rules` events of kind `breakpoints`.
+ * @property {import('../proxy/breakpoints').BreakpointGate} [breakpointGate] Its pauses and resumptions publish `breakpoint` events.
+ * @property {import('../rules/throttle-store').ThrottleStore} [throttleStore] Its saves publish `rules` events of kind `throttle`.
+ * @property {import('../rules/passthrough-store').PassthroughStore} [passthroughStore] Its saves publish `rules` events of kind `passthrough`.
+ * @property {StreamPresence} [streamPresence] Kept equal to the number of open streams.
  * @property {number} [keepAliveMs] Interval of the `: ping` comment lines (default 15 s).
  * @property {number} [statsCoalesceMs] Minimum spacing of `stats` events while traffic flows (default 250 ms).
+ */
+
+/**
+ * The number of open event streams, shared with the parts of the proxy that
+ * act only when a UI is listening (the breakpoints).
+ *
+ * @typedef {{ clients: number }} StreamPresence
  */
 
 /**
@@ -120,12 +132,21 @@ function createEventsRoutes({
   router: proxyRouter,
   resourceStore,
   bypassCounter,
+  breakpointStore,
+  breakpointGate,
+  throttleStore,
+  passthroughStore,
+  streamPresence,
   keepAliveMs,
   statsCoalesceMs = DEFAULT_STATS_COALESCE_MS
 }) {
   const bus = createEventBus()
   /** @type {Set<import('express').Response>} */
   const clients = new Set()
+
+  function updatePresence() {
+    if (streamPresence) streamPresence.clients = clients.size
+  }
   /** @type {NodeJS.Timeout | null} */
   let keepAliveTimer = null
   /** @type {NodeJS.Timeout | null} */
@@ -221,6 +242,30 @@ function createEventsRoutes({
     bus.publish('rules', { kind: 'resources' })
   })
 
+  if (breakpointStore) {
+    breakpointStore.onChange(() => {
+      bus.publish('rules', { kind: 'breakpoints' })
+    })
+  }
+
+  if (breakpointGate) {
+    breakpointGate.onChange(event => {
+      bus.publish('breakpoint', event)
+    })
+  }
+
+  if (throttleStore) {
+    throttleStore.onChange(() => {
+      bus.publish('rules', { kind: 'throttle' })
+    })
+  }
+
+  if (passthroughStore) {
+    passthroughStore.onChange(() => {
+      bus.publish('rules', { kind: 'passthrough' })
+    })
+  }
+
   // ---- clients ------------------------------------------------------------
 
   /**
@@ -228,6 +273,7 @@ function createEventsRoutes({
    */
   function dropClient(res) {
     if (!clients.delete(res)) return
+    updatePresence()
     try {
       res.end()
     } catch {
@@ -243,6 +289,7 @@ function createEventsRoutes({
   function writeTo(res, chunk) {
     if (res.destroyed || res.writableEnded) {
       clients.delete(res)
+      updatePresence()
       stopKeepAliveIfIdle()
       return
     }
@@ -300,6 +347,7 @@ function createEventsRoutes({
     res.flushHeaders()
 
     clients.add(res)
+    updatePresence()
     startKeepAlive()
 
     writeTo(
@@ -315,6 +363,7 @@ function createEventsRoutes({
 
     res.on('close', () => {
       clients.delete(res)
+      updatePresence()
       stopKeepAliveIfIdle()
     })
   })

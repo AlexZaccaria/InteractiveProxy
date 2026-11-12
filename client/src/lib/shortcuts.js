@@ -4,8 +4,15 @@
  * `hooks/useKeyboardShortcuts.js`.
  */
 
-/** The tabs in the order of the `1`–`5` shortcuts. */
-export const TAB_ORDER = /** @type {const} */ (['logs', 'blocked', 'filters', 'edit', 'resources'])
+/** The tabs in the order of the `1`–`6` shortcuts. */
+export const TAB_ORDER = /** @type {const} */ ([
+  'logs',
+  'blocked',
+  'filters',
+  'edit',
+  'resources',
+  'breakpoints'
+])
 
 /**
  * @typedef {Object} ShortcutDescription
@@ -19,8 +26,8 @@ export const SHORTCUT_DESCRIPTIONS = [
   { keys: ['e'], description: 'Export the current log view' },
   { keys: ['c'], description: 'Clear the logs (asks for confirmation)' },
   {
-    keys: ['1', '5'],
-    description: 'Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local'
+    keys: ['1', '6'],
+    description: 'Switch tab: Requests, Blocked, Redirected/Processed, Edited, Local, Breakpoints'
   },
   { keys: ['?'], description: 'Show or hide this help' },
   { keys: ['Esc'], description: 'Close the help or the audit panel; leave a text field' }

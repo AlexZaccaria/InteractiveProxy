@@ -18,6 +18,15 @@
 const { URL } = require('url')
 const { safeString } = require('../util/strings')
 const { logDebug } = require('../util/logger')
+const { REPLAY_BODY_MAX_BYTES } = require('../../config')
+const { retainRequestBody } = require('../logs/replay')
+const {
+  recordBreakpointOnLog,
+  abortAtBreakpoint: abortFlowAtBreakpoint,
+  headersForTarget,
+  toBodyBuffer
+} = require('./breakpoints')
+const { sleep, writeThrottled } = require('./throttle')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const {
   STREAMED_BODY_MARKER,
@@ -75,6 +84,9 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {(logEntry: LogEntry | null | undefined, appliedRuleIds: string[], phase: string) => void} attachRewriteMetadata
  * @property {BypassCounter} bypassCounter
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
+ * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
+ * @property {import('./throttle').NetworkConditionsMatcher} network Latency and bandwidth cap per URL.
+ * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  * @property {number} port Listening port, the default authority of client-facing URLs.
  */
 
@@ -144,9 +156,21 @@ function createHttpFlow({
   attachRewriteMetadata,
   bypassCounter,
   stats,
+  breakpoints,
+  network,
+  touchLog,
   port
 }) {
   const { createHttpFlowLogEntry, recordUpstreamErrorOnLog } = entries
+
+  /**
+   * @param {import('http').ServerResponse} res
+   * @param {LogEntry | null} logEntry
+   * @param {'request' | 'response'} phase
+   * @param {boolean} alreadyLogged
+   */
+  const abortAtBreakpoint = (res, logEntry, phase, alreadyLogged) =>
+    abortFlowAtBreakpoint({ res, logEntry, phase, alreadyLogged, addLog, touchLog })
   const { performUpstreamRequest, attachAbortOnClose } = upstream
   const { applyHeaderRewrites } = httpJson
   const { applyConnectRewritesForBypass } = connect
@@ -504,6 +528,9 @@ function createHttpFlow({
         })
       : null
 
+    // The client's bytes are kept for a replay before any rule touches them.
+    if (logEntry && req.rawBody) retainRequestBody(logEntry, req.rawBody, REPLAY_BODY_MAX_BYTES)
+
     if (req.rawBody) {
       const { buffer: rewrittenBuffer } = processRequestBodyWithRewrites({
         buffer: req.rawBody,
@@ -530,6 +557,7 @@ function createHttpFlow({
       if (logEntry) {
         logEntry.source = 'local'
         logEntry.localResource = matchedUrl
+        logEntry.statusCode = typeof resource.status === 'number' ? resource.status : 200
         addLog(logEntry)
       }
 
@@ -594,9 +622,62 @@ function createHttpFlow({
             }
           }
 
+          let method = req.method
+          let targetUrl = resolvedTargetUrl
+
+          // A request breakpoint holds the flow until the UI sends it on,
+          // with its edits, or aborts it.
+          const requestBreakpoint = breakpoints.match('request', {
+            requestUrl,
+            fullUrl: targetUrl
+          })
+          if (requestBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'request',
+              rule: requestBreakpoint,
+              request: {
+                method,
+                url: targetUrl,
+                headers: headersToForward,
+                body: toBodyBuffer(body)
+              }
+            })
+            if (resolution.action === 'abort') {
+              abortAtBreakpoint(res, logEntry, 'request', false)
+              return
+            }
+            if (resolution.edited) {
+              headersToForward = headersForTarget(
+                resolution.request.headers,
+                resolution.request.url,
+                targetUrl
+              )
+              method = resolution.request.method
+              targetUrl = resolution.request.url
+              body = resolution.request.body || undefined
+              if (Buffer.isBuffer(body)) {
+                headersToForward['content-length'] = body.length
+              } else {
+                delete headersToForward['content-length']
+              }
+            }
+            recordBreakpointOnLog(logEntry, 'request', resolution.edited ? 'edited' : 'continued', {
+              request: resolution.request
+            })
+          }
+
+          // Network conditions: a latency before the upstream request and a
+          // bandwidth cap on the response.
+          const conditions = network.match({ requestUrl, fullUrl: targetUrl })
+          const bytesPerSecond = conditions ? conditions.bytesPerSecond : 0
+          if (conditions) {
+            if (logEntry) logEntry.network = conditions.summary
+            if (conditions.delayMs > 0) await sleep(conditions.delayMs)
+          }
+
           const { response: upstreamResponse } = await performUpstreamRequest({
-            url: resolvedTargetUrl,
-            method: req.method,
+            url: targetUrl,
+            method,
             headers: headersToForward,
             body,
             abortSignal: abortController.signal,
@@ -615,17 +696,25 @@ function createHttpFlow({
             logEntry
           )
 
+          // A response breakpoint needs the whole body: the response is then
+          // buffered as for a rule.
+          const responseBreakpoint = breakpoints.match('response', {
+            requestUrl,
+            fullUrl: targetUrl
+          })
+
           // Stream when no rule can touch the body and nothing needs it for
           // logging; otherwise buffer it for rewrites and previews.
           const canStream =
+            !responseBreakpoint &&
             upstreamResponse.body &&
             shouldStreamResponse({
-              method: req.method,
+              method,
               contentType: getContentType(upstreamHeaders),
               contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
               hasRules: hasApplicableRules(ruleStore, {
                 requestUrl,
-                fullUrl: resolvedTargetUrl,
+                fullUrl: targetUrl,
                 phase: 'response'
               }),
               interactive: configStore.interactiveModeEnabled === true
@@ -634,8 +723,8 @@ function createHttpFlow({
           if (canStream) {
             if (logEntry) {
               logEntry.source = 'proxied'
-              logEntry.targetUrl = resolvedTargetUrl
-              logEntry.fullUrl = resolvedTargetUrl // Use target URL instead of proxy URL
+              logEntry.targetUrl = targetUrl
+              logEntry.fullUrl = targetUrl // Use target URL instead of proxy URL
               logEntry.statusCode = upstreamResponse.statusCode
               logEntry.responseHeaders = upstreamHeaders
               logEntry.responseBody = STREAMED_BODY_MARKER
@@ -657,7 +746,9 @@ function createHttpFlow({
             res.status(upstreamResponse.statusCode)
             // Awaited so that the abort-on-close listener stays attached for
             // the whole transfer; the size is known only at the end.
-            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res)
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, res, {
+              bytesPerSecond
+            })
             if (logEntry) {
               logEntry.responseSize = bytes
               stats.recordStreamedResponseSize(logEntry, bytes)
@@ -673,20 +764,60 @@ function createHttpFlow({
               responseBuffer,
               upstreamHeaders,
               requestUrl,
-              jsonPathFullUrl: resolvedTargetUrl,
+              jsonPathFullUrl: targetUrl,
               logEntry,
               source: 'proxied',
-              targetUrlForLog: resolvedTargetUrl,
+              targetUrlForLog: targetUrl,
               overrideFullUrlOnLog: true,
               allowUnaryConnectText: false,
               statusCode: upstreamResponse.statusCode,
               enableConnectFrameTextRewrites: false
             })
 
-          res.status(upstreamResponse.statusCode)
+          let statusCode = upstreamResponse.statusCode
+          /** @type {Record<string, any>} */
+          let responseHeadersToSend = rewrittenHeaders
+          let responseBodyToSend = finalResponseBuffer
+
+          // A response breakpoint holds the rewritten response until the UI
+          // sends it on, with its edits, or aborts it. The entry is already
+          // logged, so an edit re-publishes it.
+          if (responseBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'response',
+              rule: responseBreakpoint,
+              request: {
+                method,
+                url: targetUrl,
+                headers: headersToForward,
+                body: toBodyBuffer(body)
+              },
+              response: { statusCode, headers: rewrittenHeaders, body: finalResponseBuffer }
+            })
+            if (resolution.action === 'abort') {
+              abortAtBreakpoint(res, logEntry, 'response', true)
+              return
+            }
+            if (resolution.edited && resolution.response) {
+              statusCode = resolution.response.statusCode
+              responseHeadersToSend = resolution.response.headers
+              responseBodyToSend = resolution.response.body || Buffer.alloc(0)
+            }
+            recordBreakpointOnLog(
+              logEntry,
+              'response',
+              resolution.edited ? 'edited' : 'continued',
+              {
+                response: resolution.response || undefined
+              }
+            )
+            if (logEntry) touchLog(logEntry)
+          }
+
+          res.status(statusCode)
 
           const forwardedResponseHeaders = sanitizeAndStripIdentifyingHeaders(
-            rewrittenHeaders,
+            responseHeadersToSend,
             OMIT_RESPONSE_HEADERS
           )
           Object.entries(forwardedResponseHeaders).forEach(([key, value]) => {
@@ -696,10 +827,12 @@ function createHttpFlow({
 
           applyCacheBypassHeadersToResponse(res, 'remote')
 
-          if (req.method === 'HEAD') {
+          if (method === 'HEAD') {
             res.end()
+          } else if (bytesPerSecond > 0) {
+            await writeThrottled(res, responseBodyToSend, bytesPerSecond)
           } else {
-            res.send(finalResponseBuffer)
+            res.send(responseBodyToSend)
           }
         } catch (error) {
           handleUpstreamError({ logEntry, error: /** @type {Error} */ (error), res, useJson: true })

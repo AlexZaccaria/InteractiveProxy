@@ -11,6 +11,7 @@ import {
   HardDrive,
   Keyboard,
   Moon,
+  Pause,
   ShieldAlert,
   Sun,
   Trash2
@@ -21,6 +22,9 @@ import LocalResources from './components/LocalResources'
 import BlockedResources from './components/BlockedResources'
 import FilterRules from './components/FilterRules'
 import EditRules from './features/rules/EditRules'
+import Breakpoints from './features/breakpoints/Breakpoints'
+import BreakpointDialog from './features/breakpoints/BreakpointDialog'
+import PendingBreakpointsBanner from './features/breakpoints/PendingBreakpointsBanner'
 import Modal from './components/Modal'
 import Spinner from './components/Spinner'
 import AuditPanel from './components/AuditPanel'
@@ -30,11 +34,14 @@ import { useModal } from './hooks/useModal'
 import { useProxyEvents } from './hooks/useProxyEvents'
 import { isEditableTarget, useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import {
+  applyBreakpointEvent,
   queryKeys,
+  useBreakpointRules,
   useClearLogs,
   useConfig,
   useDashboard,
   useEditRules,
+  usePendingBreakpoints,
   useSetFlag
 } from './lib/queries'
 import { TAB_ORDER } from './lib/shortcuts'
@@ -189,6 +196,8 @@ function App() {
   const [logsRefreshToken, setLogsRefreshToken] = useState(0)
   // Bumped on every `log` event; RequestLogs refetches its window (debounced).
   const [logsVersion, setLogsVersion] = useState(0)
+  // The flow whose breakpoint editor is open; null while none is.
+  const [activeBreakpointId, setActiveBreakpointId] = useState(/** @type {string | null} */ (null))
   const logEventTimerRef = useRef(null)
 
   // Stable registration callback for the logs export function so that
@@ -236,9 +245,19 @@ function App() {
         queryKeys.filtersRoot,
         queryKeys.filterMetrics,
         queryKeys.resources,
-        queryKeys.dashboard
+        queryKeys.dashboard,
+        queryKeys.breakpoints,
+        queryKeys.throttle,
+        queryKeys.passthrough
       ]) {
         queryClient.invalidateQueries({ queryKey })
+      }
+    },
+    breakpoint: data => {
+      applyBreakpointEvent(queryClient, data)
+      // A flow that just paused opens its editor, unless one is open already.
+      if (data && data.action === 'paused' && data.item) {
+        setActiveBreakpointId(current => current ?? data.item.id)
       }
     },
     'logs-cleared': () => {
@@ -260,6 +279,7 @@ function App() {
     setEventsConnected(eventsConnected)
     if (eventsConnected) {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })
+      queryClient.invalidateQueries({ queryKey: queryKeys.breakpointsPending })
     }
   }, [eventsConnected, setEventsConnected, queryClient])
 
@@ -315,6 +335,28 @@ function App() {
     }
   }, [dashboard, configQuery.data])
   const editRuleCount = editRulesQuery.data ? editRulesQuery.data.length : 0
+
+  const breakpointRulesQuery = useBreakpointRules()
+  const breakpointRuleCount = breakpointRulesQuery.data ? breakpointRulesQuery.data.length : 0
+  const pendingBreakpointsQuery = usePendingBreakpoints()
+  const pendingBreakpoints = useMemo(
+    () => pendingBreakpointsQuery.data || [],
+    [pendingBreakpointsQuery.data]
+  )
+  const activeBreakpoint =
+    activeBreakpointId !== null
+      ? pendingBreakpoints.find(item => item.id === activeBreakpointId) || null
+      : null
+  // An editor whose flow was resumed elsewhere, or timed out, closes on its own.
+  useEffect(() => {
+    if (activeBreakpointId !== null && !activeBreakpoint) setActiveBreakpointId(null)
+  }, [activeBreakpointId, activeBreakpoint])
+  const openBreakpoint = useCallback(
+    /** @param {import('./lib/types').PausedBreakpoint} item */
+    item => setActiveBreakpointId(item.id),
+    []
+  )
+  const closeBreakpoint = useCallback(() => setActiveBreakpointId(null), [])
 
   const handleClearLogs = useCallback(async () => {
     try {
@@ -408,7 +450,9 @@ function App() {
     ]
   )
   // The audit panel and the dialogs handle their own keys while they are open.
-  useKeyboardShortcuts(shortcuts, { enabled: !modalState.isOpen && !showAuditPanel })
+  useKeyboardShortcuts(shortcuts, {
+    enabled: !modalState.isOpen && !showAuditPanel && !activeBreakpoint
+  })
 
   /** @param {React.KeyboardEvent<HTMLDivElement>} event */
   const handleTabListKeyDown = event => {
@@ -445,6 +489,8 @@ function App() {
         inputPlaceholder={modalState.inputPlaceholder}
         examples={modalState.examples}
       />
+      {activeBreakpoint && <BreakpointDialog item={activeBreakpoint} onClose={closeBreakpoint} />}
+
       {showAuditPanel && (
         <AuditPanel onClose={() => setShowAuditPanel(false)} routes={header.routes} />
       )}
@@ -644,6 +690,9 @@ function App() {
 
         {/* Tabs: one row that scrolls sideways below 768 px */}
         <div className="px-4 sm:px-6 mt-6">
+          {pendingBreakpoints.length > 0 && !activeBreakpoint && (
+            <PendingBreakpointsBanner items={pendingBreakpoints} onOpen={openBreakpoint} />
+          )}
           <div
             role="tablist"
             aria-label="Sections"
@@ -694,6 +743,16 @@ function App() {
               label={`Local (${header.resourceCount})`}
               activeClassName="bg-emerald-600/15 border border-emerald-500/70 text-emerald-700 dark:text-emerald-100 shadow-[0_0_0_1px_rgba(16,185,129,0.4)]"
             />
+            <TabButton
+              id="breakpoints"
+              active={activeTab === 'breakpoints'}
+              onSelect={setActiveTab}
+              icon={Pause}
+              label={`Breakpoints (${breakpointRuleCount})${
+                pendingBreakpoints.length > 0 ? ` · ${pendingBreakpoints.length} paused` : ''
+              }`}
+              activeClassName="bg-amber-600/15 border border-amber-500/70 text-amber-700 dark:text-amber-100 shadow-[0_0_0_1px_rgba(245,158,11,0.4)]"
+            />
           </div>
 
           {/* Tab Content */}
@@ -718,6 +777,14 @@ function App() {
             {activeTab === 'blocked' && <BlockedResources showConfirm={showConfirm} />}
 
             {activeTab === 'filters' && <FilterRules showConfirm={showConfirm} />}
+
+            {activeTab === 'breakpoints' && (
+              <Breakpoints
+                showConfirm={showConfirm}
+                pending={pendingBreakpoints}
+                onOpenPending={openBreakpoint}
+              />
+            )}
 
             {activeTab === 'edit' && (
               <EditRules showConfirm={showConfirm} showPrompt={showPrompt} showAlert={showAlert} />

@@ -36,6 +36,14 @@ export const queryKeys = {
   filterMetrics: ['filter-metrics'],
   resources: ['resources'],
   audit: ['audit'],
+  /** The breakpoint rules; also the prefix of the pending key. */
+  breakpoints: ['breakpoints'],
+  /** The flows held at a breakpoint (`{ items }`). */
+  breakpointsPending: ['breakpoints', 'pending'],
+  /** The network-condition rules (latency, bandwidth cap). */
+  throttle: ['throttle'],
+  /** The TLS passthrough rules. */
+  passthrough: ['passthrough'],
   /** Root of the log list and detail keys, for the reset when the logs are cleared. */
   logsRoot: ['logs'],
   /**
@@ -47,7 +55,12 @@ export const queryKeys = {
    * The full view of one entry (`features/logs/useLogDetail.js`).
    * @param {string | number} id
    */
-  logDetail: id => ['logs', 'detail', String(id)]
+  logDetail: id => ['logs', 'detail', String(id)],
+  /**
+   * The replay form of one entry (`features/logs/ReplayDialog.jsx`).
+   * @param {string | number} id
+   */
+  logReplay: id => ['logs', 'replay', String(id)]
 }
 
 /**
@@ -298,7 +311,7 @@ export function usePresetMutations() {
 export function useFilePicker() {
   return useMutation({
     /**
-     * @param {{ title?: string, filter?: string }} [options]
+     * @param {{ title?: string, filter?: string, kind?: 'file' | 'folder' }} [options]
      * @returns {Promise<string | null>}
      */
     mutationFn: async options => {
@@ -340,6 +353,11 @@ export function useResourceMutations() {
     mutationFn: formData => apiUpload('/api/resources', formData),
     onSuccess: invalidate
   })
+  const createFolder = useMutation({
+    /** @param {{ url: string, folderPath: string, fallthrough: boolean }} mapping */
+    mutationFn: mapping => apiPost('/api/resources', mapping),
+    onSuccess: invalidate
+  })
   const toggle = useMutation({
     /** @param {{ url: string, enabled: boolean }} input */
     mutationFn: input => apiPost('/api/resources/toggle', input),
@@ -350,7 +368,7 @@ export function useResourceMutations() {
     mutationFn: url => apiDelete(`/api/resources/${encodeURIComponent(url)}`),
     onSuccess: invalidate
   })
-  return { create, toggle, remove }
+  return { create, createFolder, toggle, remove }
 }
 
 export function useClearLogs() {
@@ -363,5 +381,247 @@ export function useClearLogs() {
         client.invalidateQueries({ queryKey: queryKeys.audit }),
         client.invalidateQueries({ queryKey: queryKeys.editRuleUsage })
       ])
+  })
+}
+
+/** @typedef {import('./types').ReplayDescription} ReplayDescription */
+/** @typedef {import('./types').ReplayOverrides} ReplayOverrides */
+/** @typedef {import('./types').ReplayResult} ReplayResult */
+/** @typedef {import('./types').CurlCommand} CurlCommand */
+
+/**
+ * The replay form of an entry, fetched when the dialog opens and not kept
+ * afterwards (the entry may have been evicted in the meantime).
+ *
+ * @param {string | number} id
+ * @returns {import('@tanstack/react-query').UseQueryResult<ReplayDescription>}
+ */
+export function useReplayForm(id) {
+  return useQuery({
+    queryKey: queryKeys.logReplay(id),
+    queryFn: ({ signal }) =>
+      apiGet(`/api/logs/${encodeURIComponent(String(id))}/replay`, { signal }),
+    staleTime: 0,
+    gcTime: 0
+  })
+}
+
+/**
+ * Sends an entry again through the proxy. The new entry reaches the list
+ * through the event stream; the dashboard is refetched for the counters.
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult<ReplayResult, Error, { id: string | number, request: ReplayOverrides }>}
+ */
+export function useReplayLog() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, request }) =>
+      apiPost(`/api/logs/${encodeURIComponent(String(id))}/replay`, request),
+    onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.dashboard })
+  })
+}
+
+/**
+ * The curl command that repeats an entry.
+ *
+ * @param {string | number} id
+ * @returns {Promise<CurlCommand>}
+ */
+export function fetchCurlCommand(id) {
+  return apiGet(`/api/logs/${encodeURIComponent(String(id))}/curl`)
+}
+
+/** @typedef {import('./types').BreakpointRule} BreakpointRule */
+/** @typedef {import('./types').PausedBreakpoint} PausedBreakpoint */
+/** @typedef {import('./types').BreakpointEvent} BreakpointEvent */
+
+/**
+ * The breakpoints endpoint answers an array on GET and `{ breakpointRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {BreakpointRule[]}
+ */
+export function normalizeBreakpointRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.breakpointRules)) return payload.breakpointRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<BreakpointRule[]>} */
+export function useBreakpointRules() {
+  return useQuery({
+    queryKey: queryKeys.breakpoints,
+    queryFn: ({ signal }) => apiGet('/api/breakpoints', { signal }),
+    select: normalizeBreakpointRules
+  })
+}
+
+/**
+ * Add, update or remove a breakpoint rule (`POST /api/breakpoints`).
+ */
+export function useBreakpointRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, url?: string, name?: string, enabled?: boolean, phase?: string }} payload */
+    mutationFn: payload => apiPost('/api/breakpoints', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.breakpoints, normalizeBreakpointRules(data))
+    }
+  })
+}
+
+/**
+ * The flows held at a breakpoint. The list is kept current by the
+ * `breakpoint` events (`applyBreakpointEvent`) and refetched when the
+ * stream (re)opens.
+ *
+ * @returns {import('@tanstack/react-query').UseQueryResult<PausedBreakpoint[]>}
+ */
+export function usePendingBreakpoints() {
+  return useQuery({
+    queryKey: queryKeys.breakpointsPending,
+    queryFn: ({ signal }) => apiGet('/api/breakpoints/pending', { signal }),
+    select: data => (data && Array.isArray(data.items) ? data.items : [])
+  })
+}
+
+/**
+ * @param {import('@tanstack/react-query').QueryClient} client
+ * @param {string} id
+ */
+function removePendingBreakpoint(client, id) {
+  client.setQueryData(
+    queryKeys.breakpointsPending,
+    /** @param {{ items?: PausedBreakpoint[] } | undefined} previous */ previous =>
+      previous && Array.isArray(previous.items)
+        ? { items: previous.items.filter(item => item.id !== id) }
+        : previous
+  )
+}
+
+/**
+ * Apply a `breakpoint` event of the stream to the pending list.
+ *
+ * @param {import('@tanstack/react-query').QueryClient} client
+ * @param {BreakpointEvent | null | undefined} event
+ */
+export function applyBreakpointEvent(client, event) {
+  if (!event || typeof event !== 'object') return
+  if (event.action === 'paused' && event.item) {
+    const item = event.item
+    client.setQueryData(
+      queryKeys.breakpointsPending,
+      /** @param {{ items?: PausedBreakpoint[] } | undefined} previous */ previous => {
+        const items = previous && Array.isArray(previous.items) ? previous.items : []
+        if (items.some(existing => existing.id === item.id)) return previous
+        return { items: [...items, item] }
+      }
+    )
+  } else if (event.action === 'resumed' && event.id) {
+    removePendingBreakpoint(client, event.id)
+  }
+}
+
+/**
+ * Send a paused flow on, with the edits of the editor
+ * (`POST /api/breakpoints/pending/:id/resume`).
+ */
+export function useResumeBreakpoint() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ id: string, overrides: Record<string, unknown> }} params */
+    mutationFn: ({ id, overrides }) =>
+      apiPost(`/api/breakpoints/pending/${encodeURIComponent(id)}/resume`, overrides),
+    onSuccess: (_data, { id }) => removePendingBreakpoint(client, id)
+  })
+}
+
+/**
+ * Abort a paused flow (`POST /api/breakpoints/pending/:id/abort`); the
+ * client gets a 502.
+ */
+export function useAbortBreakpoint() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {string} id */
+    mutationFn: id => apiPost(`/api/breakpoints/pending/${encodeURIComponent(id)}/abort`),
+    onSuccess: (_data, id) => removePendingBreakpoint(client, id)
+  })
+}
+
+/** @typedef {import('./types').ThrottleRule} ThrottleRule */
+
+/**
+ * The throttle endpoint answers an array on GET and `{ throttleRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {ThrottleRule[]}
+ */
+export function normalizeThrottleRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.throttleRules)) return payload.throttleRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<ThrottleRule[]>} */
+export function useThrottleRules() {
+  return useQuery({
+    queryKey: queryKeys.throttle,
+    queryFn: ({ signal }) => apiGet('/api/throttle', { signal }),
+    select: normalizeThrottleRules
+  })
+}
+
+/**
+ * Add, update or remove a network-condition rule (`POST /api/throttle`).
+ */
+export function useThrottleRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, url?: string, name?: string, enabled?: boolean, delayMs?: number, throttleKbps?: number }} payload */
+    mutationFn: payload => apiPost('/api/throttle', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.throttle, normalizeThrottleRules(data))
+    }
+  })
+}
+
+/** @typedef {import('./types').PassthroughRule} PassthroughRule */
+
+/**
+ * The passthrough endpoint answers an array on GET and `{ passthroughRules }` on POST.
+ *
+ * @param {any} payload
+ * @returns {PassthroughRule[]}
+ */
+export function normalizePassthroughRules(payload) {
+  if (!payload) return []
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload.passthroughRules)) return payload.passthroughRules
+  return []
+}
+
+/** @returns {import('@tanstack/react-query').UseQueryResult<PassthroughRule[]>} */
+export function usePassthroughRules() {
+  return useQuery({
+    queryKey: queryKeys.passthrough,
+    queryFn: ({ signal }) => apiGet('/api/passthrough', { signal }),
+    select: normalizePassthroughRules
+  })
+}
+
+/**
+ * Add, update or remove a TLS passthrough rule (`POST /api/passthrough`).
+ */
+export function usePassthroughRuleMutation() {
+  const client = useQueryClient()
+  return useMutation({
+    /** @param {{ action: 'add' | 'update' | 'remove', id?: string, host?: string, name?: string, enabled?: boolean }} payload */
+    mutationFn: payload => apiPost('/api/passthrough', payload),
+    onSuccess: data => {
+      client.setQueryData(queryKeys.passthrough, normalizePassthroughRules(data))
+    }
   })
 }

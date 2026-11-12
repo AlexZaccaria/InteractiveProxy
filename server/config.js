@@ -193,6 +193,19 @@ const STREAM_THRESHOLD_BYTES = Number.isFinite(Number(process.env.PROXY_STREAM_T
   ? Math.max(0, Number(process.env.PROXY_STREAM_THRESHOLD_BYTES))
   : 1024 * 1024
 
+// Request bodies up to this size are kept byte for byte on their log entry,
+// so that the entry can be replayed and rendered as a curl command. Larger
+// bodies are not kept (the entry still carries its preview). Default 256 KiB.
+const REPLAY_BODY_MAX_BYTES = Number.isFinite(Number(process.env.PROXY_REPLAY_BODY_LIMIT_BYTES))
+  ? Math.max(0, Number(process.env.PROXY_REPLAY_BODY_LIMIT_BYTES))
+  : 256 * 1024
+
+// A request or response held at a breakpoint continues unchanged when
+// nobody resumes it within this time. Default two minutes.
+const BREAKPOINT_TIMEOUT_MS = Number.isFinite(Number(process.env.PROXY_BREAKPOINT_TIMEOUT_MS))
+  ? Math.max(1000, Number(process.env.PROXY_BREAKPOINT_TIMEOUT_MS))
+  : 120_000
+
 // Controls whether HTTPS MITM "direct" flows still apply header/body rewrites
 // (Connect/JSONPath/text). Defaults to true to preserve existing behaviour;
 // when disabled, direct MITM traffic is forwarded with minimal processing,
@@ -281,6 +294,8 @@ module.exports = {
   UPSTREAM_H2,
   STREAM_UNINSPECTED_RESPONSES,
   STREAM_THRESHOLD_BYTES,
+  REPLAY_BODY_MAX_BYTES,
+  BREAKPOINT_TIMEOUT_MS,
   WS_LOG_BODY_ENABLED,
   BODY_LIMIT
 }

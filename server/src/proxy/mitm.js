@@ -21,9 +21,16 @@ const http = require('http')
 const https = require('https')
 const tls = require('tls')
 const { URL } = require('url')
-const { MITM_BYPASS_REWRITES_ENABLED } = require('../../config')
+const { MITM_BYPASS_REWRITES_ENABLED, REPLAY_BODY_MAX_BYTES } = require('../../config')
 const { getCA, generateCertForHost } = require('../tls/ca')
 const { createLruCache } = require('../util/lru')
+const { retainRequestBody } = require('../logs/replay')
+const {
+  recordBreakpointOnLog,
+  abortAtBreakpoint: abortFlowAtBreakpoint,
+  headersForTarget
+} = require('./breakpoints')
+const { sleep, writeThrottled } = require('./throttle')
 const { createRawTunnel } = require('./tunnel')
 const { getContentType, getHeaderCaseInsensitive } = require('../codecs/compression')
 const { STREAMED_BODY_MARKER, shouldStreamResponse, pipeUpstreamBody } = require('./streaming')
@@ -86,6 +93,10 @@ const { handleUpstreamError: handleUpstreamErrorWithRecorder } = require('./upst
  * @property {Pick<WebSocketProxy, 'handleWebSocketUpgrade'>} webSocketProxy
  * @property {BypassCounter} bypassCounter
  * @property {Pick<import('../logs/stats').Stats, 'recordStreamedResponseSize'>} stats Receives the size of streamed responses once known.
+ * @property {import('./breakpoints').BreakpointGate} breakpoints Pauses the flows that match a breakpoint rule.
+ * @property {import('./throttle').NetworkConditionsMatcher} network Latency and bandwidth cap per URL.
+ * @property {Pick<import('../rules/passthrough-store').PassthroughStore, 'match'>} passthrough Hosts tunnelled without TLS termination.
+ * @property {(entry: LogEntry) => void} touchLog Re-publishes an entry changed after it was logged.
  */
 
 /**
@@ -105,7 +116,11 @@ function createMitmHandler({
   httpFlow,
   webSocketProxy,
   bypassCounter,
-  stats
+  stats,
+  breakpoints,
+  network,
+  passthrough,
+  touchLog
 }) {
   const { createHttpFlowLogEntry, logWebSocketDirectTunnel, recordUpstreamErrorOnLog } = entries
   const { performUpstreamRequest, attachAbortOnClose } = upstream
@@ -267,8 +282,12 @@ function createMitmHandler({
 
     const httpHandling = router.decideHttpHandling(routingContext)
 
-    if (httpHandling === 'direct') {
-      bypassCounter.increment()
+    // A tunnel the filter rules mark as direct, or a host covered by a
+    // passthrough rule (certificate pinning), is relayed as raw bytes.
+    const passthroughRule = httpHandling === 'direct' ? null : passthrough.match(targetHost)
+
+    if (httpHandling === 'direct' || passthroughRule) {
+      if (!passthroughRule) bypassCounter.increment()
 
       if (configStore.interactiveModeEnabled) {
         const requestStart = Date.now()
@@ -285,6 +304,9 @@ function createMitmHandler({
         // Represent the raw CONNECT tunnel by its 200 Connection Established
         // handshake for auditing purposes.
         logEntry.statusCode = 200
+        if (passthroughRule) {
+          logEntry.passthrough = { ruleId: passthroughRule.id, ruleName: passthroughRule.name }
+        }
         addLog(logEntry)
       }
 
@@ -569,6 +591,9 @@ function createMitmHandler({
         return
       }
 
+      // The client's bytes are kept for a replay before any rule touches them.
+      if (logEntry) retainRequestBody(logEntry, body, REPLAY_BODY_MAX_BYTES)
+
       if (body.length > 0) {
         const { buffer: rewrittenBody } = processRequestBodyWithRewrites({
           buffer: body,
@@ -591,6 +616,7 @@ function createMitmHandler({
         if (logEntry) {
           logEntry.source = 'local'
           logEntry.localResource = matchedUrl
+          logEntry.statusCode = typeof resource.status === 'number' ? resource.status : 200
           addLog(logEntry)
         }
 
@@ -623,9 +649,66 @@ function createMitmHandler({
             headersToForward['content-length'] = body.length
           }
 
+          let upstreamMethod = method
+          let upstreamUrl = fullUrl
+
+          // A request breakpoint holds the flow until the UI sends it on,
+          // with its edits, or aborts it.
+          const requestBreakpoint = breakpoints.match('request', { requestUrl, fullUrl })
+          if (requestBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'request',
+              rule: requestBreakpoint,
+              request: {
+                method,
+                url: fullUrl,
+                headers: headersToForward,
+                body: body.length > 0 ? body : null
+              }
+            })
+            if (resolution.action === 'abort') {
+              abortFlowAtBreakpoint({
+                res: clientRes,
+                logEntry,
+                phase: 'request',
+                alreadyLogged: false,
+                addLog,
+                touchLog
+              })
+              return
+            }
+            if (resolution.edited) {
+              headersToForward = headersForTarget(
+                resolution.request.headers,
+                resolution.request.url,
+                fullUrl
+              )
+              upstreamMethod = resolution.request.method
+              upstreamUrl = resolution.request.url
+              body = resolution.request.body || Buffer.alloc(0)
+              if (body.length > 0) {
+                headersToForward['content-length'] = body.length
+              } else {
+                delete headersToForward['content-length']
+              }
+            }
+            recordBreakpointOnLog(logEntry, 'request', resolution.edited ? 'edited' : 'continued', {
+              request: resolution.request
+            })
+          }
+
+          // Network conditions: a latency before the upstream request and a
+          // bandwidth cap on the response.
+          const conditions = network.match({ requestUrl, fullUrl: upstreamUrl })
+          const bytesPerSecond = conditions ? conditions.bytesPerSecond : 0
+          if (conditions) {
+            if (logEntry) logEntry.network = conditions.summary
+            if (conditions.delayMs > 0) await sleep(conditions.delayMs)
+          }
+
           const { response: upstreamResponse } = await performUpstreamRequest({
-            url: fullUrl,
-            method,
+            url: upstreamUrl,
+            method: upstreamMethod,
             headers: headersToForward,
             body: body.length > 0 ? body : undefined,
             abortSignal: abortController.signal,
@@ -645,12 +728,17 @@ function createMitmHandler({
             logEntry
           )
 
+          // A response breakpoint needs the whole body: the response is then
+          // buffered as for a rule.
+          const responseBreakpoint = breakpoints.match('response', { requestUrl, fullUrl })
+
           // Stream when no rule can touch the body and nothing needs it for
           // logging; otherwise buffer it for rewrites and previews.
           const canStream =
+            !responseBreakpoint &&
             upstreamResponse.body &&
             shouldStreamResponse({
-              method,
+              method: upstreamMethod,
               contentType: getContentType(upstreamHeaders),
               contentLength: getHeaderCaseInsensitive(upstreamHeaders, 'content-length'),
               hasRules: hasApplicableRules({ requestUrl, fullUrl, phase: 'response' }),
@@ -677,7 +765,9 @@ function createMitmHandler({
 
             // Awaited so that the abort-on-close listener stays attached for
             // the whole transfer; the size is known only at the end.
-            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes)
+            const { bytes } = await pipeUpstreamBody(upstreamResponse.body, clientRes, {
+              bytesPerSecond
+            })
             if (logEntry) {
               logEntry.responseSize = bytes
               stats.recordStreamedResponseSize(logEntry, bytes)
@@ -705,17 +795,68 @@ function createMitmHandler({
               frameRewriteFullUrl: fullUrl
             })
 
+          let statusCode = upstreamResponse.statusCode
+          /** @type {Record<string, any>} */
+          let responseHeadersToSend = rewrittenHeaders
+          let responseBodyToSend = finalResponseBuffer
+
+          // A response breakpoint holds the rewritten response until the UI
+          // sends it on, with its edits, or aborts it. The entry is already
+          // logged, so an edit re-publishes it.
+          if (responseBreakpoint) {
+            const resolution = await breakpoints.pause({
+              phase: 'response',
+              rule: responseBreakpoint,
+              request: {
+                method: upstreamMethod,
+                url: upstreamUrl,
+                headers: headersToForward,
+                body: body.length > 0 ? body : null
+              },
+              response: { statusCode, headers: rewrittenHeaders, body: finalResponseBuffer }
+            })
+            if (resolution.action === 'abort') {
+              abortFlowAtBreakpoint({
+                res: clientRes,
+                logEntry,
+                phase: 'response',
+                alreadyLogged: true,
+                addLog,
+                touchLog
+              })
+              return
+            }
+            if (resolution.edited && resolution.response) {
+              statusCode = resolution.response.statusCode
+              responseHeadersToSend = resolution.response.headers
+              responseBodyToSend = resolution.response.body || Buffer.alloc(0)
+            }
+            recordBreakpointOnLog(
+              logEntry,
+              'response',
+              resolution.edited ? 'edited' : 'continued',
+              {
+                response: resolution.response || undefined
+              }
+            )
+            if (logEntry) touchLog(logEntry)
+          }
+
           // Forward response with cache-busting headers, dropping identifying
           // tracing headers for actively MITM-processed responses.
           const responseHeaders = sanitizeAndStripIdentifyingHeaders(
-            rewrittenHeaders,
+            responseHeadersToSend,
             OMIT_RESPONSE_HEADERS
           )
           applyCacheBypassHeadersToObject(responseHeaders)
-          setContentLength(responseHeaders, finalResponseBuffer)
+          setContentLength(responseHeaders, responseBodyToSend)
 
-          clientRes.writeHead(upstreamResponse.statusCode, responseHeaders)
-          clientRes.end(finalResponseBuffer)
+          clientRes.writeHead(statusCode, responseHeaders)
+          if (bytesPerSecond > 0) {
+            await writeThrottled(clientRes, responseBodyToSend, bytesPerSecond)
+          } else {
+            clientRes.end(responseBodyToSend)
+          }
         } catch (error) {
           handleUpstreamError({ logEntry, error: /** @type {Error} */ (error), res: clientRes })
         } finally {

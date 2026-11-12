@@ -14,6 +14,8 @@
  * @property {boolean} localResourcesEnabled
  * @property {boolean} filterRulesEnabled
  * @property {boolean} blockedRulesEnabled
+ * @property {boolean} breakpointsEnabled
+ * @property {boolean} throttlingEnabled
  * @property {FilterMode} filterMode
  * @property {number} [filteredRequestCount]
  */
@@ -130,13 +132,15 @@
 /**
  * @typedef {Object} LocalResource
  * @property {string} url
- * @property {'file' | 'text'} type
+ * @property {'file' | 'text' | 'folder'} type
  * @property {string} filename
  * @property {string} [originalName]
  * @property {string} contentType
- * @property {number} size
+ * @property {number} [size]
  * @property {string} createdAt
  * @property {boolean} enabled
+ * @property {string} [path] Folder mapping: the directory on the proxy's machine.
+ * @property {boolean} [fallthrough] Folder mapping: forward to the upstream when the file is missing.
  */
 
 /**
@@ -166,6 +170,12 @@
  * @property {string} [fileType]
  * @property {string} [localResource]
  * @property {string} [error]
+ * @property {string} [replayOf] Id of the entry this request repeated.
+ * @property {{ request?: string, response?: string }} [breakpoint] Outcome of the breakpoints the entry went through (`edited`, `continued`, `aborted`).
+ * @property {{ ruleId: string, ruleName: string, delayMs: number, throttleKbps: number }} [network] The network-condition rule that applied.
+ * @property {{ ruleId: string, ruleName: string }} [passthrough] The passthrough rule that kept the tunnel raw.
+ * @property {boolean} [isConnectionLog]
+ * @property {boolean} [isWebSocketSummary]
  * @property {string} [direction] WebSocket direction (`client → server` / `server → client`).
  * @property {number} [requestBytes]
  * @property {number} [responseBytes]
@@ -209,6 +219,10 @@
  *   requestBodyJsonBefore?: any,
  *   responseBodyJson?: any,
  *   responseBodyJsonBefore?: any,
+ *   requestBodyTextBefore?: string,
+ *   requestBodyTextAfter?: string,
+ *   responseBodyTextBefore?: string,
+ *   responseBodyTextAfter?: string,
  *   wsBodyJsonAfter?: any,
  *   wsBodyJsonBefore?: any,
  *   rawRequestBodyPreview?: string,
@@ -236,6 +250,117 @@
  * @property {Record<string, number>} errorBuckets
  * @property {number} totalErrors
  * @property {Array<{ host: string, count: number, avgDuration: number }>} hostStats
+ */
+
+/**
+ * The replay form of an entry (`GET /api/logs/:id/replay`).
+ *
+ * @typedef {Object} ReplayDescription
+ * @property {string} method
+ * @property {string} url
+ * @property {Record<string, string>} headers
+ * @property {string | null} body The body as text, when it is text.
+ * @property {string | null} bodyBase64 The body in base64, when it is binary.
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {boolean} bodyCaptured
+ * @property {boolean} bodyExpected The original request carried a body.
+ * @property {number} bodyNotKeptBytes Size of a body over the retention limit, else 0.
+ */
+
+/**
+ * The edits sent with `POST /api/logs/:id/replay`.
+ *
+ * @typedef {Object} ReplayOverrides
+ * @property {string} [method]
+ * @property {string} [url]
+ * @property {Record<string, string>} [headers]
+ * @property {string | null} [body]
+ * @property {string | null} [bodyBase64]
+ */
+
+/**
+ * @typedef {Object} ReplayResult
+ * @property {boolean} success
+ * @property {number} statusCode
+ * @property {number} responseBytes
+ * @property {number} durationMs
+ * @property {string | number | null} logId
+ */
+
+/**
+ * @typedef {Object} CurlCommand
+ * @property {string} command
+ * @property {boolean} bodyIncluded
+ * @property {'text' | 'base64' | null} bodyEncoding
+ */
+
+/**
+ * A breakpoint rule (`GET /api/breakpoints`).
+ *
+ * @typedef {Object} BreakpointRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} url Substring of the request URL.
+ * @property {'request' | 'response' | 'both'} phase
+ */
+
+/**
+ * A network-condition rule (`GET /api/throttle`).
+ *
+ * @typedef {Object} ThrottleRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} url Substring of the request URL.
+ * @property {number} delayMs Latency added before the request is forwarded; 0 for none.
+ * @property {number} throttleKbps Bandwidth cap on the response in kilobits per second; 0 for none.
+ */
+
+/**
+ * A TLS passthrough rule (`GET /api/passthrough`).
+ *
+ * @typedef {Object} PassthroughRule
+ * @property {string} id
+ * @property {boolean} enabled
+ * @property {string} name
+ * @property {string} host Host name or IP; subdomains match too.
+ */
+
+/**
+ * The response part of a flow held at a response breakpoint.
+ *
+ * @typedef {Object} PausedResponse
+ * @property {number} statusCode
+ * @property {Record<string, string>} headers
+ * @property {string | null} body
+ * @property {string | null} bodyBase64
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {boolean} bodyDecoded The body is shown decompressed.
+ */
+
+/**
+ * A flow held at a breakpoint (`GET /api/breakpoints/pending`, `breakpoint` events).
+ *
+ * @typedef {Object} PausedBreakpoint
+ * @property {string} id
+ * @property {'request' | 'response'} phase
+ * @property {{ id: string, name: string, url: string }} rule
+ * @property {string} createdAt
+ * @property {string} method
+ * @property {string} url
+ * @property {Record<string, string>} headers
+ * @property {string | null} body
+ * @property {string | null} bodyBase64
+ * @property {boolean} bodyIsText
+ * @property {number} bodySize
+ * @property {PausedResponse | null} response
+ */
+
+/**
+ * @typedef {{ action: 'paused', item: PausedBreakpoint } | { action: 'resumed', id: string, reason: 'resume' | 'abort' | 'timeout' }} BreakpointEvent
  */
 
 export {}

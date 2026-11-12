@@ -258,7 +258,12 @@ function filterLogsCore(rawQuery, store) {
   const requestBodySearch = safeString(query.requestSearch)
   const responseSearchTerm = safeString(query.responseSearch)
 
-  const selectedSources = parseListQuery(query.sources, ['proxied', 'mitm', 'websocket'])
+  const selectedSources = parseListQuery(query.sources, [
+    'proxied',
+    'mitm',
+    'websocket',
+    'imported'
+  ])
   const selectedMethods = parseListQuery(query.methods, ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
   const selectedFileTypes = parseListQuery(query.fileTypes, [
     'json',

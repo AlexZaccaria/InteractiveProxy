@@ -13,6 +13,11 @@
  * @typedef {Record<string, string | string[] | number | undefined>} HeaderMap
  */
 
+// The header a replayed request carries from the management API back into
+// the proxy flow (the id of the entry it repeats and a token). It never
+// travels upstream; the log entry factory turns it into `replayOf`.
+const REPLAY_MARKER_HEADER = 'x-interactive-proxy-replay'
+
 // Hop-by-hop headers never travel upstream: undici rejects `keep-alive`,
 // `upgrade` and `http2-settings` outright, and `connection` is managed by
 // the dispatcher.
@@ -21,7 +26,8 @@ const OMIT_HEADERS_BASE = [
   'connection',
   'keep-alive',
   'upgrade',
-  'http2-settings'
+  'http2-settings',
+  REPLAY_MARKER_HEADER
 ]
 const OMIT_HEADERS_CONDITIONAL = [
   'if-none-match',
@@ -345,6 +351,7 @@ function setContentLength(headers, buffer) {
 }
 
 module.exports = {
+  REPLAY_MARKER_HEADER,
   OMIT_HEADERS_BASE,
   OMIT_HEADERS_CONDITIONAL,
   OMIT_HEADERS_PROXY,

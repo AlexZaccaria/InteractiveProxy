@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Spinner from '../../components/Spinner'
 import { ConnectTimelines, buildConnectReadablePreview } from './ConnectFrames'
 import { JsonBeforeAfter, JsonPanel } from './JsonTree'
+import DiffView from './DiffView'
 import { WsMessagePreview } from './WsMessages'
 import { useEffectiveLog } from './useLogDetail'
 
@@ -245,11 +246,19 @@ export function RequestBodySection({ log, onCreateJsonPathRule }) {
               </div>
             )
         } else {
-          standardContent = (
-            <pre className="bg-surface-inset p-3 rounded text-xs text-fg-body overflow-x-auto max-h-60">
-              {String(detail.body ?? '')}
-            </pre>
-          )
+          // A text rule leaves the body before and after: shown as a diff.
+          const textBefore = detail.requestBodyTextBefore
+          const textAfter = detail.requestBodyTextAfter
+          standardContent =
+            typeof textBefore === 'string' &&
+            typeof textAfter === 'string' &&
+            textBefore !== textAfter ? (
+              <DiffView before={textBefore} after={textAfter} />
+            ) : (
+              <pre className="bg-surface-inset p-3 rounded text-xs text-fg-body overflow-x-auto max-h-60">
+                {String(detail.body ?? '')}
+              </pre>
+            )
         }
       }
 
@@ -388,6 +397,31 @@ function HttpResponsePreview({ effectiveLog, bodyToShow, onCreateJsonPathRule })
           target="response"
           onCreateJsonPathRule={onCreateJsonPathRule}
         />
+      </div>
+    )
+  }
+
+  // A text rule leaves the body before and after: shown as a diff, with the
+  // body as sent below it.
+  const textBefore = effectiveLog.responseBodyTextBefore
+  const textAfter = effectiveLog.responseBodyTextAfter
+  if (
+    !isBinary &&
+    typeof textBefore === 'string' &&
+    typeof textAfter === 'string' &&
+    textBefore !== textAfter
+  ) {
+    return (
+      <div className="space-y-2">
+        <DiffView before={textBefore} after={textAfter} />
+        <details className="bg-surface-inset rounded">
+          <summary className="cursor-pointer p-3 text-xs text-fg-muted hover:text-fg-body">
+            Show the body as sent
+          </summary>
+          <pre className="p-3 text-xs text-fg-body overflow-x-auto max-h-60 border-t border-edge">
+            {bodyToShow}
+          </pre>
+        </details>
       </div>
     )
   }

@@ -23,7 +23,8 @@ const {
   BODY_LIMIT,
   UPSTREAM_HEADERS_TIMEOUT_MS,
   UPSTREAM_BODY_TIMEOUT_MS,
-  UPSTREAM_H2
+  UPSTREAM_H2,
+  BREAKPOINT_TIMEOUT_MS
 } = require('./config')
 
 const { safeTrim, queryBool, safeString, parseListQuery } = require('./src/util/strings')
@@ -125,6 +126,12 @@ const { createHttpFlow } = require('./src/proxy/http-flow')
 const { createWebSocketProxy } = require('./src/proxy/websocket')
 const { createMitmHandler } = require('./src/proxy/mitm')
 const { createApiRouter } = require('./src/api')
+const { createReplayRunner } = require('./src/logs/replay')
+const { createBreakpointStore } = require('./src/rules/breakpoint-store')
+const { createBreakpointGate } = require('./src/proxy/breakpoints')
+const { createThrottleStore } = require('./src/rules/throttle-store')
+const { createNetworkConditions } = require('./src/proxy/throttle')
+const { createPassthroughStore } = require('./src/rules/passthrough-store')
 const { createApp } = require('./src/app')
 const { createProxyServer } = require('./src/server')
 
@@ -136,6 +143,9 @@ const EDIT_RULES_FILE = path.join(STORAGE_DIR, 'edit-rules.json')
 const EDIT_RULE_PRESETS_FILE = path.join(STORAGE_DIR, 'edit-rule-presets.json')
 const RESOURCES_FILE = path.join(STORAGE_DIR, 'resources.json')
 const CONFIG_FILE = path.join(STORAGE_DIR, 'config.json')
+const BREAKPOINTS_FILE = path.join(STORAGE_DIR, 'breakpoints.json')
+const THROTTLE_RULES_FILE = path.join(STORAGE_DIR, 'throttle-rules.json')
+const PASSTHROUGH_FILE = path.join(STORAGE_DIR, 'passthrough.json')
 
 // Ensure directories exist
 try {
@@ -201,6 +211,32 @@ const resourceStore = createResourceStore({
   storageDir: STORAGE_DIR,
   configStore
 })
+
+// Breakpoint rules and the gate that holds the matching flows. Flows are
+// held only while an event stream is open (`streamPresence` is kept by the
+// events route), since only the UI can resume them.
+const breakpointStore = createBreakpointStore({ file: BREAKPOINTS_FILE })
+breakpointStore.load()
+/** @type {import('./src/api/events').StreamPresence} */
+const streamPresence = { clients: 0 }
+const breakpointGate = createBreakpointGate({
+  store: breakpointStore,
+  isEnabled: () => configStore.breakpointsEnabled,
+  hasListeners: () => streamPresence.clients > 0,
+  timeoutMs: BREAKPOINT_TIMEOUT_MS
+})
+
+// Network-condition rules (latency, bandwidth cap) and their matcher.
+const throttleStore = createThrottleStore({ file: THROTTLE_RULES_FILE })
+throttleStore.load()
+const network = createNetworkConditions({
+  store: throttleStore,
+  isEnabled: () => configStore.throttlingEnabled
+})
+
+// Hosts whose CONNECT tunnels are relayed without TLS termination.
+const passthroughStore = createPassthroughStore({ file: PASSTHROUGH_FILE })
+passthroughStore.load()
 
 // Rewrite orchestration bound to the rule store. Interactive mode and the
 // log store are reached through a getter and a callback (both resolve at
@@ -305,8 +341,12 @@ const httpFlow = createHttpFlow({
   attachRewriteMetadata,
   bypassCounter,
   stats: streamedSizeStats,
+  breakpoints: breakpointGate,
+  network,
+  touchLog: entry => logStore.touch(entry),
   port: PORT
 })
+const replayRunner = createReplayRunner({ port: PORT, host: HOST, logStore })
 const apiRouter = createApiRouter({
   logStore,
   stats,
@@ -317,7 +357,13 @@ const apiRouter = createApiRouter({
   resourceStore,
   storageDir: STORAGE_DIR,
   uiOrigins: UI_ORIGINS,
-  bypassCounter
+  bypassCounter,
+  replay: replayRunner,
+  breakpointStore,
+  breakpointGate,
+  throttleStore,
+  passthroughStore,
+  streamPresence
 })
 const app = createApp({
   uiOrigins: UI_ORIGINS,
@@ -347,7 +393,11 @@ const mitm = createMitmHandler({
   httpFlow,
   webSocketProxy,
   bypassCounter,
-  stats: streamedSizeStats
+  stats: streamedSizeStats,
+  breakpoints: breakpointGate,
+  network,
+  passthrough: passthroughStore,
+  touchLog: entry => logStore.touch(entry)
 })
 const { server, start, stop } = createProxyServer({
   app,
@@ -357,6 +407,12 @@ const { server, start, stop } = createProxyServer({
   upstream,
   defaults: { port: PORT, host: HOST }
 })
+
+/** Stop the server; flows held at a breakpoint continue unchanged first. */
+async function stopProxy() {
+  breakpointGate.close()
+  return stop()
+}
 
 if (require.main === module) {
   start()
@@ -373,7 +429,7 @@ module.exports = {
   app,
   server,
   start,
-  stop,
+  stop: stopProxy,
   config: { PORT, HOST, UI_ORIGINS, STORAGE_DIR, CERTS_DIR },
   files: {
     BLOCKED_URLS_FILE,

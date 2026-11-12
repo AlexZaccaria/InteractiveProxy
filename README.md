@@ -1,6 +1,6 @@
 # Interactive Proxy
 
-Interactive Proxy is a development proxy that runs on the developer's machine. It forwards HTTP requests, terminates HTTPS with a certificate authority it generates itself, relays WebSocket connections, serves uploaded files in place of upstream responses, blocks or bypasses URLs by rule, and rewrites request and response bodies in flight with text and JSONPath rules, including Connect/gRPC envelopes and Protobuf messages decoded without a schema. A web UI shows the captured traffic and edits the rules; a management API and a Server-Sent Events stream expose the same data to scripts.
+Interactive Proxy is a development proxy that runs on the developer's machine. It forwards HTTP requests, terminates HTTPS with a certificate authority it generates itself, relays WebSocket connections, serves uploaded files in place of upstream responses, blocks or bypasses URLs by rule, and rewrites request and response bodies in flight with text and JSONPath rules, including Connect/gRPC envelopes and Protobuf messages decoded without a schema. A captured request can be edited and sent again, or copied as a curl command; breakpoint rules hold a matching request or response for editing by hand before it goes on. A web UI shows the captured traffic and edits the rules; a management API and a Server-Sent Events stream expose the same data to scripts.
 
 ## Screenshots
 
@@ -112,7 +112,7 @@ InteractiveProxy
 - [ARCHITECTURE.md](ARCHITECTURE.md): modules, request flows, persistence, tests
 - [INSTALL-CERTIFICATE.md](INSTALL-CERTIFICATE.md): trusting the proxy's CA
 - [CHANGELOG.md](CHANGELOG.md)
-- [FUTURE-DEVELOPMENT.md](FUTURE-DEVELOPMENT.md): features not yet built, with the design of the transparent mode
+- [FUTURE-DEVELOPMENT.md](FUTURE-DEVELOPMENT.md): the design of the transparent mode through WireGuard, not yet built
 
 ## Scope and security
 

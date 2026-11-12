@@ -16,14 +16,110 @@ const { logError } = require('../util/logger')
 
 /**
  * @typedef {object} LocalResource
- * @property {'file' | 'text'} [type]
- * @property {string} filename File under the storage directory.
+ * @property {'file' | 'text' | 'folder'} [type]
+ * @property {string} filename File under the storage directory (empty for a folder).
  * @property {string} [originalName]
- * @property {string} contentType
+ * @property {string} contentType Empty for a folder: the type follows the file served.
  * @property {number} [size]
  * @property {string} [createdAt]
  * @property {boolean} [enabled] Disabled resources are never served.
+ * @property {string} [path] Folder mapping: the directory the request path is resolved in.
+ * @property {boolean} [fallthrough] Folder mapping: forward to the upstream when the file is missing.
  */
+
+/**
+ * A resource resolved for one request: a folder mapping carries the file
+ * found (`absolutePath`, its content type) or `status: 404` when the
+ * mapping answers the miss itself.
+ *
+ * @typedef {LocalResource & { absolutePath?: string, status?: number }} ResolvedResource
+ */
+
+/**
+ * Content types by extension for the files served from a mapped folder.
+ *
+ * @type {Record<string, string>}
+ */
+const CONTENT_TYPES_BY_EXTENSION = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.pdf': 'application/pdf',
+  '.wasm': 'application/wasm',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg'
+}
+
+/**
+ * @param {string} filePath
+ * @returns {string}
+ */
+function contentTypeForFile(filePath) {
+  return (
+    CONTENT_TYPES_BY_EXTENSION[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+  )
+}
+
+/**
+ * The file a folder mapping serves for a request: the part of the URL path
+ * after the mapped prefix, resolved inside the folder (never outside it; a
+ * path ending in `/` or empty means `index.html`). Null when there is no
+ * such file.
+ *
+ * @param {string} folder
+ * @param {string} resourceUrl The mapped prefix.
+ * @param {string} requestUrl
+ * @param {string} fullUrl
+ * @returns {{ absolutePath: string, contentType: string } | null}
+ */
+function resolveFolderFile(folder, resourceUrl, requestUrl, fullUrl) {
+  const source = fullUrl && fullUrl.includes(resourceUrl) ? fullUrl : requestUrl
+  const index = source.indexOf(resourceUrl)
+  if (index === -1) return null
+  let remainder = source.slice(index + resourceUrl.length)
+  const stop = remainder.search(/[?#]/)
+  if (stop !== -1) remainder = remainder.slice(0, stop)
+  try {
+    remainder = decodeURIComponent(remainder)
+  } catch {
+    return null
+  }
+  if (remainder.includes('\0')) return null
+  if (remainder === '' || remainder.endsWith('/')) remainder = `${remainder}index.html`
+
+  const root = path.resolve(folder)
+  const absolutePath = path.resolve(
+    root,
+    `.${remainder.startsWith('/') ? remainder : `/${remainder}`}`
+  )
+  if (absolutePath !== root && !absolutePath.startsWith(root + path.sep)) return null
+
+  try {
+    if (!fs.statSync(absolutePath).isFile()) return null
+  } catch {
+    return null
+  }
+  return { absolutePath, contentType: contentTypeForFile(absolutePath) }
+}
 
 /** @typedef {LocalResource & { url: string }} LocalResourceListItem */
 
@@ -157,6 +253,12 @@ function createResourceStore({ file, storageDir, configStore }) {
     const resource = localResources.get(url)
     if (!resource) return false
 
+    // A folder mapping owns no payload under the storage directory.
+    if (resource.type === 'folder' || !resource.filename) {
+      localResources.delete(url)
+      return true
+    }
+
     const filePath = path.join(storageDir, resource.filename)
 
     try {
@@ -176,11 +278,14 @@ function createResourceStore({ file, storageDir, configStore }) {
 
   /**
    * Find the enabled resource whose URL is contained in the request URL or
-   * in the full URL. Null when local resources are globally disabled.
+   * in the full URL. Null when local resources are globally disabled. A
+   * folder mapping resolves the file for the request: a missing file is
+   * answered with a 404, or left to the upstream when the mapping falls
+   * through.
    *
    * @param {unknown} requestUrl
    * @param {unknown} fullUrl
-   * @returns {{ url: string, resource: LocalResource } | null}
+   * @returns {{ url: string, resource: ResolvedResource } | null}
    */
   function findMatching(requestUrl, fullUrl) {
     if (!configStore.localResourcesEnabled || localResources.size === 0) return null
@@ -190,9 +295,18 @@ function createResourceStore({ file, storageDir, configStore }) {
 
     for (const [resourceUrl, resourceData] of localResources.entries()) {
       if (!resourceData || resourceData.enabled === false) continue
-      if ((req && req.includes(resourceUrl)) || (full && full.includes(resourceUrl))) {
-        return { url: resourceUrl, resource: resourceData }
+      if (!((req && req.includes(resourceUrl)) || (full && full.includes(resourceUrl)))) continue
+
+      if (resourceData.type === 'folder') {
+        const found = resolveFolderFile(resourceData.path || '', resourceUrl, req, full)
+        if (found) {
+          return { url: resourceUrl, resource: { ...resourceData, ...found } }
+        }
+        if (resourceData.fallthrough) continue
+        return { url: resourceUrl, resource: { ...resourceData, status: 404 } }
       }
+
+      return { url: resourceUrl, resource: resourceData }
     }
 
     return null
@@ -205,11 +319,23 @@ function createResourceStore({ file, storageDir, configStore }) {
    * On error, a 500 JSON payload with a generic error message is sent.
    *
    * @param {import('http').ServerResponse} res
-   * @param {{ filename: string, contentType: string }} resource
+   * @param {{ filename: string, contentType: string, absolutePath?: string, status?: number }} resource
    * @param {{ sourceTag: string, errorPrefix: string }} options
    */
   function serveStream(res, resource, { sourceTag, errorPrefix }) {
-    const filePath = path.join(storageDir, resource.filename)
+    // A folder mapping that found no file answers the miss itself.
+    if (resource.status === 404) {
+      const payload = JSON.stringify({ error: 'Not found in the mapped folder' })
+      res.writeHead(404, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(payload),
+        'X-Proxy-Source': sourceTag
+      })
+      res.end(payload)
+      return
+    }
+
+    const filePath = resource.absolutePath || path.join(storageDir, resource.filename)
 
     const sendError = () => {
       try {
@@ -262,6 +388,7 @@ function createResourceStore({ file, storageDir, configStore }) {
     load,
     save,
     list,
+    resolveFolderFile,
     has,
     get,
     set,
@@ -279,5 +406,8 @@ function createResourceStore({ file, storageDir, configStore }) {
 /** @typedef {ReturnType<typeof createResourceStore>} ResourceStore */
 
 module.exports = {
+  CONTENT_TYPES_BY_EXTENSION,
+  contentTypeForFile,
+  resolveFolderFile,
   createResourceStore
 }

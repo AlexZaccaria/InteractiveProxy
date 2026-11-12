@@ -1,18 +1,6 @@
 # Future development
 
-Features considered during the 2.0 rework and not built. Each item stands on its own; the order is the one of value for a tool of this kind. Where a design was worked out, it is recorded here so that the work can start from it.
-
-## Features
-
-- Replay of a request with editable body and headers, and "Copy as cURL".
-- Breakpoints: pause on a URL match, edit the request or the response by hand, then send; the pause is announced over the event stream (`GET /api/events`).
-- HAR export and import; export and import of all the rules in one file.
-- Latency and throttling per rule.
-- Map-local to a folder, not only to a single file, with resolution of the request path inside it.
-- Side-by-side diff of the original and the rewritten body in the log card.
-- Per-host passthrough in the MITM: hosts with certificate pinning tunnelled as raw bytes.
-- Download of the CA certificate from the UI, with the installation steps per platform.
-- An optional `Dockerfile`.
+The one design worked out during the 2.0 rework and not built, recorded so that the work can start from it.
 
 ## Transparent mode through WireGuard
 

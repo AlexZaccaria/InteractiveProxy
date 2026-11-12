@@ -32,6 +32,8 @@ export function SourceIcon({ source }) {
       return <ShieldAlert className="w-4 h-4 text-orange-400" />
     case 'error':
       return <AlertCircle className="w-4 h-4 text-red-400" />
+    case 'imported':
+      return <FileText className="w-4 h-4 text-indigo-400" />
     default:
       return <LinkIcon className="w-4 h-4 text-fg-muted" />
   }
@@ -44,7 +46,8 @@ const SOURCE_BADGES = {
   tunnel: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
   blocked: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   error: 'bg-red-500/20 text-red-400 border-red-500/30',
-  websocket: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+  websocket: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  imported: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
 }
 
 /**

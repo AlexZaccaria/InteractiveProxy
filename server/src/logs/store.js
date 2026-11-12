@@ -33,6 +33,7 @@ const { logDebug, logError } = require('../util/logger')
  * @property {number} capacity
  * @property {(entry: LogEntry) => void} add Enrich, insert as newest, evict the oldest when full.
  * @property {(id: unknown) => LogEntry | undefined} findById
+ * @property {(entry: LogEntry) => void} touch Re-notify the entry listeners for an entry that changed after insertion.
  * @property {() => void} clear Drop every entry (counters of other trackers are reset by their owners).
  * @property {() => number} size
  * @property {(fn: (entry: LogEntry) => void) => void} forEachOldestFirst
@@ -177,6 +178,24 @@ function createLogStore({
     return byId.get(String(id))
   }
 
+  /**
+   * Tell the entry listeners that an entry already in the window changed
+   * (a response edited at a breakpoint after it was logged).
+   *
+   * @param {LogEntry} entry
+   */
+  function touch(entry) {
+    const key = idKey(entry)
+    if (key === null || byId.get(key) !== entry) return
+    for (const listener of entryListeners) {
+      try {
+        listener(entry)
+      } catch (error) {
+        logError('logs', 'Log entry listener failed', error)
+      }
+    }
+  }
+
   function clear() {
     slots = new Array(capacity)
     head = 0
@@ -279,6 +298,7 @@ function createLogStore({
     capacity,
     add,
     findById,
+    touch,
     clear,
     size: () => count,
     forEachOldestFirst,

@@ -22,25 +22,38 @@ const escapePowerShellString = value => {
 }
 
 /**
- * Open a native Windows file picker and resolve the selected path.
+ * Open a native Windows file picker (or, with `kind: 'folder'`, the folder
+ * browser) and resolve the selected path.
  *
- * @param {{ title?: string, filter?: string }} [options]
+ * @param {{ title?: string, filter?: string, kind?: 'file' | 'folder' }} [options]
  * @returns {Promise<string | null>} The selected path, or null when the dialog was cancelled.
  */
 function showNativeFilePicker(options = {}) {
   return new Promise((resolve, reject) => {
-    const title = escapePowerShellString(options.title || 'Select a file')
+    const folder = options.kind === 'folder'
+    const title = escapePowerShellString(
+      options.title || (folder ? 'Select a folder' : 'Select a file')
+    )
     const filter = escapePowerShellString(options.filter || 'All files (*.*)|*.*')
 
-    const script = [
-      'Add-Type -AssemblyName System.Windows.Forms;',
-      '$dialog = New-Object System.Windows.Forms.OpenFileDialog;',
-      `$dialog.Title = "${title}";`,
-      `$dialog.Filter = "${filter}";`,
-      '$dialog.Multiselect = $false;',
-      '$result = $dialog.ShowDialog();',
-      'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName }'
-    ].join(' ')
+    const script = folder
+      ? [
+          'Add-Type -AssemblyName System.Windows.Forms;',
+          '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog;',
+          `$dialog.Description = "${title}";`,
+          '$dialog.ShowNewFolderButton = $false;',
+          '$result = $dialog.ShowDialog();',
+          'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }'
+        ].join(' ')
+      : [
+          'Add-Type -AssemblyName System.Windows.Forms;',
+          '$dialog = New-Object System.Windows.Forms.OpenFileDialog;',
+          `$dialog.Title = "${title}";`,
+          `$dialog.Filter = "${filter}";`,
+          '$dialog.Multiselect = $false;',
+          '$result = $dialog.ShowDialog();',
+          'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName }'
+        ].join(' ')
 
     const ps = spawn('powershell', ['-STA', '-NoProfile', '-Command', script])
     let output = ''
