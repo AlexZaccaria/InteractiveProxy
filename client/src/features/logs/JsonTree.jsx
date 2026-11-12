@@ -3,6 +3,8 @@ import { JSONTree } from 'react-json-tree'
 import { buildJsonPathFromKeyPath, buildJsonPathRuleSeed, isJsonTreeRootNode } from './jsonPath'
 import { useProxyStore } from '../../store/useProxyStore'
 import Tooltip from '../../components/Tooltip'
+import DiffView from './DiffView'
+import { stringifyForDiff } from '../../lib/diff'
 
 /**
  * The JSON viewer of the log details: react-json-tree in the proxy's
@@ -275,10 +277,42 @@ export function JsonBeforeAfter({
   onCreateJsonPathRule
 }) {
   const shared = { contextLabel, urlPattern, target, onCreateJsonPathRule }
+  const [view, setView] = useState(/** @type {'trees' | 'diff'} */ ('trees'))
+
   return (
-    <div className="text-xs text-fg-base grid grid-cols-1 md:grid-cols-2 gap-3">
-      <JsonPanel title="After rewrite" data={after} {...shared} />
-      <JsonPanel title="Before rewrite" data={before} {...shared} />
+    <div className="text-xs text-fg-base space-y-2">
+      <div
+        role="group"
+        aria-label="Before and after view"
+        className="flex items-center justify-end gap-1"
+      >
+        {[
+          ['trees', 'Trees'],
+          ['diff', 'Diff']
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={view === key}
+            onClick={() => setView(/** @type {'trees' | 'diff'} */ (key))}
+            className={`px-2 h-6 rounded text-[11px] border transition-colors ${
+              view === key
+                ? 'bg-surface-active border-fg-faint/70 text-fg-strong'
+                : 'border-transparent text-fg-muted hover:bg-surface-hover hover:text-fg-base'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'diff' ? (
+        <DiffView before={stringifyForDiff(before)} after={stringifyForDiff(after)} />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <JsonPanel title="After rewrite" data={after} {...shared} />
+          <JsonPanel title="Before rewrite" data={before} {...shared} />
+        </div>
+      )}
     </div>
   )
 }
